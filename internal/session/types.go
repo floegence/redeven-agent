@@ -1,0 +1,28 @@
+package session
+
+import (
+	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
+)
+
+// Meta is the authoritative session metadata delivered by Region Center over the direct control channel.
+//
+// Agents must NOT trust any permissions or app identifiers claimed by the browser on the data plane.
+type Meta struct {
+	ChannelID         string `json:"channel_id"`
+	EndpointID        string `json:"endpoint_id"`
+	FloeApp           string `json:"floe_app"`
+	UserPublicID      string `json:"user_public_id"`
+	NamespacePublicID string `json:"namespace_public_id"`
+	CanReadFiles      bool   `json:"can_read_files"`
+	CanWriteFiles     bool   `json:"can_write_files"`
+	CanExecute        bool   `json:"can_execute"`
+	CreatedAtUnixMs   int64  `json:"created_at_unix_ms"`
+}
+
+// GrantServerNotify is a control-channel notification:
+// - grant_server: tunnel server grant for the agent
+// - session_meta: immutable permissions and routing info
+type GrantServerNotify struct {
+	GrantServer *controlv1.ChannelInitGrant `json:"grant_server"`
+	SessionMeta *Meta                       `json:"session_meta"`
+}
