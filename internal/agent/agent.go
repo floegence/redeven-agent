@@ -235,6 +235,34 @@ func (a *Agent) handleGrantNotify(ctx context.Context, payload json.RawMessage) 
 		return
 	}
 
+	// Clamp control-plane granted permissions using the local endpoint cap.
+	declared := config.PermissionSet{
+		Read:    meta.CanReadFiles,
+		Write:   meta.CanWriteFiles,
+		Execute: meta.CanExecute,
+	}
+	localCap := a.cfg.PermissionPolicy.ResolveCap(meta.UserPublicID, meta.FloeApp)
+	effective := declared.Intersect(localCap)
+	if effective != declared {
+		a.log.Info("session permissions clamped by local policy",
+			"channel_id", channelID,
+			"user_public_id", meta.UserPublicID,
+			"floe_app", meta.FloeApp,
+			"declared_read", declared.Read,
+			"declared_write", declared.Write,
+			"declared_execute", declared.Execute,
+			"cap_read", localCap.Read,
+			"cap_write", localCap.Write,
+			"cap_execute", localCap.Execute,
+			"effective_read", effective.Read,
+			"effective_write", effective.Write,
+			"effective_execute", effective.Execute,
+		)
+	}
+	meta.CanReadFiles = effective.Read
+	meta.CanWriteFiles = effective.Write
+	meta.CanExecute = effective.Execute
+
 	a.mu.Lock()
 	if _, ok := a.sessions[channelID]; ok {
 		a.mu.Unlock()
@@ -413,7 +441,7 @@ func pow(base float64, exp int) float64 {
 func newLogger(format string, level string) (*slog.Logger, error) {
 	var h slog.Handler
 
-	lvl := slog.LevelInfo
+	var lvl slog.Level
 	switch strings.ToLower(strings.TrimSpace(level)) {
 	case "", "info":
 		lvl = slog.LevelInfo
