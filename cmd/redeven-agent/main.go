@@ -69,6 +69,8 @@ func bootstrapCmd(args []string) {
 	rootDir := fs.String("root-dir", "", "Filesystem root dir (default: user home dir)")
 	shell := fs.String("shell", "", "Shell command (default: $SHELL or /bin/bash)")
 
+	permissionPolicy := fs.String("permission-policy", "", "Local permission policy preset: execute_read|read_only|execute_read_write (empty: keep existing; default: execute_read)")
+
 	logFormat := fs.String("log-format", "json", "Log format: json|text")
 	logLevel := fs.String("log-level", "info", "Log level: debug|info|warn|error")
 
@@ -85,14 +87,15 @@ func bootstrapCmd(args []string) {
 	defer cancel()
 
 	out, err := config.BootstrapConfig(ctx, config.BootstrapArgs{
-		ControlplaneBaseURL: *controlplane,
-		EnvironmentID:       *envID,
-		EnvironmentToken:    *envToken,
-		ConfigPath:          *cfgPath,
-		RootDir:             *rootDir,
-		Shell:               *shell,
-		LogFormat:           *logFormat,
-		LogLevel:            *logLevel,
+		ControlplaneBaseURL:    *controlplane,
+		EnvironmentID:          *envID,
+		EnvironmentToken:       *envToken,
+		ConfigPath:             *cfgPath,
+		RootDir:                *rootDir,
+		Shell:                  *shell,
+		LogFormat:              *logFormat,
+		LogLevel:               *logLevel,
+		PermissionPolicyPreset: *permissionPolicy,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "bootstrap failed: %v\n", err)

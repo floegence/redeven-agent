@@ -20,6 +20,10 @@ type Config struct {
 	AgentInstanceID     string                      `json:"agent_instance_id"`
 	Direct              *directv1.DirectConnectInfo `json:"direct"`
 
+	// PermissionPolicy is the local permission cap applied on the endpoint.
+	// It is designed to limit the effective permissions even if the control-plane grants more.
+	PermissionPolicy *PermissionPolicy `json:"permission_policy,omitempty"`
+
 	// RootDir is the filesystem root for FS/terminal operations.
 	// If empty, the agent picks a safe default (user home dir).
 	RootDir string `json:"root_dir,omitempty"`
@@ -49,6 +53,11 @@ func (c *Config) Validate() error {
 	}
 	if c.Direct == nil || strings.TrimSpace(c.Direct.WsUrl) == "" || strings.TrimSpace(c.Direct.ChannelId) == "" {
 		return errors.New("missing direct connect info")
+	}
+	if c.PermissionPolicy != nil {
+		if err := c.PermissionPolicy.Validate(); err != nil {
+			return fmt.Errorf("invalid permission_policy: %w", err)
+		}
 	}
 	return nil
 }

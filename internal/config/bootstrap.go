@@ -28,6 +28,10 @@ type BootstrapArgs struct {
 	Shell     string
 	LogFormat string
 	LogLevel  string
+
+	// PermissionPolicyPreset is an optional preset used to write permission_policy into the config.
+	// If empty, bootstrap preserves the existing permission_policy when possible, otherwise uses defaults.
+	PermissionPolicyPreset string
 }
 
 type bootstrapResponse struct {
@@ -77,10 +81,25 @@ func BootstrapConfig(ctx context.Context, args BootstrapArgs) (writtenPath strin
 		EnvironmentID:       envID,
 		AgentInstanceID:     agentInstanceID,
 		Direct:              direct,
+		PermissionPolicy:    nil,
 		RootDir:             strings.TrimSpace(args.RootDir),
 		Shell:               strings.TrimSpace(args.Shell),
 		LogFormat:           strings.TrimSpace(args.LogFormat),
 		LogLevel:            strings.TrimSpace(args.LogLevel),
+	}
+
+	// Write permission_policy explicitly so users can audit what is enabled locally.
+	// If the flag is not provided, keep the previous policy when possible.
+	if strings.TrimSpace(args.PermissionPolicyPreset) != "" {
+		p, err := ParsePermissionPolicyPreset(args.PermissionPolicyPreset)
+		if err != nil {
+			return "", err
+		}
+		cfg.PermissionPolicy = p
+	} else if prev != nil && prev.PermissionPolicy != nil {
+		cfg.PermissionPolicy = prev.PermissionPolicy
+	} else {
+		cfg.PermissionPolicy = defaultPermissionPolicy()
 	}
 
 	if err := Save(cfgPath, cfg); err != nil {
