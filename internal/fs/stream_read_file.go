@@ -8,7 +8,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/floegence/flowersec/flowersec-go/rpc/frame"
+	"github.com/floegence/flowersec/flowersec-go/framing/jsonframe"
 	"github.com/floegence/redeven-agent/internal/session"
 )
 
@@ -26,7 +26,7 @@ func (s *Service) ServeReadFileStream(ctx context.Context, stream io.ReadWriteCl
 
 	// Enforce permissions from session_meta.
 	if meta == nil || !meta.CanReadFiles {
-		_ = frame.WriteJSONFrame(stream, fsReadFileStreamRespMeta{
+		_ = jsonframe.WriteJSONFrame(stream, fsReadFileStreamRespMeta{
 			Ok: false,
 			Error: &fsStreamError{
 				Code:    403,
@@ -36,7 +36,7 @@ func (s *Service) ServeReadFileStream(ctx context.Context, stream io.ReadWriteCl
 		return
 	}
 
-	reqBytes, err := frame.ReadJSONFrame(stream, frame.DefaultMaxJSONFrameBytes)
+	reqBytes, err := jsonframe.ReadJSONFrame(stream, jsonframe.DefaultMaxJSONFrameBytes)
 	if err != nil {
 		// Peer may have closed early; nothing useful to do here.
 		return
@@ -44,7 +44,7 @@ func (s *Service) ServeReadFileStream(ctx context.Context, stream io.ReadWriteCl
 
 	var req fsReadFileStreamMeta
 	if err := json.Unmarshal(reqBytes, &req); err != nil {
-		_ = frame.WriteJSONFrame(stream, fsReadFileStreamRespMeta{
+		_ = jsonframe.WriteJSONFrame(stream, fsReadFileStreamRespMeta{
 			Ok: false,
 			Error: &fsStreamError{
 				Code:    400,
@@ -56,7 +56,7 @@ func (s *Service) ServeReadFileStream(ctx context.Context, stream io.ReadWriteCl
 
 	req.Path = strings.TrimSpace(req.Path)
 	if req.Path == "" {
-		_ = frame.WriteJSONFrame(stream, fsReadFileStreamRespMeta{
+		_ = jsonframe.WriteJSONFrame(stream, fsReadFileStreamRespMeta{
 			Ok: false,
 			Error: &fsStreamError{
 				Code:    400,
@@ -68,7 +68,7 @@ func (s *Service) ServeReadFileStream(ctx context.Context, stream io.ReadWriteCl
 
 	_, realPath, err := s.resolve(req.Path)
 	if err != nil {
-		_ = frame.WriteJSONFrame(stream, fsReadFileStreamRespMeta{
+		_ = jsonframe.WriteJSONFrame(stream, fsReadFileStreamRespMeta{
 			Ok: false,
 			Error: &fsStreamError{
 				Code:    400,
@@ -80,7 +80,7 @@ func (s *Service) ServeReadFileStream(ctx context.Context, stream io.ReadWriteCl
 
 	f, err := os.Open(realPath)
 	if err != nil {
-		_ = frame.WriteJSONFrame(stream, fsReadFileStreamRespMeta{
+		_ = jsonframe.WriteJSONFrame(stream, fsReadFileStreamRespMeta{
 			Ok: false,
 			Error: &fsStreamError{
 				Code:    404,
@@ -93,7 +93,7 @@ func (s *Service) ServeReadFileStream(ctx context.Context, stream io.ReadWriteCl
 
 	info, err := f.Stat()
 	if err != nil {
-		_ = frame.WriteJSONFrame(stream, fsReadFileStreamRespMeta{
+		_ = jsonframe.WriteJSONFrame(stream, fsReadFileStreamRespMeta{
 			Ok: false,
 			Error: &fsStreamError{
 				Code:    500,
@@ -109,7 +109,7 @@ func (s *Service) ServeReadFileStream(ctx context.Context, stream io.ReadWriteCl
 		offset = 0
 	}
 	if offset > fileSize {
-		_ = frame.WriteJSONFrame(stream, fsReadFileStreamRespMeta{
+		_ = jsonframe.WriteJSONFrame(stream, fsReadFileStreamRespMeta{
 			Ok: false,
 			Error: &fsStreamError{
 				Code:    416,
@@ -121,7 +121,7 @@ func (s *Service) ServeReadFileStream(ctx context.Context, stream io.ReadWriteCl
 
 	if offset > 0 {
 		if _, err := f.Seek(offset, io.SeekStart); err != nil {
-			_ = frame.WriteJSONFrame(stream, fsReadFileStreamRespMeta{
+			_ = jsonframe.WriteJSONFrame(stream, fsReadFileStreamRespMeta{
 				Ok: false,
 				Error: &fsStreamError{
 					Code:    500,
@@ -142,7 +142,7 @@ func (s *Service) ServeReadFileStream(ctx context.Context, stream io.ReadWriteCl
 		contentLen = 0
 	}
 
-	if err := frame.WriteJSONFrame(stream, fsReadFileStreamRespMeta{
+	if err := jsonframe.WriteJSONFrame(stream, fsReadFileStreamRespMeta{
 		Ok:         true,
 		FileSize:   fileSize,
 		ContentLen: contentLen,
