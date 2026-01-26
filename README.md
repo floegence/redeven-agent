@@ -40,7 +40,8 @@ go build -o redeven-agent ./cmd/redeven-agent
 ./redeven-agent bootstrap \
   --controlplane https://<region>.<base-domain> \
   --env-id <env_public_id> \
-  --env-token <env_token>
+  --env-token <env_token> \
+  --permission-policy execute_read
 ```
 
 This writes a local config file (default: `~/.redeven-agent/config.json`).
@@ -55,6 +56,8 @@ This writes a local config file (default: `~/.redeven-agent/config.json`).
 
 - The config file contains secrets (PSK). Keep it private (`chmod 600`).
 - The agent **does not** trust browser-claimed permissions; it only trusts `session_meta` delivered by Region Center over the direct control channel.
+- Capability-to-permission mapping (what each permission enables): [`docs/CAPABILITY_PERMISSIONS.md`](docs/CAPABILITY_PERMISSIONS.md).
+- Local permission cap (`permission_policy`): [`docs/PERMISSION_POLICY.md`](docs/PERMISSION_POLICY.md).
 
 ## FS path model
 
