@@ -30,6 +30,8 @@ const (
 	TypeID_TERMINAL_INPUT   uint32 = 2006 // notify (client -> agent)
 	TypeID_TERMINAL_HISTORY uint32 = 2007
 	TypeID_TERMINAL_CLEAR   uint32 = 2008
+
+	TypeID_TERMINAL_SESSION_DELETE uint32 = 2009
 )
 
 type Manager struct {
@@ -272,6 +274,24 @@ func (m *Manager) Register(r *rpc.Router, meta *session.Meta, streamServer *rpc.
 			return nil, &rpc.Error{Code: 404, Message: "terminal session not found"}
 		}
 		return &terminalClearResp{OK: true}, nil
+	})
+
+	// Delete session
+	rpctyped.Register[terminalDeleteReq, terminalDeleteResp](r, TypeID_TERMINAL_SESSION_DELETE, func(_ context.Context, req *terminalDeleteReq) (*terminalDeleteResp, error) {
+		if meta == nil || !meta.CanExecute {
+			return nil, &rpc.Error{Code: 403, Message: "execute permission denied"}
+		}
+		if req == nil {
+			return nil, &rpc.Error{Code: 400, Message: "invalid payload"}
+		}
+		sessionID := strings.TrimSpace(req.SessionID)
+		if sessionID == "" {
+			return nil, &rpc.Error{Code: 400, Message: "session_id is required"}
+		}
+		if err := m.term.DeleteSession(sessionID); err != nil {
+			return nil, &rpc.Error{Code: 404, Message: "terminal session not found"}
+		}
+		return &terminalDeleteResp{OK: true}, nil
 	})
 }
 
@@ -564,6 +584,14 @@ type terminalClearReq struct {
 }
 
 type terminalClearResp struct {
+	OK bool `json:"ok"`
+}
+
+type terminalDeleteReq struct {
+	SessionID string `json:"session_id"`
+}
+
+type terminalDeleteResp struct {
 	OK bool `json:"ok"`
 }
 
