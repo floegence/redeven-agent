@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -19,6 +20,8 @@ const (
 	TypeID_FS_LIST      uint32 = 1001
 	TypeID_FS_READ_FILE uint32 = 1002
 	TypeID_FS_WRITE     uint32 = 1003
+	TypeID_FS_RENAME    uint32 = 1004
+	TypeID_FS_COPY      uint32 = 1005
 	TypeID_FS_DELETE    uint32 = 1006
 	TypeID_FS_GET_HOME  uint32 = 1010
 )
@@ -171,6 +174,81 @@ func (s *Service) Register(r *rpc.Router, meta *session.Meta) {
 		}
 		return &fsDeleteResp{Success: true}, nil
 	})
+
+	rpctyped.Register[fsRenameReq, fsRenameResp](r, TypeID_FS_RENAME, func(_ctx context.Context, req *fsRenameReq) (*fsRenameResp, error) {
+		if meta == nil || !meta.CanWriteFiles {
+			return nil, &rpc.Error{Code: 403, Message: "write permission denied"}
+		}
+		vpOld, pOld, err := s.resolve(req.OldPath)
+		if err != nil {
+			return nil, &rpc.Error{Code: 400, Message: "invalid old_path"}
+		}
+		vpNew, pNew, err := s.resolve(req.NewPath)
+		if err != nil {
+			return nil, &rpc.Error{Code: 400, Message: "invalid new_path"}
+		}
+		// Source must exist
+		if _, err := os.Stat(pOld); os.IsNotExist(err) {
+			return nil, &rpc.Error{Code: 404, Message: "source not found"}
+		}
+		// Destination must not exist (prevent accidental overwrite)
+		if _, err := os.Stat(pNew); err == nil {
+			return nil, &rpc.Error{Code: 409, Message: "destination already exists"}
+		}
+		// Ensure parent directory of destination exists
+		destDir := filepath.Dir(pNew)
+		if err := os.MkdirAll(destDir, 0o755); err != nil {
+			return nil, &rpc.Error{Code: 500, Message: "failed to create destination directory"}
+		}
+		// Perform rename (works across directories)
+		if err := os.Rename(pOld, pNew); err != nil {
+			return nil, &rpc.Error{Code: 500, Message: "rename failed"}
+		}
+		_ = vpOld // suppress unused warning
+		return &fsRenameResp{Success: true, NewPath: vpNew}, nil
+	})
+
+	rpctyped.Register[fsCopyReq, fsCopyResp](r, TypeID_FS_COPY, func(_ctx context.Context, req *fsCopyReq) (*fsCopyResp, error) {
+		if meta == nil || !meta.CanWriteFiles {
+			return nil, &rpc.Error{Code: 403, Message: "write permission denied"}
+		}
+		_, pSrc, err := s.resolve(req.SourcePath)
+		if err != nil {
+			return nil, &rpc.Error{Code: 400, Message: "invalid source_path"}
+		}
+		vpDest, pDest, err := s.resolve(req.DestPath)
+		if err != nil {
+			return nil, &rpc.Error{Code: 400, Message: "invalid dest_path"}
+		}
+		srcInfo, err := os.Stat(pSrc)
+		if os.IsNotExist(err) {
+			return nil, &rpc.Error{Code: 404, Message: "source not found"}
+		}
+		if err != nil {
+			return nil, &rpc.Error{Code: 500, Message: "failed to stat source"}
+		}
+		// Check destination existence
+		overwrite := req.Overwrite != nil && *req.Overwrite
+		if _, err := os.Stat(pDest); err == nil && !overwrite {
+			return nil, &rpc.Error{Code: 409, Message: "destination already exists"}
+		}
+		// Ensure parent directory of destination exists
+		destDir := filepath.Dir(pDest)
+		if err := os.MkdirAll(destDir, 0o755); err != nil {
+			return nil, &rpc.Error{Code: 500, Message: "failed to create destination directory"}
+		}
+		// Copy file or directory
+		if srcInfo.IsDir() {
+			if err := copyDir(pSrc, pDest); err != nil {
+				return nil, &rpc.Error{Code: 500, Message: "copy failed: " + err.Error()}
+			}
+		} else {
+			if err := copyFile(pSrc, pDest); err != nil {
+				return nil, &rpc.Error{Code: 500, Message: "copy failed: " + err.Error()}
+			}
+		}
+		return &fsCopyResp{Success: true, NewPath: vpDest}, nil
+	})
 }
 
 func (s *Service) resolve(p string) (virtual string, real string, err error) {
@@ -296,4 +374,95 @@ type fsDeleteReq struct {
 
 type fsDeleteResp struct {
 	Success bool `json:"success"`
+}
+
+type fsRenameReq struct {
+	OldPath string `json:"old_path"`
+	NewPath string `json:"new_path"`
+}
+
+type fsRenameResp struct {
+	Success bool   `json:"success"`
+	NewPath string `json:"new_path"`
+}
+
+type fsCopyReq struct {
+	SourcePath string `json:"source_path"`
+	DestPath   string `json:"dest_path"`
+	Overwrite  *bool  `json:"overwrite,omitempty"`
+}
+
+type fsCopyResp struct {
+	Success bool   `json:"success"`
+	NewPath string `json:"new_path"`
+}
+
+// copyFile copies a single file from src to dst, preserving permissions.
+func copyFile(src, dst string) error {
+	srcFile, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer srcFile.Close()
+
+	srcInfo, err := srcFile.Stat()
+	if err != nil {
+		return err
+	}
+
+	dstFile, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, srcInfo.Mode())
+	if err != nil {
+		return err
+	}
+	defer dstFile.Close()
+
+	buf := make([]byte, 64*1024)
+	for {
+		n, err := srcFile.Read(buf)
+		if n > 0 {
+			if _, wErr := dstFile.Write(buf[:n]); wErr != nil {
+				return wErr
+			}
+		}
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return err
+		}
+	}
+	return nil
+}
+
+// copyDir recursively copies a directory from src to dst.
+func copyDir(src, dst string) error {
+	srcInfo, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(dst, srcInfo.Mode()); err != nil {
+		return err
+	}
+
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+
+	for _, entry := range entries {
+		srcPath := filepath.Join(src, entry.Name())
+		dstPath := filepath.Join(dst, entry.Name())
+
+		if entry.IsDir() {
+			if err := copyDir(srcPath, dstPath); err != nil {
+				return err
+			}
+		} else {
+			if err := copyFile(srcPath, dstPath); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
