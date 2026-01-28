@@ -51,8 +51,8 @@ func (s *Service) Register(r *rpc.Router, meta *session.Meta) {
 		if meta == nil || !meta.CanReadFiles {
 			return nil, &rpc.Error{Code: 403, Message: "read permission denied"}
 		}
-		// Virtual root. The agent maps it to its configured filesystem root dir.
-		return &fsGetHomeResp{Path: "/"}, nil
+		// Return the real filesystem root path configured for this agent.
+		return &fsGetHomeResp{Path: s.root}, nil
 	})
 
 	rpctyped.Register[fsListReq, fsListResp](r, TypeID_FS_LIST, func(_ctx context.Context, req *fsListReq) (*fsListResp, error) {
