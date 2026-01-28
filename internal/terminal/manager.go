@@ -32,6 +32,7 @@ const (
 	TypeID_TERMINAL_CLEAR   uint32 = 2008
 
 	TypeID_TERMINAL_SESSION_DELETE uint32 = 2009
+	TypeID_TERMINAL_NAME_UPDATE    uint32 = 2010 // notify (agent -> client): session name/working dir changed
 )
 
 type Manager struct {
@@ -394,6 +395,45 @@ func (m *Manager) broadcast(sessionID string, payload json.RawMessage) {
 	}
 }
 
+// broadcastNameUpdate sends a name/working directory update notification to all
+// connected clients attached to the given session.
+func (m *Manager) broadcastNameUpdate(sessionID string, newName string, workingDir string) {
+	if m == nil || sessionID == "" {
+		return
+	}
+
+	var writers []*sinkWriter
+	m.mu.Lock()
+	if bySess := m.bySession[sessionID]; bySess != nil {
+		writers = make([]*sinkWriter, 0, len(bySess))
+		for srv := range bySess {
+			if w := m.writers[srv]; w != nil {
+				writers = append(writers, w)
+			}
+		}
+	}
+	m.mu.Unlock()
+
+	if len(writers) == 0 {
+		return
+	}
+
+	payload := terminalNameUpdatePayload{
+		SessionID:  sessionID,
+		NewName:    newName,
+		WorkingDir: m.virtualPathFromAbs(workingDir),
+	}
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+
+	msg := sinkMsg{TypeID: TypeID_TERMINAL_NAME_UPDATE, Payload: b}
+	for _, w := range writers {
+		w.TrySend(msg)
+	}
+}
+
 func (m *Manager) write(sessionID string, connID string, dataB64 string) error {
 	if m == nil {
 		return &rpc.Error{Code: 500, Message: "internal error"}
@@ -467,11 +507,12 @@ func (h *eventHandler) OnTerminalData(sessionID string, data []byte, sequenceNum
 }
 
 func (h *eventHandler) OnTerminalNameChanged(sessionID string, oldName string, newName string, workingDir string) {
-	void := func(any) {}
-	void(sessionID)
-	void(oldName)
-	void(newName)
-	void(workingDir)
+	if h == nil || h.m == nil {
+		return
+	}
+	// Broadcast name/working directory update to all connected clients.
+	// This allows the frontend to update the terminal tab title in real-time.
+	h.m.broadcastNameUpdate(sessionID, newName, workingDir)
 }
 
 func (h *eventHandler) OnTerminalSessionCreated(session *termgo.Session) {
@@ -561,6 +602,12 @@ type terminalResizePayload struct {
 	ConnID    string `json:"conn_id"`
 	Cols      int    `json:"cols"`
 	Rows      int    `json:"rows"`
+}
+
+type terminalNameUpdatePayload struct {
+	SessionID  string `json:"session_id"`
+	NewName    string `json:"new_name"`
+	WorkingDir string `json:"working_dir"`
 }
 
 type terminalHistoryReq struct {
