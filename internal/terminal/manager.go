@@ -33,6 +33,7 @@ const (
 
 	TypeID_TERMINAL_SESSION_DELETE uint32 = 2009
 	TypeID_TERMINAL_NAME_UPDATE    uint32 = 2010 // notify (agent -> client): session name/working dir changed
+	TypeID_TERMINAL_SESSION_STATS  uint32 = 2011 // history buffer stats (client -> agent)
 )
 
 type Manager struct {
@@ -257,6 +258,37 @@ func (m *Manager) Register(r *rpc.Router, meta *session.Meta, streamServer *rpc.
 			})
 		}
 		return &terminalHistoryResp{Chunks: out}, nil
+	})
+
+	// Session stats (history buffer size, etc.)
+	rpctyped.Register[terminalStatsReq, terminalStatsResp](r, TypeID_TERMINAL_SESSION_STATS, func(_ context.Context, req *terminalStatsReq) (*terminalStatsResp, error) {
+		if meta == nil || !meta.CanExecute {
+			return nil, &rpc.Error{Code: 403, Message: "execute permission denied"}
+		}
+		if req == nil {
+			return nil, &rpc.Error{Code: 400, Message: "invalid payload"}
+		}
+		sessionID := strings.TrimSpace(req.SessionID)
+		if sessionID == "" {
+			return nil, &rpc.Error{Code: 400, Message: "session_id is required"}
+		}
+
+		sess, ok := m.term.GetSession(sessionID)
+		if !ok || sess == nil {
+			return nil, &rpc.Error{Code: 404, Message: "terminal session not found"}
+		}
+
+		stats, err := sess.GetHistoryStats()
+		if err != nil {
+			m.log.Warn("terminal stats failed", "session_id", sessionID, "error", err)
+			return nil, &rpc.Error{Code: 500, Message: "failed to read stats"}
+		}
+
+		return &terminalStatsResp{
+			History: terminalHistoryStats{
+				TotalBytes: stats.TotalBytes,
+			},
+		}, nil
 	})
 
 	// Clear history
@@ -624,6 +656,18 @@ type terminalHistoryChunk struct {
 
 type terminalHistoryResp struct {
 	Chunks []terminalHistoryChunk `json:"chunks"`
+}
+
+type terminalStatsReq struct {
+	SessionID string `json:"session_id"`
+}
+
+type terminalHistoryStats struct {
+	TotalBytes int64 `json:"total_bytes"`
+}
+
+type terminalStatsResp struct {
+	History terminalHistoryStats `json:"history"`
 }
 
 type terminalClearReq struct {
