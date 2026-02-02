@@ -12,12 +12,18 @@ This repository is intended to be **open-sourced** so users can audit what runs 
 Implemented in this repo:
 
 - `floe_app = com.floegence.redeven.agent`
-  - File system RPC (list/read/write/delete/get_home)
+  - File system RPC (list/read/write/delete/get_home) + `fs/read_file` stream
   - Terminal RPC (create/list/attach) + bidirectional data notifications
+  - Monitor RPC (CPU/network/process snapshot)
+  - Agent-bundled Env App UI assets: `internal/envapp/ui_src/` -> `internal/envapp/ui/dist/`
+  - Documentation: [`docs/ENV_APP.md`](docs/ENV_APP.md)
+- `floe_app = com.floegence.redeven.code`
+  - code-server over Flowersec E2EE proxy (`flowersec-proxy/http1`, `flowersec-proxy/ws`)
+  - Agent-bundled UI assets (CSP-safe inject script): `internal/codeapp/ui_src/` -> `internal/codeapp/ui/dist/`
+  - Documentation: [`docs/CODE_APP.md`](docs/CODE_APP.md)
 
 Not implemented yet (planned):
 
-- `floe_app = com.floegence.redeven.code-server` (code-server via Flowersec)
 - `floe_app = ...` (rebrowser, plugin marketplace apps, etc)
 
 ## Build

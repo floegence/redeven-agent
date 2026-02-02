@@ -11,6 +11,7 @@ type Meta struct {
 	ChannelID         string `json:"channel_id"`
 	EndpointID        string `json:"endpoint_id"`
 	FloeApp           string `json:"floe_app"`
+	CodeSpaceID       string `json:"code_space_id,omitempty"`
 	UserPublicID      string `json:"user_public_id"`
 	NamespacePublicID string `json:"namespace_public_id"`
 	CanReadFiles      bool   `json:"can_read_files"`

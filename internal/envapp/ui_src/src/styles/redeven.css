@@ -1,0 +1,11 @@
+.redeven-terminal-surface:focus,
+.redeven-terminal-surface:focus-visible {
+  box-shadow: none !important;
+}
+
+*,
+*::before,
+*::after {
+  --tw-border-style: solid;
+  border-style: solid;
+}
