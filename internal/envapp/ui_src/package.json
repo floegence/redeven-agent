@@ -1,0 +1,41 @@
+{
+  "name": "@floegence/redeven-agent-envapp-ui",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -p tsconfig.json && vite build",
+    "preview": "vite preview --host 0.0.0.0 --port 8096",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@fontsource/iosevka": "^5.2.5",
+    "@floegence/floe-webapp-core": "^0.12.0",
+    "@floegence/floe-webapp-protocol": "^0.12.0",
+    "@floegence/floeterm-terminal-web": "^0.2.0",
+    "@floegence/flowersec-core": "^0.7.0",
+    "@solidjs/router": "^0.15.3",
+    "docx-preview": "^0.3.6",
+    "exceljs": "^4.4.0",
+    "solid-js": "^1.9.3"
+  },
+  "overrides": {
+    "@floegence/flowersec-core": "^0.7.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "@floegence/flowersec-core": "^0.7.0"
+    }
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/node": "^20.0.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7",
+    "vite-plugin-solid": "^2.11.0"
+  }
+}

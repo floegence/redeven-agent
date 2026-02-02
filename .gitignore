@@ -1,0 +1,15 @@
+# OS / editor
+.DS_Store
+.idea
+.vscode
+
+# Go
+*.exe
+*.out
+*.test
+*.prof
+
+# Node (for internal/codeapp/ui_src)
+node_modules
+npm-debug.log*
+

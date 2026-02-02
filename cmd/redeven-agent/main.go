@@ -12,6 +12,7 @@ import (
 
 	"github.com/floegence/redeven-agent/internal/agent"
 	"github.com/floegence/redeven-agent/internal/config"
+	"github.com/floegence/redeven-agent/internal/lockfile"
 )
 
 var (
@@ -110,17 +111,31 @@ func runCmd(args []string) {
 	cfgPath := fs.String("config", config.DefaultConfigPath(), "Config file path")
 	_ = fs.Parse(args)
 
-	cfg, err := config.Load(filepath.Clean(*cfgPath))
+	cfgPathClean := filepath.Clean(*cfgPath)
+
+	// Prevent multiple agent processes from managing the same local state directory.
+	// This avoids control-plane flapping and data-plane races when users start the agent twice.
+	lockPath := filepath.Join(filepath.Dir(cfgPathClean), "agent.lock")
+	lk, err := lockfile.Acquire(lockPath)
+	if err != nil {
+		// Keep the message actionable; users can stop the existing process then retry.
+		fmt.Fprintf(os.Stderr, "failed to acquire agent lock (%s): %v\n", lockPath, err)
+		os.Exit(1)
+	}
+	defer func() { _ = lk.Release() }()
+
+	cfg, err := config.Load(cfgPathClean)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)
 		os.Exit(1)
 	}
 
 	a, err := agent.New(agent.Options{
-		Config:    cfg,
-		Version:   Version,
-		Commit:    Commit,
-		BuildTime: BuildTime,
+		Config:     cfg,
+		ConfigPath: cfgPathClean,
+		Version:    Version,
+		Commit:     Commit,
+		BuildTime:  BuildTime,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to init agent: %v\n", err)
