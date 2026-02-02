@@ -17,9 +17,12 @@ import (
 
 	fsclient "github.com/floegence/flowersec/flowersec-go/client"
 	"github.com/floegence/flowersec/flowersec-go/endpoint"
+	"github.com/floegence/flowersec/flowersec-go/endpoint/serve"
 	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
+	fsproxy "github.com/floegence/flowersec/flowersec-go/proxy"
 	"github.com/floegence/flowersec/flowersec-go/rpc"
 	rpctyped "github.com/floegence/flowersec/flowersec-go/rpc/typed"
+	"github.com/floegence/redeven-agent/internal/codeapp"
 	"github.com/floegence/redeven-agent/internal/config"
 	"github.com/floegence/redeven-agent/internal/fs"
 	"github.com/floegence/redeven-agent/internal/monitor"
@@ -36,10 +39,13 @@ const (
 // Floe app ids.
 const (
 	FloeAppRedevenAgent = "com.floegence.redeven.agent"
+	FloeAppRedevenCode  = "com.floegence.redeven.code"
 )
 
 type Options struct {
 	Config *config.Config
+	// ConfigPath is the path used to load the config file (used to derive state_dir).
+	ConfigPath string
 
 	Version   string
 	Commit    string
@@ -58,6 +64,7 @@ type Agent struct {
 
 	term *terminal.Manager
 	mon  *monitor.Service
+	code *codeapp.Service
 
 	mu       sync.Mutex
 	sessions map[string]context.CancelFunc // channel_id -> cancel
@@ -97,6 +104,25 @@ func New(opts Options) (*Agent, error) {
 		shell = "/bin/bash"
 	}
 
+	cfgPath := strings.TrimSpace(opts.ConfigPath)
+	if cfgPath == "" {
+		cfgPath = config.DefaultConfigPath()
+	}
+	cfgPathAbs, err := filepath.Abs(cfgPath)
+	if err != nil {
+		return nil, err
+	}
+	stateDir := filepath.Dir(cfgPathAbs)
+
+	codeSvc, err := codeapp.New(context.Background(), codeapp.Options{
+		Logger:              logger,
+		StateDir:            stateDir,
+		ControlplaneBaseURL: strings.TrimSpace(opts.Config.ControlplaneBaseURL),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("init codeapp: %w", err)
+	}
+
 	return &Agent{
 		cfg:       opts.Config,
 		log:       logger,
@@ -106,11 +132,18 @@ func New(opts Options) (*Agent, error) {
 		fsRoot:    rootAbs,
 		term:      terminal.NewManager(shell, rootAbs, logger),
 		mon:       monitor.NewService(logger),
+		code:      codeSvc,
 		sessions:  make(map[string]context.CancelFunc),
 	}, nil
 }
 
 func (a *Agent) Run(ctx context.Context) error {
+	defer func() {
+		if a != nil && a.code != nil {
+			_ = a.code.Close()
+		}
+	}()
+
 	a.log.Info("agent starting",
 		"version", a.version,
 		"commit", a.commit,
@@ -233,7 +266,7 @@ func (a *Agent) handleGrantNotify(ctx context.Context, payload json.RawMessage) 
 		a.log.Warn("grant_server channel_id mismatch", "channel_id", channelID)
 		return
 	}
-	if floeApp != FloeAppRedevenAgent {
+	if floeApp != FloeAppRedevenAgent && floeApp != FloeAppRedevenCode {
 		a.log.Warn("unsupported floe_app; ignoring session", "floe_app", floeApp, "channel_id", channelID)
 		return
 	}
@@ -266,6 +299,31 @@ func (a *Agent) handleGrantNotify(ctx context.Context, payload json.RawMessage) 
 	meta.CanWriteFiles = effective.Write
 	meta.CanExecute = effective.Execute
 
+	// Code App security: code-server is a "full environment" capability.
+	// We currently require read+write+execute to avoid misleading permission splits.
+	if meta.FloeApp == FloeAppRedevenCode {
+		csID := strings.TrimSpace(meta.CodeSpaceID)
+		if csID == "" {
+			a.log.Warn("missing code_space_id for code app session", "channel_id", channelID)
+			return
+		}
+		if !codeapp.IsValidCodeSpaceID(csID) {
+			a.log.Warn("invalid code_space_id for code app session", "code_space_id", csID, "channel_id", channelID)
+			return
+		}
+		if !meta.CanReadFiles || !meta.CanWriteFiles || !meta.CanExecute {
+			a.log.Warn("insufficient permissions for code app session; ignoring",
+				"channel_id", channelID,
+				"user_public_id", meta.UserPublicID,
+				"code_space_id", csID,
+				"can_read_files", meta.CanReadFiles,
+				"can_write_files", meta.CanWriteFiles,
+				"can_execute", meta.CanExecute,
+			)
+			return
+		}
+	}
+
 	a.mu.Lock()
 	if _, ok := a.sessions[channelID]; ok {
 		a.mu.Unlock()
@@ -282,16 +340,47 @@ func (a *Agent) handleGrantNotify(ctx context.Context, payload json.RawMessage) 
 			delete(a.sessions, channelID)
 			a.mu.Unlock()
 		}()
-		if err := a.runDataSession(sessCtx, n.GrantServer, meta); err != nil && !errors.Is(err, context.Canceled) {
-			a.log.Warn("data session ended", "channel_id", channelID, "error", err)
-		}
+		_ = a.runDataSession(sessCtx, n.GrantServer, meta)
 	}()
 }
 
-func (a *Agent) runDataSession(ctx context.Context, grant *controlv1.ChannelInitGrant, meta *session.Meta) error {
+func (a *Agent) runDataSession(ctx context.Context, grant *controlv1.ChannelInitGrant, meta *session.Meta) (err error) {
 	if grant == nil || meta == nil {
 		return errors.New("missing grant/meta")
 	}
+
+	opened := false
+	startedAt := time.Now()
+	channelID := strings.TrimSpace(meta.ChannelID)
+	endpointID := strings.TrimSpace(meta.EndpointID)
+	floeApp := strings.TrimSpace(meta.FloeApp)
+	codeSpaceID := strings.TrimSpace(meta.CodeSpaceID)
+	defer func() {
+		reason := "eof"
+		if !opened {
+			reason = "connect_failed"
+		}
+		if errors.Is(err, context.Canceled) {
+			reason = "canceled"
+		} else if err != nil {
+			reason = "error"
+		}
+
+		attrs := []any{
+			"channel_id", channelID,
+			"env_public_id", endpointID,
+			"floe_app", floeApp,
+			"code_space_id", codeSpaceID,
+			"opened", opened,
+			"reason", reason,
+			"duration_ms", time.Since(startedAt).Milliseconds(),
+		}
+		if reason == "error" {
+			a.log.Warn("data session closed", append(attrs, "error", err)...)
+			return
+		}
+		a.log.Info("data session closed", attrs...)
+	}()
 
 	origin, err := originForTunnel(grant.TunnelUrl, a.cfg.ControlplaneBaseURL)
 	if err != nil {
@@ -304,22 +393,128 @@ func (a *Agent) runDataSession(ctx context.Context, grant *controlv1.ChannelInit
 	if err != nil {
 		return err
 	}
+	opened = true
+	a.log.Info("data session opened",
+		"channel_id", channelID,
+		"env_public_id", endpointID,
+		"floe_app", floeApp,
+		"code_space_id", codeSpaceID,
+	)
 	defer sess.Close()
+
+	if strings.TrimSpace(meta.FloeApp) == FloeAppRedevenCode {
+		return a.serveCodeAppSession(ctx, sess, meta)
+	}
+
+	return a.serveRedevenAgentSession(ctx, sess, meta)
+}
+
+func (a *Agent) serveCodeAppSession(ctx context.Context, sess endpoint.Session, meta *session.Meta) error {
+	if a == nil || meta == nil {
+		return errors.New("invalid args")
+	}
+	if sess == nil {
+		return errors.New("missing session")
+	}
+	if a.code == nil {
+		return errors.New("codeapp not initialized")
+	}
+
+	codeSpaceID := strings.TrimSpace(meta.CodeSpaceID)
+	if codeSpaceID == "" {
+		return errors.New("missing code_space_id")
+	}
+
+	origin, err := a.code.ExternalOriginForCodeSpace(codeSpaceID)
+	if err != nil {
+		return err
+	}
+
+	// Ensure the code-server instance is running before accepting proxy streams.
+	if _, err := a.code.ResolveCodeServerPort(ctx, codeSpaceID); err != nil {
+		return err
+	}
+
+	up := strings.TrimSpace(a.code.GatewayURL())
+	if up == "" {
+		return errors.New("codeapp gateway not ready")
+	}
+
+	srv, err := serve.New(serve.Options{
+		OnError: func(err error) {
+			if err == nil {
+				return
+			}
+			a.log.Warn("codeapp stream error", "channel_id", meta.ChannelID, "code_space_id", codeSpaceID, "error", err)
+		},
+	})
+	if err != nil {
+		return err
+	}
+
+	if err := fsproxy.Register(srv, fsproxy.Options{
+		Upstream:       up,
+		UpstreamOrigin: origin,
+	}); err != nil {
+		return err
+	}
+
+	return srv.ServeSession(ctx, sess)
+}
+
+func (a *Agent) serveRedevenAgentSession(ctx context.Context, sess endpoint.Session, meta *session.Meta) error {
+	if a == nil || meta == nil {
+		return errors.New("invalid args")
+	}
+	if sess == nil {
+		return errors.New("missing session")
+	}
 
 	fsSvc := fs.NewService(a.fsRoot)
 
-	// One yamux session may carry multiple streams (rpc/others).
-	return sess.ServeStreams(ctx, endpoint.DefaultMaxStreamHelloBytes, func(kind string, stream io.ReadWriteCloser) {
-		switch kind {
-		case "rpc":
-			a.serveRPCStream(ctx, stream, meta, fsSvc)
-		case "fs/read_file":
-			fsSvc.ServeReadFileStream(ctx, stream, meta)
-		default:
-			// Unknown stream kind: close immediately.
-			_ = stream.Close()
-		}
+	srv, err := serve.New(serve.Options{
+		OnError: func(err error) {
+			if err == nil {
+				return
+			}
+			a.log.Warn("agent stream error", "channel_id", meta.ChannelID, "floe_app", meta.FloeApp, "code_space_id", meta.CodeSpaceID, "error", err)
+		},
 	})
+	if err != nil {
+		return err
+	}
+
+	// RPC stream
+	srv.Handle("rpc", func(ctx context.Context, stream io.ReadWriteCloser) {
+		a.serveRPCStream(ctx, stream, meta, fsSvc)
+	})
+
+	// FS read-file stream (binary, chunked)
+	srv.Handle("fs/read_file", func(ctx context.Context, stream io.ReadWriteCloser) {
+		fsSvc.ServeReadFileStream(ctx, stream, meta)
+	})
+
+	// Env App UI static assets are delivered over flowersec-proxy (runtime mode).
+	// Only enable the proxy handler for the reserved Env App codespace_id to avoid
+	// unintentionally exposing it to legacy region UIs.
+	if strings.TrimSpace(meta.CodeSpaceID) == "env-ui" {
+		up := strings.TrimSpace(a.code.GatewayURL())
+		if up == "" {
+			return errors.New("codeapp gateway not ready")
+		}
+		origin, err := a.code.ExternalOriginForEnvApp(meta.EndpointID)
+		if err != nil {
+			return err
+		}
+		if err := fsproxy.Register(srv, fsproxy.Options{
+			Upstream:       up,
+			UpstreamOrigin: origin,
+		}); err != nil {
+			return err
+		}
+	}
+
+	return srv.ServeSession(ctx, sess)
 }
 
 func (a *Agent) serveRPCStream(ctx context.Context, stream io.ReadWriteCloser, meta *session.Meta, fsSvc *fs.Service) {
