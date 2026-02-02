@@ -51,6 +51,12 @@ Design note:
 | Stream kind | Purpose | Required permission | Source |
 | --- | --- | --- | --- |
 | `fs/read_file` | Read raw file bytes (preview/download) | `read` | `internal/fs/stream_read_file.go` |
+| `flowersec-proxy/http1` | HTTP proxy (Code App) | `read + write + execute` | `internal/agent/agent.go` |
+| `flowersec-proxy/ws` | WebSocket proxy (Code App) | `read + write + execute` | `internal/agent/agent.go` |
+
+Notes for Code App:
+- The code-server UI effectively enables a full interactive environment. For MVP, the agent requires **all three** permission bits (`read`, `write`, `execute`) before it will serve `floe_app = com.floegence.redeven.code`.
+- This is intentionally conservative to avoid misleading "read-only code-server" semantics.
 
 ## Adding New Capabilities (Policy Contract)
 
