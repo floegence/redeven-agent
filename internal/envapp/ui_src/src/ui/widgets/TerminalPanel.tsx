@@ -1,8 +1,10 @@
-import { For, Index, Show, createEffect, createMemo, createSignal, onCleanup, untrack } from 'solid-js';
+import { Index, Show, createEffect, createMemo, createSignal, onCleanup, untrack } from 'solid-js';
 import {
   Button,
   Dropdown,
   type DropdownItem,
+  Input,
+  NumberInput,
   LoadingOverlay,
   Panel,
   PanelContent,
@@ -30,6 +32,12 @@ import {
   createFlowersecTerminalTransport,
   getOrCreateTerminalConnId,
 } from '../services/terminalTransport';
+import {
+  ensureTerminalPreferencesInitialized,
+  TERMINAL_MAX_FONT_SIZE,
+  TERMINAL_MIN_FONT_SIZE,
+  useTerminalPreferences,
+} from '../services/terminalPreferences';
 
 type session_loading_state = 'idle' | 'initializing' | 'attaching' | 'loading_history';
 
@@ -38,6 +46,12 @@ export type TerminalPanelVariant = 'panel' | 'deck';
 export interface TerminalPanelProps {
   variant?: TerminalPanelVariant;
 }
+
+type terminal_search_match = {
+  row: number;
+  col: number;
+  len: number;
+};
 
 function readActiveSessionId(): string | null {
   try {
@@ -111,6 +125,8 @@ type terminal_session_view_props = {
   connected: () => boolean;
   themeName: () => TerminalThemeName;
   themeColors: () => Record<string, string>;
+  fontSize: () => number;
+  fontFamily: () => string;
   connId: string;
   transport: TerminalTransport;
   eventSource: TerminalEventSource;
@@ -128,9 +144,40 @@ const TERMINAL_THEME_ITEMS: DropdownItem[] = [
   { id: 'tokyoNight', label: 'Tokyo Night' },
 ];
 
-const TERMINAL_THEME_PERSIST_KEY = 'terminal:theme';
-
 const HISTORY_STATS_POLL_MS = 10_000;
+
+const TERMINAL_SELECTION_BACKGROUND = 'rgba(255, 234, 0, 0.72)';
+const TERMINAL_SELECTION_FOREGROUND = '#000000';
+
+const TERMINAL_SEARCH_MAX_RESULTS = 5000;
+
+const TERMINAL_FONT_OPTIONS: Array<{ id: string; label: string; family: string }> = [
+  {
+    id: 'iosevka',
+    label: 'Iosevka',
+    family: '"Iosevka", "JetBrains Mono", "SF Mono", Menlo, Monaco, monospace',
+  },
+  {
+    id: 'jetbrains',
+    label: 'JetBrains Mono',
+    family: '"JetBrains Mono", "Iosevka", "SF Mono", Menlo, Monaco, monospace',
+  },
+  {
+    id: 'sfmono',
+    label: 'SF Mono',
+    family: '"SF Mono", Menlo, Monaco, "JetBrains Mono", "Iosevka", monospace',
+  },
+  {
+    id: 'menlo',
+    label: 'Menlo',
+    family: 'Menlo, Monaco, "SF Mono", "JetBrains Mono", "Iosevka", monospace',
+  },
+  {
+    id: 'monaco',
+    label: 'Monaco',
+    family: 'Monaco, Menlo, "SF Mono", "JetBrains Mono", "Iosevka", monospace',
+  },
+];
 
 const RefreshIcon = (props: { class?: string }) => (
   <svg
@@ -170,6 +217,8 @@ const MoreVerticalIcon = (props: { class?: string }) => (
 function TerminalSessionView(props: terminal_session_view_props) {
   const sessionId = () => props.session.id;
   const colors = () => props.themeColors();
+  const fontSize = () => props.fontSize();
+  const fontFamily = () => props.fontFamily();
   const [loading, setLoading] = createSignal<session_loading_state>('initializing');
   const [error, setError] = createSignal<string | null>(null);
   const [readyOnce, setReadyOnce] = createSignal(false);
@@ -348,10 +397,10 @@ function TerminalSessionView(props: terminal_session_view_props) {
     const core = new TerminalCore(
       target,
       getDefaultTerminalConfig('dark', {
-        fontSize: 12,
+        fontSize: fontSize(),
         allowTransparency: false,
         theme: colors(),
-        fontFamily: '"Iosevka", "JetBrains Mono", "SF Mono", Menlo, Monaco, monospace',
+        fontFamily: fontFamily(),
       }),
       {
         onData: (data: string) => {
@@ -375,6 +424,9 @@ function TerminalSessionView(props: terminal_session_view_props) {
     try {
       await core.initialize();
       if (seq !== initSeq) return;
+
+      // core.initialize() 完成后底层终端实例已就绪：重新注册一次，确保外层可以拿到可用实例（用于字体/搜索等能力）。
+      props.registerCore(id, core);
 
       core.setTheme(colors());
       core.forceResize();
@@ -483,9 +535,27 @@ function TerminalSessionView(props: terminal_session_view_props) {
     if (!core) return;
     requestAnimationFrame(() => {
       core.setTheme(colors());
+      core.setFontSize(fontSize());
       core.forceResize();
       core.focus();
     });
+  });
+
+  createEffect(() => {
+    if (!initialized || !term) return;
+    term.setFontSize(fontSize());
+    term.forceResize();
+  });
+
+  createEffect(() => {
+    if (!initialized || !term) return;
+    // TerminalCore 目前没有暴露 setFontFamily，这里直接透传到底层 ghostty-web（options 为 Proxy，会触发字体重算/重绘）。
+    const anyCore = term as any;
+    const inner = anyCore?.terminal;
+    if (inner?.options) {
+      inner.options.fontFamily = fontFamily();
+      term.forceResize();
+    }
   });
 
   onCleanup(() => {
@@ -546,14 +616,30 @@ export function TerminalPanel(props: TerminalPanelProps = {}) {
   const floe = useResolvedFloeConfig();
   const connId = getOrCreateTerminalConnId();
 
+  ensureTerminalPreferencesInitialized(floe.persist);
+  const terminalPrefs = useTerminalPreferences();
+
   const transport = createFlowersecTerminalTransport(protocol as any, connId);
   const eventSource = createFlowersecTerminalEventSource(protocol as any);
 
   const connected = () => Boolean(protocol.client());
 
-  const [userTheme, setUserTheme] = createSignal<string>(
-    floe.persist.load<string>(TERMINAL_THEME_PERSIST_KEY, 'system')
-  );
+  const userTheme = terminalPrefs.userTheme;
+  const fontSize = terminalPrefs.fontSize;
+  const fontFamilyId = terminalPrefs.fontFamilyId;
+
+  const fontFamily = createMemo<string>(() => {
+    const id = fontFamilyId();
+    return TERMINAL_FONT_OPTIONS.find((o) => o.id === id)?.family ?? TERMINAL_FONT_OPTIONS[0]!.family;
+  });
+
+  const persistFontSize = (value: number) => {
+    terminalPrefs.setFontSize(value);
+  };
+
+  const persistFontFamily = (id: string) => {
+    terminalPrefs.setFontFamily(id);
+  };
 
   const terminalThemeName = createMemo<TerminalThemeName>(() => {
     const selected = userTheme();
@@ -564,7 +650,13 @@ export function TerminalPanel(props: TerminalPanelProps = {}) {
   });
 
   const terminalThemeColors = createMemo<Record<string, string>>(() => {
-    return getThemeColors(terminalThemeName());
+    // 统一并提亮选中背景色，保证不同主题下的可读性一致
+    return {
+      ...getThemeColors(terminalThemeName()),
+      selectionBackground: TERMINAL_SELECTION_BACKGROUND,
+      selectionForeground: TERMINAL_SELECTION_FOREGROUND,
+      selection: TERMINAL_SELECTION_BACKGROUND,
+    } as Record<string, string>;
   });
 
   const [sessions, setSessions] = createSignal<TerminalSessionInfo[]>([]);
@@ -579,14 +671,24 @@ export function TerminalPanel(props: TerminalPanelProps = {}) {
   const coreRegistry = new Map<string, TerminalCore>();
   const actionsRegistry = new Map<string, { refreshHistory: () => Promise<void> }>();
 
+  const [coreRegistrySeq, setCoreRegistrySeq] = createSignal(0);
+
   const registerCore = (id: string, core: TerminalCore | null) => {
     if (!id) return;
     if (core) {
       coreRegistry.set(id, core);
       core.setTheme(terminalThemeColors());
+      core.setFontSize(fontSize());
+      const anyCore = core as any;
+      const inner = anyCore?.terminal;
+      if (inner?.options) {
+        inner.options.fontFamily = fontFamily();
+      }
+      setCoreRegistrySeq((v) => v + 1);
       return;
     }
     coreRegistry.delete(id);
+    setCoreRegistrySeq((v) => v + 1);
   };
 
   const registerActions = (id: string, actions: { refreshHistory: () => Promise<void> } | null) => {
@@ -612,9 +714,43 @@ export function TerminalPanel(props: TerminalPanelProps = {}) {
   };
 
   const handleThemeChange = (value: string) => {
-    setUserTheme(value);
-    floe.persist.debouncedSave(TERMINAL_THEME_PERSIST_KEY, value);
+    terminalPrefs.setUserTheme(value);
   };
+
+  createEffect(() => {
+    const size = fontSize();
+    for (const core of coreRegistry.values()) {
+      core.setFontSize(size);
+    }
+  });
+
+  createEffect(() => {
+    const family = fontFamily();
+    for (const core of coreRegistry.values()) {
+      const anyCore = core as any;
+      const inner = anyCore?.terminal;
+      if (inner?.options) {
+        inner.options.fontFamily = family;
+      }
+    }
+  });
+
+  createEffect(() => {
+    // 用户切换到某个 tab 后，强制触发一次 resize，同步前后端 cols/rows（避免后端仍沿用旧尺寸）。
+    const sid = activeSessionId();
+    const isConnected = connected();
+    void coreRegistrySeq();
+    if (!isConnected || !sid) return;
+
+    const core = coreRegistry.get(sid);
+    if (!core) return;
+
+    requestAnimationFrame(() => {
+      core.forceResize();
+      const dims = core.getDimensions();
+      void transport.resize(sid, dims.cols, dims.rows);
+    });
+  });
 
   createEffect(() => {
     const sid = activeSessionId();
@@ -821,8 +957,301 @@ export function TerminalPanel(props: TerminalPanelProps = {}) {
     }));
   });
 
+  const currentThemeLabel = createMemo(() => {
+    const id = userTheme();
+    return TERMINAL_THEME_ITEMS.find((i) => i.id === id)?.label ?? 'System Theme';
+  });
+
+  const currentFontLabel = createMemo(() => {
+    const id = fontFamilyId();
+    return TERMINAL_FONT_OPTIONS.find((o) => o.id === id)?.label ?? TERMINAL_FONT_OPTIONS[0]!.label;
+  });
+
+  const themeMenuItems = createMemo<DropdownItem[]>(() => {
+    const selected = userTheme();
+    return TERMINAL_THEME_ITEMS.map((item) => ({
+      id: `theme:${item.id}`,
+      label: item.id === selected ? `${item.label} (Current)` : item.label,
+      keepOpen: true,
+    }));
+  });
+
+  const fontMenuItems = createMemo<DropdownItem[]>(() => {
+    const selected = fontFamilyId();
+    return [
+      {
+        id: 'font:size',
+        label: '',
+        keepOpen: true,
+        content: () => (
+          <div
+            class="flex items-center gap-2 px-2 py-1"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div class="text-xs text-muted-foreground w-10 shrink-0">Size</div>
+            <NumberInput
+              value={fontSize()}
+              onChange={(v) => persistFontSize(v)}
+              min={TERMINAL_MIN_FONT_SIZE}
+              max={TERMINAL_MAX_FONT_SIZE}
+              step={1}
+              size="sm"
+              class="w-36"
+            />
+          </div>
+        ),
+      },
+      { id: 'sep-font', label: '', separator: true },
+      ...TERMINAL_FONT_OPTIONS.map((o) => ({
+        id: `font:family:${o.id}`,
+        label: o.id === selected ? `${o.label} (Current)` : o.label,
+        keepOpen: true,
+      })),
+    ];
+  });
+
+  const moreItems = createMemo<DropdownItem[]>(() => {
+    return [
+      { id: 'search', label: 'Search' },
+      { id: 'sep-1', label: '', separator: true },
+      { id: 'theme-menu', label: `Theme: ${currentThemeLabel()}`, children: themeMenuItems(), keepOpen: true },
+      { id: 'font-menu', label: `Font: ${currentFontLabel()}`, children: fontMenuItems(), keepOpen: true },
+    ];
+  });
+
+  const [searchOpen, setSearchOpen] = createSignal(false);
+  const [searchQuery, setSearchQuery] = createSignal('');
+  const [searchResults, setSearchResults] = createSignal<terminal_search_match[]>([]);
+  const [searchIndex, setSearchIndex] = createSignal(0);
+
+  let searchInputEl: HTMLInputElement | null = null;
+  let rootEl: HTMLDivElement | null = null;
+
+  const getActiveCore = () => {
+    const sid = activeSessionId();
+    if (!sid) return null;
+    return coreRegistry.get(sid) ?? null;
+  };
+
+  const getActiveTerminal = (): any | null => {
+    const core = getActiveCore();
+    if (!core) return null;
+    return (core as any)?.terminal ?? null;
+  };
+
+  const clearSearchHighlight = () => {
+    const t = getActiveTerminal();
+    if (t?.clearSelection) t.clearSelection();
+  };
+
+  const applySearchMatch = (match: terminal_search_match) => {
+    const t = getActiveTerminal();
+    if (!t) return;
+
+    const scrollbackLen = typeof t.getScrollbackLength === 'function' ? t.getScrollbackLength() : 0;
+    const rows = typeof t.rows === 'number' ? t.rows : 24;
+
+    // 让匹配行尽量出现在视口中间，便于查看上下文
+    const desiredTop =
+      match.row >= scrollbackLen ? scrollbackLen : Math.max(0, Math.min(scrollbackLen, match.row - Math.floor(rows / 2)));
+    const viewportY = Math.max(0, Math.min(scrollbackLen, scrollbackLen - desiredTop));
+    if (typeof t.scrollToLine === 'function') t.scrollToLine(viewportY);
+
+    const sm = (t as any)?.selectionManager;
+    const startCol = Math.max(0, match.col);
+    const endCol = Math.max(startCol, startCol + Math.max(1, match.len) - 1);
+    if (sm) {
+      sm.selectionStart = { col: startCol, absoluteRow: match.row };
+      sm.selectionEnd = { col: endCol, absoluteRow: match.row };
+      sm.selectionChangedEmitter?.fire?.();
+      return;
+    }
+
+    // 兜底：如果没有 selectionManager，尝试用公开 API（可能不支持滚动历史定位）
+    if (typeof t.select === 'function') {
+      t.select(startCol, 0, Math.max(1, match.len));
+    }
+  };
+
+  const scanTerminalMatches = (query: string) => {
+    const t = getActiveTerminal();
+    const q = query.trim();
+    if (!t || !q) {
+      setSearchResults([]);
+      setSearchIndex(0);
+      clearSearchHighlight();
+      return;
+    }
+
+    const buffer = t?.buffer?.active;
+    if (!buffer || typeof buffer.length !== 'number') {
+      setSearchResults([]);
+      setSearchIndex(0);
+      clearSearchHighlight();
+      return;
+    }
+
+    const tokens = q.split(/\s+/).filter(Boolean);
+    const results: terminal_search_match[] = [];
+
+    for (let row = 0; row < buffer.length; row += 1) {
+      const line = buffer.getLine(row);
+      if (!line) continue;
+      const text = line.translateToString(false);
+      if (!text) continue;
+
+      const haystack = text.toLowerCase();
+
+      if (tokens.length <= 1) {
+        const needle = q.toLowerCase();
+        let idx = 0;
+        while (idx <= haystack.length - needle.length) {
+          const at = haystack.indexOf(needle, idx);
+          if (at < 0) break;
+          results.push({ row, col: at, len: Math.max(1, needle.length) });
+          if (results.length >= TERMINAL_SEARCH_MAX_RESULTS) break;
+          idx = at + Math.max(1, needle.length);
+        }
+      } else {
+        let from = 0;
+        let start = -1;
+        let end = -1;
+        let ok = true;
+        for (const token of tokens) {
+          const needle = token.toLowerCase();
+          const at = haystack.indexOf(needle, from);
+          if (at < 0) {
+            ok = false;
+            break;
+          }
+          if (start < 0) start = at;
+          end = at + needle.length;
+          from = end;
+        }
+        if (ok && start >= 0 && end > start) {
+          results.push({ row, col: start, len: end - start });
+        }
+      }
+
+      if (results.length >= TERMINAL_SEARCH_MAX_RESULTS) break;
+    }
+
+    // 默认更偏向最近输出：从底部往上看
+    results.sort((a, b) => {
+      const dr = b.row - a.row;
+      if (dr !== 0) return dr;
+      return a.col - b.col;
+    });
+
+    setSearchResults(results);
+    setSearchIndex(0);
+    if (results.length > 0) applySearchMatch(results[0]!);
+    else clearSearchHighlight();
+  };
+
+  let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  createEffect(() => {
+    const open = searchOpen();
+    const q = searchQuery();
+    const sid = activeSessionId();
+    void coreRegistrySeq();
+    if (!open || !sid) {
+      if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+      searchDebounceTimer = null;
+      setSearchResults([]);
+      setSearchIndex(0);
+      return;
+    }
+
+    if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+    searchDebounceTimer = setTimeout(() => {
+      scanTerminalMatches(q);
+    }, 120);
+  });
+
+  onCleanup(() => {
+    if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+  });
+
+  const openSearch = () => {
+    setSearchOpen(true);
+    requestAnimationFrame(() => {
+      searchInputEl?.focus();
+      searchInputEl?.select?.();
+    });
+  };
+
+  const closeSearch = () => {
+    setSearchOpen(false);
+    setSearchQuery('');
+    setSearchResults([]);
+    setSearchIndex(0);
+    clearSearchHighlight();
+    requestAnimationFrame(() => {
+      getActiveCore()?.focus();
+    });
+  };
+
+  const goNextMatch = () => {
+    const list = searchResults();
+    if (list.length === 0) return;
+    const next = (searchIndex() + 1) % list.length;
+    setSearchIndex(next);
+    applySearchMatch(list[next]!);
+  };
+
+  const goPrevMatch = () => {
+    const list = searchResults();
+    if (list.length === 0) return;
+    const next = (searchIndex() - 1 + list.length) % list.length;
+    setSearchIndex(next);
+    applySearchMatch(list[next]!);
+  };
+
+  const handleRootKeyDown: (e: KeyboardEvent) => void = (e) => {
+    const key = e.key?.toLowerCase?.() ?? '';
+
+    if ((e.ctrlKey || e.metaKey) && key === 'f') {
+      // 终端常用快捷键：拦截浏览器默认查找
+      e.preventDefault();
+      openSearch();
+      return;
+    }
+
+    if (e.key === 'Escape' && searchOpen()) {
+      e.preventDefault();
+      closeSearch();
+      return;
+    }
+
+    if (e.key === 'Enter' && searchOpen()) {
+      // Enter/Shift+Enter 进行下一条/上一条
+      e.preventDefault();
+      if (e.shiftKey) goPrevMatch();
+      else goNextMatch();
+    }
+  };
+
+  const handleMoreSelect = (id: string) => {
+    if (id === 'search') {
+      openSearch();
+      return;
+    }
+
+    if (id.startsWith('theme:')) {
+      handleThemeChange(id.slice('theme:'.length));
+      return;
+    }
+
+    if (id.startsWith('font:family:')) {
+      persistFontFamily(id.slice('font:family:'.length));
+      return;
+    }
+  };
+
   const body = (
-    <div class="h-full flex flex-col">
+    <div ref={(n) => (rootEl = n)} class="h-full flex flex-col" onKeyDown={handleRootKeyDown}>
       <div
         class={`relative pt-2 px-2 pb-0 flex items-end gap-2 ${variant === 'panel' ? 'justify-between' : 'justify-end'}`}
       >
@@ -866,9 +1295,8 @@ export function TerminalPanel(props: TerminalPanelProps = {}) {
                 <MoreVerticalIcon class="w-3.5 h-3.5" />
               </Button>
             }
-            items={TERMINAL_THEME_ITEMS}
-            value={userTheme()}
-            onSelect={handleThemeChange}
+            items={moreItems()}
+            onSelect={handleMoreSelect}
             align="end"
           />
           <Show when={tabItems().length === 0}>
@@ -881,6 +1309,50 @@ export function TerminalPanel(props: TerminalPanelProps = {}) {
 
       <Show when={connected()} fallback={<div class="p-4 text-xs text-muted-foreground">Not connected.</div>}>
         <div class="flex-1 min-h-0 relative">
+          <Show when={searchOpen()}>
+            <div class="absolute top-2 right-2 z-20 flex items-center gap-1 rounded-md border border-white/15 bg-[#0b0f14]/95 px-2 py-1 shadow-md backdrop-blur">
+              <Input
+                ref={(n) => (searchInputEl = n)}
+                size="sm"
+                value={searchQuery()}
+                placeholder="Search..."
+                class="w-[220px] bg-black/20 border-white/20 text-[#e5e7eb] placeholder:text-[#94a3b8] focus:ring-yellow-400 focus:border-yellow-400 shadow-none"
+                onInput={(e) => setSearchQuery(e.currentTarget.value)}
+              />
+              <div class="text-[10px] text-[#94a3b8] tabular-nums min-w-[54px] text-right">
+                {searchResults().length === 0 ? '0/0' : `${searchIndex() + 1}/${searchResults().length}`}
+              </div>
+              <Button
+                size="sm"
+                variant="ghost"
+                class="text-[#e5e7eb] hover:bg-white/10 hover:text-white"
+                onClick={goPrevMatch}
+                disabled={searchResults().length === 0}
+                title="Previous"
+              >
+                Prev
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                class="text-[#e5e7eb] hover:bg-white/10 hover:text-white"
+                onClick={goNextMatch}
+                disabled={searchResults().length === 0}
+                title="Next"
+              >
+                Next
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                class="text-[#e5e7eb] hover:bg-white/10 hover:text-white"
+                onClick={closeSearch}
+                title="Close"
+              >
+                Close
+              </Button>
+            </div>
+          </Show>
           <Show when={sessions().length > 0}>
             <div class="h-full">
               <Index each={sessions()}>
@@ -893,6 +1365,8 @@ export function TerminalPanel(props: TerminalPanelProps = {}) {
                         connected={connected}
                         themeName={terminalThemeName}
                         themeColors={terminalThemeColors}
+                        fontSize={fontSize}
+                        fontFamily={fontFamily}
                         connId={connId}
                         transport={transport}
                         eventSource={eventSource}
