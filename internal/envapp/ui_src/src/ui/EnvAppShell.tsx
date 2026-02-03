@@ -28,6 +28,7 @@ import {
   useTheme,
   useWidgetRegistry,
 } from '@floegence/floe-webapp-core';
+import type { ClientObserverLike } from '@floegence/flowersec-core';
 import { useProtocol } from '@floegence/floe-webapp-protocol';
 
 import { EnvContext } from './pages/EnvContext';
@@ -38,6 +39,7 @@ import { EnvFileBrowserPage } from './pages/EnvFileBrowserPage';
 import { EnvCodespacesPage } from './pages/EnvCodespacesPage';
 import { EnvPluginMarketPage } from './pages/EnvPluginMarketPage';
 import { redevenDeckWidgets } from './deck/redevenDeckWidgets';
+import { useRedevenRpc } from './protocol/redeven_v1';
 import { GrantAuditDialog } from './widgets/GrantAuditDialog';
 import { getSandboxWindowInfo } from './services/sandboxWindowRegistry';
 import {
@@ -60,6 +62,7 @@ export function EnvAppShell() {
   const theme = useTheme();
   const widgetRegistry = useWidgetRegistry();
   const protocol = useProtocol();
+  const rpc = useRedevenRpc();
   const cmd = useCommand();
   const notify = useNotification();
 
@@ -78,6 +81,28 @@ export function EnvAppShell() {
   const status = createMemo(() => (manualError() ? 'error' : protocol.status()));
   const connecting = () => protocol.status() === 'connecting';
   const connectError = createMemo(() => manualError() ?? protocol.error()?.message ?? null);
+
+  const RECENT_AGENT_RX_MS = 10_000;
+  const PROBE_TIMEOUT_MS = 1_200;
+
+  let lastAgentRxAtMs = 0;
+  const markAgentRx = () => {
+    lastAgentRxAtMs = Date.now();
+  };
+
+  const observer: ClientObserverLike = {
+    onRpcNotify: () => {
+      markAgentRx();
+    },
+    onRpcCall: (result) => {
+      // Only count results that prove we received a response envelope from the peer.
+      if (result === 'ok' || result === 'rpc_error' || result === 'handler_not_found') {
+        markAgentRx();
+      }
+    },
+  };
+
+  let ensureInFlight: Promise<void> | null = null;
 
   const createGetGrant = () => async () => {
     const id = envId();
@@ -129,19 +154,92 @@ export function EnvAppShell() {
 
     setManualError(null);
 
-    void protocol.connect({
-      mode: 'tunnel',
-      getGrant: createGetGrant(),
-      autoReconnect: {
-        enabled: true,
-        // Env App should be resilient to agent restarts and transient network issues.
-        maxAttempts: 1_000_000,
-        initialDelayMs: 500,
-        maxDelayMs: 30_000,
-      },
-    }).catch(() => {
-      // protocol.error() will expose the last failure; avoid unhandled rejections here.
+    try {
+      await protocol.connect({
+        mode: 'tunnel',
+        getGrant: createGetGrant(),
+        observer,
+        autoReconnect: {
+          enabled: true,
+          // Env App should be resilient to agent restarts and transient network issues.
+          maxAttempts: 1_000_000,
+          initialDelayMs: 500,
+          maxDelayMs: 30_000,
+        },
+      });
+    } catch {
+      // protocol.error() will expose the last failure; avoid noisy rethrows here.
+    }
+  };
+
+  const probe = async (): Promise<boolean> => {
+    const startedAt = Date.now();
+
+    const p = rpc.sys.ping();
+    // If we timeout and then close the client (by reconnecting), the original ping promise
+    // might reject later; attach a handler to avoid unhandled rejections.
+    p.catch(() => {
     });
+
+    let timer: number | undefined;
+    try {
+      await Promise.race([
+        p,
+        new Promise<never>((_, reject) => {
+          timer = window.setTimeout(() => reject(new Error('timeout')), PROBE_TIMEOUT_MS);
+        }),
+      ]);
+      console.debug('[envapp] health probe ok', { ms: Date.now() - startedAt });
+      return true;
+    } catch (e) {
+      console.debug('[envapp] health probe failed', {
+        ms: Date.now() - startedAt,
+        error: e instanceof Error ? e.message : String(e),
+      });
+      return false;
+    } finally {
+      if (typeof timer !== 'undefined') window.clearTimeout(timer);
+    }
+  };
+
+  const ensureHealthy = (reason: string) => {
+    if (ensureInFlight) return ensureInFlight;
+
+    ensureInFlight = (async () => {
+      if (connecting()) return;
+
+      const st = protocol.status();
+      const client = protocol.client();
+      if (st !== 'connected' || !client) {
+        console.debug('[envapp] ensureHealthy: connect', { reason, status: st });
+        await connect();
+        return;
+      }
+
+      const now = Date.now();
+      const lastRxAgeMs = lastAgentRxAtMs > 0 ? now - lastAgentRxAtMs : Number.POSITIVE_INFINITY;
+      if (lastRxAgeMs <= RECENT_AGENT_RX_MS) {
+        console.debug('[envapp] ensureHealthy: recent rx; skip', { reason, lastRxAgeMs });
+        return;
+      }
+
+      console.debug('[envapp] ensureHealthy: probing', { reason, lastRxAgeMs });
+      const ok = await probe();
+      if (ok) return;
+
+      const rxAgeAfterProbe = lastAgentRxAtMs > 0 ? Date.now() - lastAgentRxAtMs : Number.POSITIVE_INFINITY;
+      if (rxAgeAfterProbe <= RECENT_AGENT_RX_MS) {
+        console.debug('[envapp] ensureHealthy: rx during probe; skip reconnect', { reason, rxAgeAfterProbe });
+        return;
+      }
+
+      console.debug('[envapp] ensureHealthy: reconnect', { reason });
+      await connect();
+    })().finally(() => {
+      ensureInFlight = null;
+    });
+
+    return ensureInFlight;
   };
 
   onMount(() => {
@@ -203,12 +301,12 @@ export function EnvAppShell() {
     onCleanup(() => window.removeEventListener('message', onMessage));
   });
 
-  // 在常见浏览器生命周期事件下补一次 connect，用于降低离线恢复/切回标签页的感知延迟。
+  // Ensure the tunnel is healthy after common browser lifecycle transitions.
   onMount(() => {
-    const onOnline = () => void connect();
-    const onFocus = () => void connect();
+    const onOnline = () => void ensureHealthy('online');
+    const onFocus = () => void ensureHealthy('focus');
     const onVisibility = () => {
-      if (!document.hidden) void connect();
+      if (!document.hidden) void ensureHealthy('visibility');
     };
 
     window.addEventListener('online', onOnline);

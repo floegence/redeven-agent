@@ -27,5 +27,7 @@ export const redevenV1TypeIds = {
   monitor: {
     sysMonitor: 3001,
   },
+  sys: {
+    ping: 4001,
+  },
 } as const;
-
