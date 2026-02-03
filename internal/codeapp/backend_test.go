@@ -39,10 +39,9 @@ func TestService_CreateUpdateDeleteSpace_MetadataOnly(t *testing.T) {
 	ctx := context.Background()
 
 	created, err := svc.CreateSpace(ctx, gateway.CreateSpaceRequest{
-		CodeSpaceID:   "dev1",
-		WorkspacePath: ws,
-		Name:          "  My Space  ",
-		Description:   "  Desc  ",
+		Path:        ws,
+		Name:        "  My Space  ",
+		Description: "  Desc  ",
 	})
 	if err != nil {
 		t.Fatalf("CreateSpace: %v", err)
@@ -50,8 +49,8 @@ func TestService_CreateUpdateDeleteSpace_MetadataOnly(t *testing.T) {
 	if created == nil {
 		t.Fatalf("CreateSpace returned nil")
 	}
-	if created.CodeSpaceID != "dev1" {
-		t.Fatalf("code_space_id = %q, want %q", created.CodeSpaceID, "dev1")
+	if !IsValidCodeSpaceID(created.CodeSpaceID) {
+		t.Fatalf("generated code_space_id is invalid: %q", created.CodeSpaceID)
 	}
 	if created.CodePort != 0 || created.Running || created.PID != 0 {
 		t.Fatalf("CreateSpace should not start runner: %+v", created)
@@ -67,12 +66,12 @@ func TestService_CreateUpdateDeleteSpace_MetadataOnly(t *testing.T) {
 	}
 
 	// Ensure the state dir is created under <state_dir>/apps/code/spaces/<id>/.
-	spaceRoot := filepath.Join(stateDir, "apps", "code", "spaces", "dev1")
+	spaceRoot := filepath.Join(stateDir, "apps", "code", "spaces", created.CodeSpaceID)
 	if _, err := os.Stat(spaceRoot); err != nil {
 		t.Fatalf("space root not created: %v", err)
 	}
 
-	sp, err := reg.GetSpace(ctx, "dev1")
+	sp, err := reg.GetSpace(ctx, created.CodeSpaceID)
 	if err != nil {
 		t.Fatalf("GetSpace: %v", err)
 	}
@@ -88,7 +87,7 @@ func TestService_CreateUpdateDeleteSpace_MetadataOnly(t *testing.T) {
 
 	newName := "New Name"
 	newDesc := "New Desc"
-	updated, err := svc.UpdateSpace(ctx, "dev1", gateway.UpdateSpaceRequest{
+	updated, err := svc.UpdateSpace(ctx, created.CodeSpaceID, gateway.UpdateSpaceRequest{
 		Name:        &newName,
 		Description: &newDesc,
 	})
@@ -99,7 +98,7 @@ func TestService_CreateUpdateDeleteSpace_MetadataOnly(t *testing.T) {
 		t.Fatalf("UpdateSpace meta mismatch: %+v", updated)
 	}
 
-	sp2, err := reg.GetSpace(ctx, "dev1")
+	sp2, err := reg.GetSpace(ctx, created.CodeSpaceID)
 	if err != nil {
 		t.Fatalf("GetSpace(after update): %v", err)
 	}
@@ -112,7 +111,7 @@ func TestService_CreateUpdateDeleteSpace_MetadataOnly(t *testing.T) {
 
 	// Validation: name length (rune count) must be <= 64.
 	tooLong := strings.Repeat("a", 65)
-	if _, err := svc.UpdateSpace(ctx, "dev1", gateway.UpdateSpaceRequest{Name: &tooLong}); err == nil {
+	if _, err := svc.UpdateSpace(ctx, created.CodeSpaceID, gateway.UpdateSpaceRequest{Name: &tooLong}); err == nil {
 		t.Fatalf("UpdateSpace should reject long name")
 	}
 
@@ -121,10 +120,10 @@ func TestService_CreateUpdateDeleteSpace_MetadataOnly(t *testing.T) {
 	if err := os.WriteFile(dummy, []byte("x"), 0o600); err != nil {
 		t.Fatalf("write dummy: %v", err)
 	}
-	if err := svc.DeleteSpace(ctx, "dev1"); err != nil {
+	if err := svc.DeleteSpace(ctx, created.CodeSpaceID); err != nil {
 		t.Fatalf("DeleteSpace: %v", err)
 	}
-	if sp3, err := reg.GetSpace(ctx, "dev1"); err != nil || sp3 != nil {
+	if sp3, err := reg.GetSpace(ctx, created.CodeSpaceID); err != nil || sp3 != nil {
 		t.Fatalf("GetSpace(after delete) = %+v err=%v, want nil", sp3, err)
 	}
 	if _, err := os.Stat(spaceRoot); err == nil {
@@ -158,7 +157,7 @@ func TestService_CreateSpace_GeneratesValidIDWhenMissing(t *testing.T) {
 	ws := t.TempDir()
 
 	created, err := svc.CreateSpace(context.Background(), gateway.CreateSpaceRequest{
-		WorkspacePath: ws,
+		Path: ws,
 	})
 	if err != nil {
 		t.Fatalf("CreateSpace: %v", err)
