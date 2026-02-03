@@ -1,8 +1,8 @@
 import { createSignal } from 'solid-js';
 import type { PersistApi } from '@floegence/floe-webapp-core';
 
-// 终端偏好是全局的：任何一个 TerminalPanel 的设置都应影响所有终端实例。
-// 这里用模块级 signal 作为单例 store，并通过 Floe 的 persist 做持久化。
+// Terminal preferences are global: settings from any TerminalPanel should affect all terminal instances.
+// We keep a module-level singleton store and persist values through Floe's PersistApi.
 
 export const TERMINAL_THEME_PERSIST_KEY = 'terminal:theme';
 export const TERMINAL_FONT_SIZE_PERSIST_KEY = 'terminal:font_size';
@@ -66,4 +66,3 @@ export function useTerminalPreferences() {
     setFontFamily,
   };
 }
-
