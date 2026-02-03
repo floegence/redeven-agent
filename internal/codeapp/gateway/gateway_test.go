@@ -207,7 +207,7 @@ func TestGateway_ManagementAPI_CRUDRoutes(t *testing.T) {
 			createCalled = true
 			r := req
 			gotCreate = &r
-			return &SpaceStatus{CodeSpaceID: req.CodeSpaceID, WorkspacePath: req.WorkspacePath, Name: req.Name, Description: req.Description}, nil
+			return &SpaceStatus{CodeSpaceID: "abc", WorkspacePath: req.Path, Name: req.Name, Description: req.Description}, nil
 		},
 		updateSpace: func(ctx context.Context, codeSpaceID string, req UpdateSpaceRequest) (*SpaceStatus, error) {
 			updateCalled = true
@@ -251,8 +251,7 @@ func TestGateway_ManagementAPI_CRUDRoutes(t *testing.T) {
 	// POST create
 	{
 		req := httptest.NewRequest(http.MethodPost, "/_redeven_proxy/api/spaces", strings.NewReader(`{
-  "code_space_id": "abc",
-  "workspace_path": "/tmp",
+  "path": "/tmp",
   "name": "n",
   "description": "d"
 }`))
@@ -275,7 +274,7 @@ func TestGateway_ManagementAPI_CRUDRoutes(t *testing.T) {
 		if !createCalled || gotCreate == nil {
 			t.Fatalf("create handler not called")
 		}
-		if gotCreate.CodeSpaceID != "abc" || gotCreate.WorkspacePath != "/tmp" || gotCreate.Name != "n" || gotCreate.Description != "d" {
+		if gotCreate.Path != "/tmp" || gotCreate.Name != "n" || gotCreate.Description != "d" {
 			t.Fatalf("unexpected create args: %+v", gotCreate)
 		}
 	}

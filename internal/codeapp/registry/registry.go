@@ -250,9 +250,9 @@ WHERE type = 'table' AND name = 'code_spaces'
 		if _, err := tx.Exec(`
 CREATE TABLE IF NOT EXISTS code_spaces (
   code_space_id TEXT PRIMARY KEY,
-  workspace_path TEXT NOT NULL,
   name TEXT NOT NULL DEFAULT '',
   description TEXT NOT NULL DEFAULT '',
+  workspace_path TEXT NOT NULL,
   created_at_unix_ms INTEGER NOT NULL,
   updated_at_unix_ms INTEGER NOT NULL,
   last_opened_at_unix_ms INTEGER NOT NULL
