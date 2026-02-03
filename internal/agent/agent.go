@@ -27,6 +27,7 @@ import (
 	"github.com/floegence/redeven-agent/internal/fs"
 	"github.com/floegence/redeven-agent/internal/monitor"
 	"github.com/floegence/redeven-agent/internal/session"
+	syssvc "github.com/floegence/redeven-agent/internal/sys"
 	"github.com/floegence/redeven-agent/internal/terminal"
 )
 
@@ -64,6 +65,7 @@ type Agent struct {
 
 	term *terminal.Manager
 	mon  *monitor.Service
+	sys  *syssvc.Service
 	code *codeapp.Service
 
 	mu       sync.Mutex
@@ -134,8 +136,14 @@ func New(opts Options) (*Agent, error) {
 		fsRoot:    rootAbs,
 		term:      terminal.NewManager(shell, rootAbs, logger),
 		mon:       monitor.NewService(logger),
-		code:      codeSvc,
-		sessions:  make(map[string]context.CancelFunc),
+		sys: syssvc.NewService(syssvc.Options{
+			AgentInstanceID: opts.Config.AgentInstanceID,
+			Version:         opts.Version,
+			Commit:          opts.Commit,
+			BuildTime:       opts.BuildTime,
+		}),
+		code:     codeSvc,
+		sessions: make(map[string]context.CancelFunc),
 	}, nil
 }
 
@@ -523,6 +531,9 @@ func (a *Agent) serveRPCStream(ctx context.Context, stream io.ReadWriteCloser, m
 	router := rpc.NewRouter()
 	srv := rpc.NewServer(stream, router)
 	defer a.term.DetachSink(srv)
+
+	// Sys domain (health checks).
+	a.sys.Register(router, meta)
 
 	// FS domain
 	fsSvc.Register(router, meta)
