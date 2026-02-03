@@ -378,25 +378,44 @@
     return { uninstall: () => globalThis.WebSocket = Original };
   }
 
-  // node_modules/@floegence/flowersec-core/dist/proxy/disableUpstreamServiceWorkerRegister.js
-  function disableUpstreamServiceWorkerRegister() {
-    try {
-      const sw = globalThis.navigator?.serviceWorker;
-      if (!sw || typeof sw.register !== "function")
-        return;
-      const blocked = () => {
-        throw new Error("service worker register is disabled by flowersec-proxy runtime");
-      };
+  // src/inject.ts
+  var RUNTIME_GLOBAL = "__flowersecProxyRuntime";
+  var ERR_SW_REGISTER_DISABLED = "service worker register is disabled by flowersec-proxy runtime";
+  var CODE_SERVER_WEBVIEW_SW_SUFFIX = "/out/vs/workbench/contrib/webview/browser/pre/service-worker.js";
+  function rejectSWRegister() {
+    return Promise.reject(new Error(ERR_SW_REGISTER_DISABLED));
+  }
+  function patchServiceWorkerRegisterForCodeServerWebview() {
+    const sw = globalThis.navigator?.serviceWorker;
+    if (!sw || typeof sw.register !== "function") return;
+    const current = sw.register;
+    if (current.__redeven_sw_patched) return;
+    const originalRegister = sw.register.bind(sw);
+    const patched = ((scriptURL, options) => {
       try {
-        sw.register = blocked;
+        const u = new URL(String(scriptURL), window.location.href);
+        if (!u.pathname.endsWith(CODE_SERVER_WEBVIEW_SW_SUFFIX)) {
+          return rejectSWRegister();
+        }
+        const scopeRaw = String(options?.scope ?? "").trim();
+        if (scopeRaw) {
+          const scopeURL = new URL(scopeRaw, window.location.href);
+          const dir = u.pathname.slice(0, u.pathname.lastIndexOf("/") + 1);
+          if (!scopeURL.pathname.startsWith(dir)) {
+            return rejectSWRegister();
+          }
+        }
+        return originalRegister(scriptURL, options);
       } catch {
+        return rejectSWRegister();
       }
+    });
+    patched.__redeven_sw_patched = true;
+    try {
+      sw.register = patched;
     } catch {
     }
   }
-
-  // src/inject.ts
-  var RUNTIME_GLOBAL = "__flowersecProxyRuntime";
   function getProxyRuntime() {
     const top = window.top;
     if (!top) return null;
@@ -407,7 +426,7 @@
   try {
     const rt = getProxyRuntime();
     if (rt) {
-      disableUpstreamServiceWorkerRegister();
+      patchServiceWorkerRegisterForCodeServerWebview();
       installWebSocketPatch({ runtime: rt });
     }
   } catch {
