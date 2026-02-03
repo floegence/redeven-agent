@@ -57,21 +57,17 @@ func (s *Service) CreateSpace(ctx context.Context, req gateway.CreateSpaceReques
 		ctx = context.Background()
 	}
 
-	id := strings.TrimSpace(req.CodeSpaceID)
-	if id == "" {
-		id = randomCodeSpaceID()
-	}
-	if !IsValidCodeSpaceID(id) {
-		return nil, errors.New("invalid code_space_id")
-	}
+	// Always auto-generate code_space_id for DNS safety and uniqueness.
+	id := randomCodeSpaceID()
 
-	workspacePath := strings.TrimSpace(req.WorkspacePath)
+	// Process path (required field).
+	workspacePath := strings.TrimSpace(req.Path)
 	if workspacePath == "" {
 		home, _ := os.UserHomeDir()
 		workspacePath = strings.TrimSpace(home)
 	}
 	if workspacePath == "" {
-		return nil, errors.New("missing workspace_path")
+		return nil, errors.New("missing path")
 	}
 	abs, err := filepath.Abs(workspacePath)
 	if err != nil {
@@ -81,7 +77,19 @@ func (s *Service) CreateSpace(ctx context.Context, req gateway.CreateSpaceReques
 		return nil, err
 	}
 
-	name, description, err := normalizeMeta(req.Name, req.Description)
+	// Process name/description:
+	// - name defaults to the last segment of the path
+	// - description defaults to "codespace at <abs path>"
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		name = filepath.Base(abs)
+	}
+	description := strings.TrimSpace(req.Description)
+	if description == "" {
+		description = "codespace at " + abs
+	}
+
+	name, description, err = normalizeMeta(name, description)
 	if err != nil {
 		return nil, err
 	}
