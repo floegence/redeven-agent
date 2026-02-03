@@ -1,4 +1,4 @@
-import { Index, Show, createEffect, createMemo, createSignal, onCleanup, untrack } from 'solid-js';
+import { Index, Show, createEffect, createMemo, createSignal, onCleanup } from 'solid-js';
 import {
   Button,
   Dropdown,
@@ -35,6 +35,7 @@ import {
   createRedevenTerminalTransport,
   getOrCreateTerminalConnId,
 } from '../services/terminalTransport';
+import { getRedevenTerminalSessionsCoordinator } from '../services/terminalSessions';
 import {
   ensureTerminalPreferencesInitialized,
   TERMINAL_MAX_FONT_SIZE,
@@ -50,38 +51,28 @@ export interface TerminalPanelProps {
   variant?: TerminalPanelVariant;
 }
 
-function readActiveSessionId(): string | null {
+function buildActiveSessionStorageKey(panelId: string): string {
+  return `redeven_terminal_active_session_id:${panelId}`;
+}
+
+function readActiveSessionId(storageKey: string): string | null {
   try {
-    const v = sessionStorage.getItem('redeven_terminal_active_session_id');
+    const v = sessionStorage.getItem(storageKey);
     return v && v.trim() ? v.trim() : null;
   } catch {
     return null;
   }
 }
 
-function writeActiveSessionId(id: string | null) {
+function writeActiveSessionId(storageKey: string, id: string | null) {
   try {
     if (id && id.trim()) {
-      sessionStorage.setItem('redeven_terminal_active_session_id', id.trim());
+      sessionStorage.setItem(storageKey, id.trim());
       return;
     }
-    sessionStorage.removeItem('redeven_terminal_active_session_id');
+    sessionStorage.removeItem(storageKey);
   } catch {
   }
-}
-
-function normalizeSessions(list: TerminalSessionInfo[]): TerminalSessionInfo[] {
-  const byId = new Map<string, TerminalSessionInfo>();
-  for (const s of list) {
-    const id = (s?.id ?? '').trim();
-    if (!id) continue;
-    byId.set(id, { ...s, id });
-  }
-  return [...byId.values()].sort((a, b) => {
-    const t = (a.createdAtMs ?? 0) - (b.createdAtMs ?? 0);
-    if (t !== 0) return t;
-    return a.id.localeCompare(b.id);
-  });
 }
 
 function pickPreferredActiveId(list: TerminalSessionInfo[], preferredId: string | null): string | null {
@@ -414,8 +405,8 @@ function TerminalSessionView(props: terminal_session_view_props) {
         allowTransparency: false,
         theme: colors(),
         fontFamily: fontFamily(),
-        // 多视图/多面板同时展示同一个 terminal session 时：只让“当前获得输入焦点”的终端触发远端 resize。
-        // 这样可以避免隐藏终端把远端 PTY 的 cols/rows 锁死在某个宽度。
+        // When multiple views/panels show the same terminal session, only the focused terminal should emit remote resize.
+        // This prevents hidden terminals from locking the remote PTY cols/rows to an inactive size.
         responsive: {
           fitOnFocus: true,
           emitResizeOnFocus: true,
@@ -445,7 +436,7 @@ function TerminalSessionView(props: terminal_session_view_props) {
       await core.initialize();
       if (seq !== initSeq) return;
 
-      // core.initialize() 完成后底层终端实例已就绪：重新注册一次，确保外层可以拿到可用实例（用于字体/搜索等能力）。
+      // After core.initialize(), the underlying terminal instance is ready: re-register to keep the outer registry consistent.
       props.registerCore(id, core);
 
       core.setTheme(colors());
@@ -569,7 +560,7 @@ function TerminalSessionView(props: terminal_session_view_props) {
 
   createEffect(() => {
     if (!initialized || !term) return;
-    // TerminalCore 目前没有暴露 setFontFamily，这里直接透传到底层 ghostty-web（options 为 Proxy，会触发字体重算/重绘）。
+    // TerminalCore does not expose setFontFamily yet; pass through to ghostty-web options (a Proxy) to trigger re-layout.
     const anyCore = term as any;
     const inner = anyCore?.terminal;
     if (inner?.options) {
@@ -582,6 +573,7 @@ function TerminalSessionView(props: terminal_session_view_props) {
     initSeq += 1;
     refreshSeq += 1;
     disposeTerminal();
+    props.registerCore(sessionId(), null);
   });
 
   const terminalBackground = () => colors().background ?? '#1e1e1e';
@@ -644,6 +636,11 @@ export function TerminalPanel(props: TerminalPanelProps = {}) {
     }
   })();
   const connId = getOrCreateTerminalConnId();
+  const panelId = (() => {
+    const wid = String(widgetId ?? '').trim();
+    return wid ? `deck:${wid}` : 'terminal_page';
+  })();
+  const activeSessionStorageKey = buildActiveSessionStorageKey(panelId);
 
   const [searchOpen, setSearchOpen] = createSignal(false);
   const [searchQuery, setSearchQuery] = createSignal('');
@@ -659,6 +656,7 @@ export function TerminalPanel(props: TerminalPanelProps = {}) {
 
   const transport = createRedevenTerminalTransport(rpc, connId);
   const eventSource = createRedevenTerminalEventSource(rpc);
+  const sessionsCoordinator = getRedevenTerminalSessionsCoordinator({ connId, transport, logger: buildLogger() });
 
   const connected = () => Boolean(protocol.client());
   const viewActive = () => view.active();
@@ -666,7 +664,7 @@ export function TerminalPanel(props: TerminalPanelProps = {}) {
 
   createEffect(() => {
     if (viewActive()) return;
-    // view 失活时重置一次，避免某些场景下 focus 状态残留影响后续 autoFocus 判定。
+    // Reset focus state when the view becomes inactive to avoid stale focus affecting autoFocus decisions.
     setPanelHasFocus(false);
   });
 
@@ -696,7 +694,7 @@ export function TerminalPanel(props: TerminalPanelProps = {}) {
   });
 
   const terminalThemeColors = createMemo<Record<string, string>>(() => {
-    // 统一并提亮选中背景色，保证不同主题下的可读性一致
+    // Unify and slightly brighten selection colors to keep readability consistent across themes.
     return {
       ...getThemeColors(terminalThemeName()),
       selectionBackground: TERMINAL_SELECTION_BACKGROUND,
@@ -707,7 +705,7 @@ export function TerminalPanel(props: TerminalPanelProps = {}) {
 
   const [sessions, setSessions] = createSignal<TerminalSessionInfo[]>([]);
   const [sessionsLoading, setSessionsLoading] = createSignal(false);
-  const [activeSessionId, setActiveSessionId] = createSignal<string | null>(readActiveSessionId());
+  const [activeSessionId, setActiveSessionId] = createSignal<string | null>(readActiveSessionId(activeSessionStorageKey));
   const [mountedSessionIds, setMountedSessionIds] = createSignal<Set<string>>(new Set());
   const [error, setError] = createSignal<string | null>(null);
   const [creating, setCreating] = createSignal(false);
@@ -747,21 +745,44 @@ export function TerminalPanel(props: TerminalPanelProps = {}) {
   };
 
   const handleNameUpdate = (sessionId: string, newName: string, workingDir: string) => {
-    setSessions((prev) =>
-      prev.map((s) => {
-        if (s.id !== sessionId) return s;
-        return {
-          ...s,
-          name: newName || s.name,
-          workingDir: workingDir || s.workingDir,
-        };
-      })
-    );
+    sessionsCoordinator.updateSessionMeta(sessionId, { name: newName, workingDir });
   };
 
   const handleThemeChange = (value: string) => {
     terminalPrefs.setUserTheme(value);
   };
+
+  let prevSessionsSnapshot: TerminalSessionInfo[] = [];
+  const handleSessionsSnapshot = (next: TerminalSessionInfo[]) => {
+    const prev = prevSessionsSnapshot;
+    prevSessionsSnapshot = next;
+
+    setSessions(next);
+
+    const currentActive = activeSessionId();
+    if (currentActive && next.some((s) => s.id === currentActive)) {
+      return;
+    }
+
+    let nextActive: string | null = null;
+    if (currentActive) {
+      const prevIdx = prev.findIndex((s) => s.id === currentActive);
+      if (prevIdx >= 0) {
+        nextActive = next[prevIdx]?.id ?? next[prevIdx - 1]?.id ?? null;
+      }
+    }
+
+    if (!nextActive) {
+      nextActive = pickPreferredActiveId(next, null);
+    }
+
+    setActiveSessionId(nextActive);
+  };
+
+  createEffect(() => {
+    const unsub = sessionsCoordinator.subscribe(handleSessionsSnapshot);
+    onCleanup(() => unsub());
+  });
 
   createEffect(() => {
     const size = fontSize();
@@ -820,11 +841,7 @@ export function TerminalPanel(props: TerminalPanelProps = {}) {
     if (!connected()) return;
     setSessionsLoading(true);
     try {
-      const list = await transport.listSessions?.();
-      const normalized = normalizeSessions(list ?? []);
-      setSessions(normalized);
-      const preferred = pickPreferredActiveId(normalized, untrack(() => activeSessionId()));
-      setActiveSessionId(preferred);
+      await sessionsCoordinator.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -833,14 +850,14 @@ export function TerminalPanel(props: TerminalPanelProps = {}) {
   };
 
   const createSession = async () => {
+    if (!connected()) return;
     setCreating(true);
     setError(null);
     try {
       const nextIndex = (sessions()?.length ?? 0) + 1;
-      const session = await transport.createSession?.(`Terminal ${nextIndex}`, '/', 80, 24);
+      const session = await sessionsCoordinator.createSession(`Terminal ${nextIndex}`, '/', 80, 24);
       if (!session?.id) throw new Error('Invalid create response');
 
-      setSessions((prev) => normalizeSessions([...(prev ?? []), session]));
       setActiveSessionId(session.id);
       setMountedSessionIds((prev) => {
         if (prev.has(session.id)) return prev;
@@ -892,31 +909,11 @@ export function TerminalPanel(props: TerminalPanelProps = {}) {
   };
 
   const closeSession = (id: string) => {
-    const current = sessions();
-    const idx = current.findIndex((s) => s.id === id);
-    if (idx < 0) return;
-
-    const nextList = current.filter((s) => s.id !== id);
-    setSessions(nextList);
-    setMountedSessionIds((prev) => {
-      if (!prev.has(id)) return prev;
-      const next = new Set(prev);
-      next.delete(id);
-      return next;
-    });
-    registerCore(id, null);
-
-    if (activeSessionId() === id) {
-      const nextActive = nextList[idx]?.id ?? nextList[idx - 1]?.id ?? null;
-      setActiveSessionId(nextActive);
-    }
-
     void (async () => {
       try {
-        await transport.deleteSession?.(id);
+        await sessionsCoordinator.deleteSession(id);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
-        await refreshSessions();
       }
     })();
   };
@@ -929,14 +926,7 @@ export function TerminalPanel(props: TerminalPanelProps = {}) {
     void (async () => {
       setSessionsLoading(true);
       try {
-        const list = await transport.listSessions?.();
-        if (cancelled) return;
-
-        const normalized = normalizeSessions(list ?? []);
-        setSessions(normalized);
-
-        const preferred = pickPreferredActiveId(normalized, untrack(() => activeSessionId()));
-        setActiveSessionId(preferred);
+        await sessionsCoordinator.refresh();
       } catch (e) {
         if (cancelled) return;
         setError(e instanceof Error ? e.message : String(e));
@@ -976,7 +966,7 @@ export function TerminalPanel(props: TerminalPanelProps = {}) {
   });
 
   createEffect(() => {
-    writeActiveSessionId(activeSessionId());
+    writeActiveSessionId(activeSessionStorageKey, activeSessionId());
   });
 
   const tabItems = createMemo<TabItem[]>(() => {
@@ -1062,7 +1052,7 @@ export function TerminalPanel(props: TerminalPanelProps = {}) {
 
   const bindSearchCore = (core: TerminalCore | null) => {
     if (searchBoundCore && searchBoundCore !== core) {
-      // 解除旧 core 的回调，避免后台 session 输出导致 UI 计数串台。
+      // Unbind callbacks from the previous core to avoid cross-session search counters.
       searchBoundCore.setSearchResultsCallback(null);
     }
 
@@ -1146,7 +1136,7 @@ export function TerminalPanel(props: TerminalPanelProps = {}) {
     setSearchResultIndex(-1);
     setSearchResultCount(0);
     searchLastAppliedKey = '';
-    // Search 是面板级 UI：关闭时清理所有 session，避免残留高亮。
+    // Search UI is panel-scoped; clear all sessions on close to avoid lingering highlights.
     for (const core of coreRegistry.values()) {
       core.clearSearch();
     }
@@ -1174,7 +1164,7 @@ export function TerminalPanel(props: TerminalPanelProps = {}) {
     const key = e.key?.toLowerCase?.() ?? '';
 
     if ((e.ctrlKey || e.metaKey) && key === 'f') {
-      // 终端常用快捷键：拦截浏览器默认查找
+      // Common terminal shortcut: intercept browser find.
       e.preventDefault();
       openSearch();
       return;
@@ -1187,7 +1177,7 @@ export function TerminalPanel(props: TerminalPanelProps = {}) {
     }
 
     if (e.key === 'Enter' && searchOpen()) {
-      // Enter/Shift+Enter 进行下一条/上一条
+      // Enter/Shift+Enter navigates to next/previous match.
       e.preventDefault();
       if (e.shiftKey) goPrevMatch();
       else goNextMatch();
@@ -1219,7 +1209,7 @@ export function TerminalPanel(props: TerminalPanelProps = {}) {
       onFocusIn={() => setPanelHasFocus(true)}
       onPointerDown={() => setPanelHasFocus(true)}
       onFocusOut={() => {
-        // focusout 在子树内移动也会触发，这里下一帧再确认一次“是否真的离开了该 panel”。
+        // focusout also fires when moving within the subtree; re-check on the next frame to confirm if we really left the panel.
         requestAnimationFrame(() => {
           const active = typeof document !== 'undefined' ? document.activeElement : null;
           setPanelHasFocus(Boolean(active && rootEl?.contains(active)));
