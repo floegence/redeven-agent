@@ -57,6 +57,28 @@ type NavTab = 'deck' | 'terminal' | 'monitor' | 'files' | 'codespaces' | 'market
 const FLOE_APP_AGENT = 'com.floegence.redeven.agent';
 const CODE_SPACE_ID_ENV_UI = 'env-ui';
 
+const ACTIVE_TAB_STORAGE_KEY = 'redeven_envapp_active_tab';
+
+function readPersistedActiveTab(): NavTab | null {
+  try {
+    const v = String(localStorage.getItem(ACTIVE_TAB_STORAGE_KEY) ?? '').trim();
+    if (v === 'deck' || v === 'terminal' || v === 'monitor' || v === 'files' || v === 'codespaces' || v === 'market') {
+      return v;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function persistActiveTab(tab: NavTab): void {
+  try {
+    localStorage.setItem(ACTIVE_TAB_STORAGE_KEY, tab);
+  } catch {
+    // ignore
+  }
+}
+
 export function EnvAppShell() {
   const layout = useLayout();
   const theme = useTheme();
@@ -244,7 +266,15 @@ export function EnvAppShell() {
 
   onMount(() => {
     layout.setSidebarCollapsed(true);
-    layout.setSidebarActiveTab(layout.isMobile() ? 'terminal' : 'deck', { openSidebar: false });
+    const preferred = readPersistedActiveTab();
+    const initial = (() => {
+      if (preferred) {
+        if (layout.isMobile() && preferred === 'deck') return 'terminal';
+        return preferred;
+      }
+      return layout.isMobile() ? 'terminal' : 'deck';
+    })();
+    layout.setSidebarActiveTab(initial, { openSidebar: false });
     void connect();
   });
 
@@ -330,6 +360,8 @@ export function EnvAppShell() {
   ];
 
   const goTab = (tab: NavTab) => {
+    // Persist the user's preference; the runtime may downgrade it on mobile (deck -> terminal).
+    persistActiveTab(tab);
     let next = tab;
     if (layout.isMobile() && next === 'deck') next = 'terminal';
     layout.setSidebarActiveTab(next, { openSidebar: false });
