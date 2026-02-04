@@ -1,35 +1,24 @@
 import { Show, createMemo, createResource, createSignal, onCleanup, onMount } from 'solid-js';
+import { type FloeComponent, useCommand, useLayout, useNotification, useTheme, useWidgetRegistry } from '@floegence/floe-webapp-core';
+import { ActivityAppsMain, FloeRegistryRuntime } from '@floegence/floe-webapp-core/app';
 import {
   Activity,
-  ActivityAppsMain,
-  BottomBarItem,
-  Copy,
   Code,
+  Copy,
   Files,
-  FloeRegistryRuntime,
   Grid,
   Grid3x3,
   LayoutDashboard,
   Moon,
-  Panel,
-  PanelContent,
   Refresh,
-  Sparkles,
   Search,
   Settings,
-  Shell,
-  StatusIndicator,
+  Sparkles,
   Sun,
   Terminal,
-  Tooltip,
-  type ActivityBarItem,
-  type FloeComponent,
-  useCommand,
-  useLayout,
-  useNotification,
-  useTheme,
-  useWidgetRegistry,
-} from '@floegence/floe-webapp-core';
+} from '@floegence/floe-webapp-core/icons';
+import { BottomBarItem, Panel, PanelContent, Shell, StatusIndicator, type ActivityBarItem } from '@floegence/floe-webapp-core/layout';
+import { Tooltip } from '@floegence/floe-webapp-core/ui';
 import type { ClientObserverLike } from '@floegence/flowersec-core';
 import { useProtocol } from '@floegence/floe-webapp-protocol';
 
@@ -97,6 +86,8 @@ export function EnvAppShell() {
   const rpc = useRedevenRpc();
   const cmd = useCommand();
   const notify = useNotification();
+
+  type ProtocolConnectConfig = Parameters<typeof protocol.connect>[0];
 
   widgetRegistry.registerAll(redevenDeckWidgets);
 
@@ -193,7 +184,7 @@ export function EnvAppShell() {
     return channelInitEntry({ endpointId: id, floeApp: FLOE_APP_AGENT, entryTicket });
   };
 
-  const connect = async () => {
+  const runConnect = async (fn: (config: ProtocolConnectConfig) => Promise<void>) => {
     if (connecting()) return;
 
     const id = envId();
@@ -213,7 +204,7 @@ export function EnvAppShell() {
     setManualError(null);
 
     try {
-      await protocol.connect({
+      await fn({
         mode: 'tunnel',
         getGrant: createGetGrant(),
         observer,
@@ -229,6 +220,9 @@ export function EnvAppShell() {
       // protocol.error() will expose the last failure; avoid noisy rethrows here.
     }
   };
+
+  const connect = async () => runConnect((config) => protocol.connect(config));
+  const reconnect = async () => runConnect((config) => protocol.reconnect(config));
 
   const probe = async (): Promise<boolean> => {
     const startedAt = Date.now();
@@ -292,7 +286,7 @@ export function EnvAppShell() {
       }
 
       console.debug('[envapp] ensureHealthy: reconnect', { reason });
-      await connect();
+      await reconnect();
     })().finally(() => {
       ensureInFlight = null;
     });
@@ -522,7 +516,7 @@ export function EnvAppShell() {
         keybind: 'mod+shift+r',
         icon: Refresh,
         execute: () => {
-          void connect();
+          void reconnect();
         },
       },
       {
@@ -659,7 +653,7 @@ export function EnvAppShell() {
                 <StatusIndicator status={status()} />
                 <BottomBarItem onClick={() => setAuditOpen(true)}>Audit log</BottomBarItem>
                 <BottomBarItem
-                  onClick={connecting() ? undefined : () => void connect()}
+                  onClick={connecting() ? undefined : () => void reconnect()}
                   class={connecting() ? 'opacity-60 pointer-events-none' : undefined}
                 >
                   {connecting() ? 'Connecting...' : 'Reconnect'}
