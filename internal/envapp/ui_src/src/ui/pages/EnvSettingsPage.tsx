@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createResource, createSignal, type JSX } from 'solid-js';
+import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, type JSX } from 'solid-js';
 import { useNotification } from '@floegence/floe-webapp-core';
 import {
   Bot,
@@ -19,6 +19,8 @@ import { Button, Card, ConfirmDialog, Input } from '@floegence/floe-webapp-core/
 import { useProtocol } from '@floegence/floe-webapp-protocol';
 
 import { fetchGatewayJSON } from '../services/gatewayApi';
+import { getAgentLatestVersion, getEnvironment } from '../services/controlplaneApi';
+import { useRedevenRpc } from '../protocol/redeven_v1/hooks';
 import { useEnvContext } from './EnvContext';
 
 // ============================================================================
@@ -305,6 +307,7 @@ export function EnvSettingsPage() {
   const env = useEnvContext();
   const protocol = useProtocol();
   const notify = useNotification();
+  const rpc = useRedevenRpc();
 
   const key = createMemo<number | null>(() => (protocol.status() === 'connected' ? env.settingsSeq() : null));
 
@@ -314,6 +317,192 @@ export function EnvSettingsPage() {
   );
 
   const canInteract = createMemo(() => protocol.status() === 'connected' && !settings.loading && !settings.error);
+
+  // ============================================================================
+  // Agent self-upgrade (E2EE, data plane)
+  // ============================================================================
+
+  const canAdmin = createMemo(() => !!env.env()?.permissions?.can_admin || !!env.env()?.permissions?.is_owner);
+  const controlplaneStatus = createMemo(() => (env.env()?.status ? String(env.env()!.status) : ''));
+
+  const [agentPingSeq, setAgentPingSeq] = createSignal(0);
+  const [agentPing] = createResource(
+    () => (protocol.status() === 'connected' ? agentPingSeq() : null),
+    async (k) => (k == null ? null : await rpc.sys.ping()),
+  );
+
+  const [latestVersion] = createResource(
+    () => env.env_id().trim() || null,
+    async (id) => (id ? await getAgentLatestVersion(id) : null),
+  );
+
+  const [upgradeOpen, setUpgradeOpen] = createSignal(false);
+  const [upgrading, setUpgrading] = createSignal(false);
+  const [upgradeError, setUpgradeError] = createSignal<string | null>(null);
+  const [upgradePolledStatus, setUpgradePolledStatus] = createSignal<string | null>(null);
+
+  const displayedStatus = createMemo(() => {
+    const st = upgrading() && upgradePolledStatus() ? String(upgradePolledStatus()) : controlplaneStatus();
+    return st || 'unknown';
+  });
+
+  const statusLabel = createMemo(() => {
+    const st = displayedStatus();
+    if (st === 'online') return 'Online';
+    if (st === 'offline') return 'Offline';
+    if (!st || st === 'unknown') return 'Unknown';
+    return `${st.slice(0, 1).toUpperCase()}${st.slice(1)}`;
+  });
+
+  const agentCardBadge = createMemo(() => (upgrading() ? 'Updating' : statusLabel()));
+  const agentCardBadgeVariant = createMemo<'default' | 'warning' | 'success'>(() => {
+    if (upgrading()) return 'warning';
+    const st = displayedStatus();
+    if (st === 'online') return 'success';
+    if (st === 'offline') return 'warning';
+    return 'default';
+  });
+
+  const canStartUpgrade = createMemo(() => {
+    if (upgrading()) return false;
+    if (protocol.status() !== 'connected') return false;
+    if (!canAdmin()) return false;
+    return controlplaneStatus() === 'online';
+  });
+
+  const upgradeStage = createMemo(() => {
+    if (!upgrading()) return null;
+    if (protocol.status() === 'connected') return 'Downloading and installing update...';
+    const st = upgradePolledStatus();
+    if (st && st !== 'online') return 'Agent restarting...';
+    if (st === 'online') return 'Reconnecting...';
+    return 'Waiting for agent...';
+  });
+
+  const sleep = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
+
+  let upgradeAbort = false;
+  onCleanup(() => {
+    upgradeAbort = true;
+  });
+
+  const startUpgrade = async () => {
+    if (upgrading()) return;
+    setUpgradeError(null);
+    setUpgradePolledStatus(null);
+
+    const envId = env.env_id().trim();
+    if (!envId) {
+      const msg = 'Missing env context. Please reopen from the Redeven Portal.';
+      setUpgradeError(msg);
+      notify.error('Update failed', msg);
+      return;
+    }
+
+    if (!canAdmin()) {
+      const msg = 'Admin permission required.';
+      setUpgradeError(msg);
+      notify.error('Update failed', msg);
+      return;
+    }
+
+    setUpgrading(true);
+
+    const beforeVersion = agentPing()?.version ? String(agentPing()!.version) : '';
+
+    let started = false;
+    try {
+      const resp = await rpc.sys.upgrade({});
+      if (!resp?.ok) {
+        const msg = resp?.message ? String(resp.message) : 'Upgrade rejected.';
+        setUpgradeError(msg);
+        notify.error('Update failed', msg);
+        setUpgrading(false);
+        return;
+      }
+      started = true;
+      notify.success('Update started', resp?.message ? String(resp.message) : 'The agent will restart shortly.');
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      // If the call fails due to a disconnect, assume the upgrade has started.
+      if (protocol.status() !== 'connected') {
+        started = true;
+        notify.info('Update started', 'Waiting for agent restart...');
+      } else {
+        setUpgradeError(msg || 'Request failed.');
+        notify.error('Update failed', msg || 'Request failed.');
+        setUpgrading(false);
+        return;
+      }
+    } finally {
+      setUpgradeOpen(false);
+    }
+
+    if (!started) {
+      setUpgrading(false);
+      return;
+    }
+
+    const startedAt = Date.now();
+    const timeoutMs = 10 * 60 * 1000;
+    const pollIntervalMs = 1500;
+    let sawDisconnect = false;
+
+    for (;;) {
+      if (upgradeAbort) return;
+
+      if (Date.now() - startedAt > timeoutMs) {
+        const msg = 'Timed out waiting for the agent to restart.';
+        setUpgradeError(msg);
+        notify.error('Update timed out', msg);
+        setUpgrading(false);
+        return;
+      }
+
+      if (protocol.status() !== 'connected') {
+        sawDisconnect = true;
+      }
+
+      try {
+        const detail = await getEnvironment(envId);
+        const st = detail?.status ? String(detail.status) : null;
+        if (st) setUpgradePolledStatus(st);
+      } catch {
+        // Ignore transient control plane failures; keep polling.
+      }
+
+      if (sawDisconnect && upgradePolledStatus() === 'online') {
+        try {
+          await env.connect();
+        } catch {
+          // Ignore and continue polling.
+        }
+      }
+
+      if (sawDisconnect && protocol.status() === 'connected') {
+        try {
+          const p = await rpc.sys.ping();
+          const v = p?.version ? String(p.version) : '';
+          setAgentPingSeq((n) => n + 1);
+
+          setUpgrading(false);
+
+          if (beforeVersion && v && v !== beforeVersion) {
+            notify.success('Updated', `Agent updated to ${v}.`);
+          } else {
+            notify.success('Reconnected', 'Agent is back online.');
+          }
+          return;
+        } catch {
+          // Still reconnecting; keep polling.
+        }
+      }
+
+      await sleep(pollIntervalMs);
+    }
+  };
+
+  const connectOverlayMessage = createMemo(() => (upgrading() ? 'Agent restarting...' : 'Connecting to agent...'));
 
   // View mode signals
   const [configView, setConfigView] = createSignal<ViewMode>('ui');
@@ -1026,6 +1215,35 @@ export function EnvSettingsPage() {
                 <InfoRow label="Direct WebSocket URL" value={String(settings()?.connection?.direct?.ws_url ?? '')} mono />
               </div>
             </div>
+          </Show>
+        </SettingsCard>
+
+        {/* Agent Card */}
+        <SettingsCard
+          icon={Zap}
+          title="Agent"
+          description="Version and self-upgrade."
+          badge={agentCardBadge()}
+          badgeVariant={agentCardBadgeVariant()}
+          error={upgradeError()}
+          actions={
+            <Button size="sm" variant="default" onClick={() => setUpgradeOpen(true)} loading={upgrading()} disabled={!canStartUpgrade()}>
+              Update agent
+            </Button>
+          }
+        >
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-1 divide-y md:divide-y-0 divide-border">
+            <InfoRow label="Current" value={agentPing()?.version ? String(agentPing()!.version) : '—'} mono />
+            <InfoRow label="Latest" value={latestVersion()?.latest_version ? String(latestVersion()!.latest_version) : '—'} mono />
+            <InfoRow label="Status" value={displayedStatus()} />
+          </div>
+
+          <Show when={!canAdmin()}>
+            <div class="text-xs text-muted-foreground">Admin permission required to update.</div>
+          </Show>
+
+          <Show when={upgradeStage()}>
+            <div class="text-xs text-muted-foreground">{upgradeStage()}</div>
           </Show>
         </SettingsCard>
 
@@ -1796,6 +2014,21 @@ export function EnvSettingsPage() {
         </div>
       </div>
 
+      {/* Update Agent Confirmation Dialog */}
+      <ConfirmDialog
+        open={upgradeOpen()}
+        onOpenChange={(open) => setUpgradeOpen(open)}
+        title="Update agent"
+        confirmText="Update"
+        loading={upgrading()}
+        onConfirm={() => void startUpgrade()}
+      >
+        <div class="space-y-3">
+          <p class="text-sm">This will restart the agent and terminate all running activities. Continue?</p>
+          <p class="text-xs text-muted-foreground">You will reconnect automatically after the agent comes back online.</p>
+        </div>
+      </ConfirmDialog>
+
       {/* Disable AI Confirmation Dialog */}
       <ConfirmDialog
         open={disableAIOpen()}
@@ -1815,7 +2048,7 @@ export function EnvSettingsPage() {
       </ConfirmDialog>
 
       {/* Loading Overlays */}
-      <LoadingOverlay visible={protocol.status() !== 'connected'} message="Connecting to agent..." />
+      <LoadingOverlay visible={protocol.status() !== 'connected'} message={connectOverlayMessage()} />
       <LoadingOverlay visible={settings.loading && protocol.status() === 'connected'} message="Loading settings..." />
     </div>
   );

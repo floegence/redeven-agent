@@ -8,3 +8,11 @@ export type wire_sys_ping_resp = {
   build_time?: string;
 };
 
+export type wire_sys_upgrade_req = {
+  dry_run?: boolean;
+};
+
+export type wire_sys_upgrade_resp = {
+  ok: boolean;
+  message?: string;
+};
