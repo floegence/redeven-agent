@@ -149,6 +149,7 @@ func New(opts Options) (*Agent, error) {
 	codeSvc, err := codeapp.New(context.Background(), codeapp.Options{
 		Logger:              logger,
 		StateDir:            stateDir,
+		ConfigPath:          cfgPathAbs,
 		ControlplaneBaseURL: strings.TrimSpace(opts.Config.ControlplaneBaseURL),
 		CodeServerPortMin:   opts.Config.CodeServerPortMin,
 		CodeServerPortMax:   opts.Config.CodeServerPortMax,
