@@ -25,13 +25,6 @@ export type EnvironmentDetail = Environment & {
   };
 };
 
-export type AgentLatestVersion = {
-  latest_version: string;
-  fetched_at_ms?: number;
-  cache_ttl_ms?: number;
-  message?: string;
-};
-
 export type EnvFloeApp = {
   app_id: string;
   app_slug: string;
@@ -119,22 +112,6 @@ export async function getEnvironment(envId: string): Promise<EnvironmentDetail |
   }
 
   const out = await fetchJSON<EnvironmentDetail>(`/api/srv/v1/floeproxy/environments/${encodeURIComponent(id)}`, {
-    method: 'GET',
-    bearerToken: brokerToken,
-  });
-  return out ?? null;
-}
-
-export async function getAgentLatestVersion(envId: string): Promise<AgentLatestVersion | null> {
-  const id = envId.trim();
-  if (!id) return null;
-
-  const brokerToken = getBrokerTokenFromSession();
-  if (!brokerToken) {
-    throw new Error('Missing broker token. Please reopen from the Redeven Portal.');
-  }
-
-  const out = await fetchJSON<AgentLatestVersion>(`/api/srv/v1/floeproxy/environments/${encodeURIComponent(id)}/agent/version/latest`, {
     method: 'GET',
     bearerToken: brokerToken,
   });
@@ -241,7 +218,12 @@ export async function mintEnvEntryTicketForApp(args: { envId: string; floeApp: s
       floe_app: floeApp,
       code_space_id: codeSpaceId,
       // Codespaces (code-server) and other apps are single-channel sessions on the data plane; tag them as codeapp/app.
-      session_kind: floeApp === 'com.floegence.redeven.code' ? 'codeapp' : 'app',
+      session_kind:
+        floeApp === 'com.floegence.redeven.code'
+          ? 'codeapp'
+          : floeApp === 'com.floegence.redeven.portforward'
+            ? 'portforward'
+            : 'app',
     }),
   });
   const t = String(out?.entry_ticket ?? '').trim();
