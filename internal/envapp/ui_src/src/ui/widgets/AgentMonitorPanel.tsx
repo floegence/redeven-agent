@@ -101,6 +101,7 @@ export function AgentMonitorPanel(props: AgentMonitorPanelProps) {
   const notify = useNotification();
 
   const [sortBy, setSortBy] = createSignal<SysMonitorSortBy>('cpu');
+  const [showInternalSessions, setShowInternalSessions] = createSignal(false);
   const [data, setData] = createSignal<SysMonitorSnapshot | null>(null);
   const [error, setError] = createSignal<string | null>(null);
   const [sessions, setSessions] = createSignal<ActiveSession[]>([]);
@@ -126,11 +127,21 @@ export function AgentMonitorPanel(props: AgentMonitorPanelProps) {
     return copied;
   });
 
-  const activeSessions = createMemo<ActiveSession[]>(() => {
+  const isInternalSession = (s: ActiveSession): boolean => String(s.sessionKind ?? '').trim() === 'envapp_proxy';
+
+  const sortedSessions = createMemo<ActiveSession[]>(() => {
     const list = sessions() ?? [];
     const copied = [...list];
     copied.sort((a, b) => Number(b?.connectedAtUnixMs ?? 0) - Number(a?.connectedAtUnixMs ?? 0));
     return copied;
+  });
+
+  const internalSessionsCount = createMemo(() => sortedSessions().filter(isInternalSession).length);
+
+  const visibleSessions = createMemo<ActiveSession[]>(() => {
+    const list = sortedSessions();
+    if (showInternalSessions()) return list;
+    return list.filter((s) => !isInternalSession(s));
   });
 
   const copy = async (label: string, value: string) => {
@@ -429,7 +440,19 @@ export function AgentMonitorPanel(props: AgentMonitorPanelProps) {
             <PanelContent class="p-3 flex flex-col flex-1 min-h-0">
               <div class="flex items-center justify-between gap-3 mb-2 flex-shrink-0">
                 <div class="text-xs font-medium">Active Sessions</div>
-                <div class="text-[11px] text-muted-foreground tabular-nums">{activeSessions().length}</div>
+                <div class="flex items-center gap-2">
+                  <Show when={internalSessionsCount() > 0}>
+                    <button
+                      type="button"
+                      onClick={() => setShowInternalSessions((v) => !v)}
+                      class={`px-2 py-0.5 text-[11px] rounded transition-colors ${showInternalSessions() ? activeSortClass : inactiveSortClass}`}
+                      title={showInternalSessions() ? 'Hide internal sessions' : 'Show internal sessions'}
+                    >
+                      {showInternalSessions() ? 'Hide internal' : 'Show internal'} ({internalSessionsCount()})
+                    </button>
+                  </Show>
+                  <div class="text-[11px] text-muted-foreground tabular-nums">{visibleSessions().length}</div>
+                </div>
               </div>
 
               <Show when={sessionsError()}>
@@ -450,14 +473,14 @@ export function AgentMonitorPanel(props: AgentMonitorPanelProps) {
                     </tr>
                   </thead>
                   <tbody>
-                    <Show when={activeSessions().length > 0} fallback={
+                    <Show when={visibleSessions().length > 0} fallback={
                       <tr>
                         <td colSpan={7} class="py-6 px-2 text-[11px] text-muted-foreground text-center">
                           {loading() ? 'Loading...' : 'No active sessions.'}
                         </td>
                       </tr>
                     }>
-                      <For each={activeSessions()}>
+                      <For each={visibleSessions()}>
                         {(sess) => {
                           const email = String(sess.userEmail ?? '').trim();
                           const uid = String(sess.userPublicID ?? '').trim();
