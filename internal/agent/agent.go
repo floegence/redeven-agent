@@ -14,7 +14,6 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	fsclient "github.com/floegence/flowersec/flowersec-go/client"
@@ -44,6 +43,8 @@ const (
 const (
 	FloeAppRedevenAgent = "com.floegence.redeven.agent"
 	FloeAppRedevenCode  = "com.floegence.redeven.code"
+	// FloeAppRedevenPortForward proxies an arbitrary HTTP service reachable from the agent.
+	FloeAppRedevenPortForward = "com.floegence.redeven.portforward"
 )
 
 type Options struct {
@@ -70,8 +71,6 @@ type Agent struct {
 	mon  *monitor.Service
 	sys  *syssvc.Service
 	code *codeapp.Service
-
-	upgrading atomic.Bool
 
 	mu       sync.Mutex
 	sessions map[string]*activeSession // channel_id -> session
@@ -140,15 +139,14 @@ func New(opts Options) (*Agent, error) {
 		fsRoot:    rootAbs,
 		term:      terminal.NewManager(shell, rootAbs, logger),
 		mon:       monitor.NewService(logger),
-		sessions:  make(map[string]*activeSession),
+		sys: syssvc.NewService(syssvc.Options{
+			AgentInstanceID: opts.Config.AgentInstanceID,
+			Version:         opts.Version,
+			Commit:          opts.Commit,
+			BuildTime:       opts.BuildTime,
+		}),
+		sessions: make(map[string]*activeSession),
 	}
-	a.sys = syssvc.NewService(syssvc.Options{
-		AgentInstanceID: opts.Config.AgentInstanceID,
-		Version:         opts.Version,
-		Commit:          opts.Commit,
-		BuildTime:       opts.BuildTime,
-		Upgrader:        &sysUpgrader{a: a},
-	})
 
 	codeSvc, err := codeapp.New(context.Background(), codeapp.Options{
 		Logger:              logger,
@@ -291,11 +289,6 @@ func (a *Agent) runControlOnce(ctx context.Context) error {
 }
 
 func (a *Agent) handleGrantNotify(ctx context.Context, payload json.RawMessage) {
-	if a != nil && a.upgrading.Load() {
-		a.log.Debug("upgrade in progress; ignoring grant_server notify")
-		return
-	}
-
 	var n session.GrantServerNotify
 	if err := json.Unmarshal(payload, &n); err != nil {
 		a.log.Warn("invalid grant_server notify json", "error", err)
@@ -477,11 +470,14 @@ func (a *Agent) runDataSession(ctx context.Context, grant *controlv1.ChannelInit
 	)
 	defer sess.Close()
 
-	if strings.TrimSpace(meta.FloeApp) == FloeAppRedevenCode {
+	switch strings.TrimSpace(meta.FloeApp) {
+	case FloeAppRedevenCode:
 		return a.serveCodeAppSession(ctx, sess, meta)
+	case FloeAppRedevenPortForward:
+		return a.servePortForwardSession(ctx, sess, meta)
+	default:
+		return a.serveRedevenAgentSession(ctx, sess, meta)
 	}
-
-	return a.serveRedevenAgentSession(ctx, sess, meta)
 }
 
 func (a *Agent) serveCodeAppSession(ctx context.Context, sess endpoint.Session, meta *session.Meta) error {
@@ -521,6 +517,57 @@ func (a *Agent) serveCodeAppSession(ctx context.Context, sess endpoint.Session, 
 				return
 			}
 			a.log.Warn("codeapp stream error", "channel_id", meta.ChannelID, "code_space_id", codeSpaceID, "error", err)
+		},
+	})
+	if err != nil {
+		return err
+	}
+
+	if err := fsproxy.Register(srv, fsproxy.Options{
+		Upstream:       up,
+		UpstreamOrigin: origin,
+	}); err != nil {
+		return err
+	}
+
+	return srv.ServeSession(ctx, sess)
+}
+
+func (a *Agent) servePortForwardSession(ctx context.Context, sess endpoint.Session, meta *session.Meta) error {
+	if a == nil || meta == nil {
+		return errors.New("invalid args")
+	}
+	if sess == nil {
+		return errors.New("missing session")
+	}
+	if a.code == nil {
+		return errors.New("codeapp not initialized")
+	}
+	if !meta.CanExecute {
+		return errors.New("execute permission required")
+	}
+
+	forwardID := strings.TrimSpace(meta.CodeSpaceID)
+	if forwardID == "" {
+		return errors.New("missing forward_id")
+	}
+
+	origin, err := a.code.ExternalOriginForPortForward(forwardID)
+	if err != nil {
+		return err
+	}
+
+	up := strings.TrimSpace(a.code.GatewayURL())
+	if up == "" {
+		return errors.New("codeapp gateway not ready")
+	}
+
+	srv, err := serve.New(serve.Options{
+		OnError: func(err error) {
+			if err == nil {
+				return
+			}
+			a.log.Warn("portforward stream error", "channel_id", meta.ChannelID, "forward_id", forwardID, "error", err)
 		},
 	})
 	if err != nil {
