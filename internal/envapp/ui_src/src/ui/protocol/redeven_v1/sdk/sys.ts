@@ -6,3 +6,11 @@ export type SysPingResponse = {
   buildTime?: string;
 };
 
+export type SysUpgradeRequest = {
+  dryRun?: boolean;
+};
+
+export type SysUpgradeResponse = {
+  ok: boolean;
+  message?: string;
+};
