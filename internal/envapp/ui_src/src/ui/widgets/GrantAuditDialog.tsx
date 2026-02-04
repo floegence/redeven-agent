@@ -1,5 +1,7 @@
 import { For, Show, createMemo, createResource } from 'solid-js';
-import { Button, Dialog, LoadingOverlay, useNotification } from '@floegence/floe-webapp-core';
+import { useNotification } from '@floegence/floe-webapp-core';
+import { LoadingOverlay } from '@floegence/floe-webapp-core/loading';
+import { Button, Dialog } from '@floegence/floe-webapp-core/ui';
 
 import { getGrantAudits, type GrantAuditEntry } from '../services/controlplaneApi';
 
@@ -126,4 +128,3 @@ export function GrantAuditDialog(props: { open: boolean; envId: string; onClose:
     </Dialog>
   );
 }
-
