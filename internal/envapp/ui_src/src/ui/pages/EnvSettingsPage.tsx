@@ -1,11 +1,29 @@
-import { For, Show, createEffect, createMemo, createResource, createSignal } from 'solid-js';
+import { For, Show, createEffect, createMemo, createResource, createSignal, type JSX } from 'solid-js';
 import { useNotification } from '@floegence/floe-webapp-core';
+import {
+  Bot,
+  ChevronRight,
+  Code,
+  Database,
+  FileCode,
+  Globe,
+  Key,
+  Layers,
+  RefreshIcon,
+  Shield,
+  Terminal,
+  Zap,
+} from '@floegence/floe-webapp-core/icons';
 import { LoadingOverlay } from '@floegence/floe-webapp-core/loading';
 import { Button, Card, ConfirmDialog, Input } from '@floegence/floe-webapp-core/ui';
 import { useProtocol } from '@floegence/floe-webapp-protocol';
 
 import { fetchGatewayJSON } from '../services/gatewayApi';
 import { useEnvContext } from './EnvContext';
+
+// ============================================================================
+// Types
+// ============================================================================
 
 type ViewMode = 'ui' | 'json';
 
@@ -46,6 +64,10 @@ type SettingsResponse = Readonly<{
 type PermissionRow = { key: string; read: boolean; write: boolean; execute: boolean };
 type AIProviderRow = { id: string; type: AIProviderType; base_url: string; api_key_env: string };
 type AIModelRow = { id: string; label: string };
+
+// ============================================================================
+// Constants & Helpers
+// ============================================================================
 
 const DEFAULT_CODE_SERVER_PORT_MIN = 20000;
 const DEFAULT_CODE_SERVER_PORT_MAX = 21000;
@@ -105,16 +127,20 @@ function mapToPermissionRows(m: Record<string, PermissionSet> | undefined): Perm
   }));
 }
 
+// ============================================================================
+// Reusable UI Components
+// ============================================================================
+
 function ViewToggle(props: { value: () => ViewMode; disabled?: boolean; onChange: (v: ViewMode) => void }) {
   const btnClass = (active: boolean) => {
-    const base = 'px-2 py-1 text-xs rounded transition-colors';
-    if (active) return `${base} bg-background border border-border`;
-    return `${base} text-muted-foreground hover:text-foreground`;
+    const base = 'px-3 py-1.5 text-xs font-medium rounded-md transition-all duration-150';
+    if (active) return `${base} bg-background text-foreground shadow-sm border border-border`;
+    return `${base} text-muted-foreground hover:text-foreground hover:bg-muted/50`;
   };
-  const disabledClass = () => (props.disabled ? 'opacity-60 pointer-events-none' : '');
+  const disabledClass = () => (props.disabled ? 'opacity-50 pointer-events-none' : '');
 
   return (
-    <div class={`flex items-center gap-1 rounded border border-border p-0.5 bg-muted/30 ${disabledClass()}`}>
+    <div class={`inline-flex items-center gap-0.5 rounded-lg border border-border p-0.5 bg-muted/40 ${disabledClass()}`}>
       <button type="button" class={btnClass(props.value() === 'ui')} onClick={() => props.onChange('ui')}>
         UI
       </button>
@@ -124,6 +150,156 @@ function ViewToggle(props: { value: () => ViewMode; disabled?: boolean; onChange
     </div>
   );
 }
+
+interface SettingsCardProps {
+  icon: (props: { class?: string }) => JSX.Element;
+  title: string;
+  description: string;
+  badge?: string;
+  badgeVariant?: 'default' | 'warning' | 'success';
+  actions?: JSX.Element;
+  error?: string | null;
+  children: JSX.Element;
+}
+
+function SettingsCard(props: SettingsCardProps) {
+  const badgeColors = {
+    default: 'bg-muted text-muted-foreground',
+    warning: 'bg-amber-500/10 text-amber-600 dark:text-amber-400',
+    success: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
+  };
+
+  return (
+    <Card class="overflow-hidden">
+      <div class="border-b border-border bg-muted/20 px-5 py-4">
+        <div class="flex items-start justify-between gap-4">
+          <div class="flex items-start gap-3">
+            <div class="flex-shrink-0 w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center">
+              <props.icon class="w-4.5 h-4.5 text-primary" />
+            </div>
+            <div>
+              <div class="flex items-center gap-2">
+                <h3 class="text-sm font-semibold text-foreground">{props.title}</h3>
+                <Show when={props.badge}>
+                  <span class={`text-[10px] font-medium px-2 py-0.5 rounded-full ${badgeColors[props.badgeVariant ?? 'default']}`}>
+                    {props.badge}
+                  </span>
+                </Show>
+              </div>
+              <p class="text-xs text-muted-foreground mt-0.5">{props.description}</p>
+            </div>
+          </div>
+          <Show when={props.actions}>
+            <div class="flex items-center gap-2 flex-shrink-0">{props.actions}</div>
+          </Show>
+        </div>
+      </div>
+
+      <div class="p-5 space-y-4">
+        <Show when={props.error}>
+          <div class="flex items-start gap-2 p-3 rounded-lg bg-destructive/10 border border-destructive/20">
+            <div class="text-xs text-destructive break-words">{props.error}</div>
+          </div>
+        </Show>
+        {props.children}
+      </div>
+    </Card>
+  );
+}
+
+interface FieldLabelProps {
+  children: string;
+  hint?: string;
+}
+
+function FieldLabel(props: FieldLabelProps) {
+  return (
+    <div class="mb-1.5">
+      <label class="text-xs font-medium text-foreground">{props.children}</label>
+      <Show when={props.hint}>
+        <span class="ml-1.5 text-xs text-muted-foreground">({props.hint})</span>
+      </Show>
+    </div>
+  );
+}
+
+interface InfoRowProps {
+  label: string;
+  value: string;
+  mono?: boolean;
+}
+
+function InfoRow(props: InfoRowProps) {
+  return (
+    <div class="py-2 first:pt-0 last:pb-0">
+      <div class="text-xs text-muted-foreground mb-0.5">{props.label}</div>
+      <div class={`text-sm break-all ${props.mono ? 'font-mono text-xs' : ''}`}>{props.value || '—'}</div>
+    </div>
+  );
+}
+
+function CodeBadge(props: { children: string }) {
+  return <code class="px-1.5 py-0.5 text-xs font-mono bg-muted rounded">{props.children}</code>;
+}
+
+interface CheckboxFieldProps {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  disabled?: boolean;
+  label: string;
+}
+
+function CheckboxField(props: CheckboxFieldProps) {
+  return (
+    <label class="inline-flex items-center gap-2 text-xs cursor-pointer select-none">
+      <input
+        type="checkbox"
+        checked={props.checked}
+        onChange={(e) => props.onChange(e.currentTarget.checked)}
+        disabled={props.disabled}
+        class="w-4 h-4 rounded border-border text-primary focus:ring-primary/20 disabled:opacity-50"
+      />
+      <span class={props.disabled ? 'text-muted-foreground' : 'text-foreground'}>{props.label}</span>
+    </label>
+  );
+}
+
+interface SelectFieldProps {
+  value: string;
+  onChange: (value: string) => void;
+  disabled?: boolean;
+  options: Array<{ value: string; label: string }>;
+}
+
+function SelectField(props: SelectFieldProps) {
+  return (
+    <select
+      class="w-full text-sm border border-border rounded-md px-3 py-2 bg-background focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary disabled:opacity-50 disabled:bg-muted/50"
+      value={props.value}
+      onChange={(e) => props.onChange(e.currentTarget.value)}
+      disabled={props.disabled}
+    >
+      <For each={props.options}>{(opt) => <option value={opt.value}>{opt.label}</option>}</For>
+    </select>
+  );
+}
+
+function JSONEditor(props: { value: string; onChange: (v: string) => void; disabled?: boolean; rows?: number }) {
+  return (
+    <textarea
+      class="w-full font-mono text-xs border border-border rounded-lg px-3 py-2.5 bg-muted/30 resize-y focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary disabled:opacity-50 disabled:bg-muted/50"
+      style={{ 'min-height': `${(props.rows ?? 6) * 1.5}rem` }}
+      value={props.value}
+      onInput={(e) => props.onChange(e.currentTarget.value)}
+      spellcheck={false}
+      disabled={props.disabled}
+    />
+  );
+}
+
+// ============================================================================
+// Main Component
+// ============================================================================
 
 export function EnvSettingsPage() {
   const env = useEnvContext();
@@ -139,6 +315,7 @@ export function EnvSettingsPage() {
 
   const canInteract = createMemo(() => protocol.status() === 'connected' && !settings.loading && !settings.error);
 
+  // View mode signals
   const [configView, setConfigView] = createSignal<ViewMode>('ui');
   const [connectionView, setConnectionView] = createSignal<ViewMode>('ui');
   const [runtimeView, setRuntimeView] = createSignal<ViewMode>('ui');
@@ -147,28 +324,34 @@ export function EnvSettingsPage() {
   const [policyView, setPolicyView] = createSignal<ViewMode>('ui');
   const [aiView, setAiView] = createSignal<ViewMode>('ui');
 
+  // Dirty flags
   const [runtimeDirty, setRuntimeDirty] = createSignal(false);
   const [loggingDirty, setLoggingDirty] = createSignal(false);
   const [codespacesDirty, setCodespacesDirty] = createSignal(false);
   const [policyDirty, setPolicyDirty] = createSignal(false);
   const [aiDirty, setAiDirty] = createSignal(false);
 
+  // Runtime fields
   const [rootDir, setRootDir] = createSignal('');
   const [shell, setShell] = createSignal('');
 
+  // Logging fields
   const [logFormat, setLogFormat] = createSignal('');
   const [logLevel, setLogLevel] = createSignal('');
 
+  // Codespaces fields
   const [useDefaultCodePorts, setUseDefaultCodePorts] = createSignal(true);
   const [codePortMin, setCodePortMin] = createSignal<number | ''>('');
   const [codePortMax, setCodePortMax] = createSignal<number | ''>('');
 
+  // Permission policy fields
   const [policyLocalRead, setPolicyLocalRead] = createSignal(true);
   const [policyLocalWrite, setPolicyLocalWrite] = createSignal(false);
   const [policyLocalExecute, setPolicyLocalExecute] = createSignal(true);
   const [policyByUser, setPolicyByUser] = createSignal<PermissionRow[]>([]);
   const [policyByApp, setPolicyByApp] = createSignal<PermissionRow[]>([]);
 
+  // AI fields
   const [aiDefaultModel, setAiDefaultModel] = createSignal('openai/gpt-5-mini');
   const [aiProviders, setAiProviders] = createSignal<AIProviderRow[]>([
     { id: 'openai', type: 'openai', base_url: 'https://api.openai.com/v1', api_key_env: 'OPENAI_API_KEY' },
@@ -176,12 +359,14 @@ export function EnvSettingsPage() {
   const [aiUseModelList, setAiUseModelList] = createSignal(false);
   const [aiModels, setAiModels] = createSignal<AIModelRow[]>([]);
 
+  // JSON editor values
   const [runtimeJSON, setRuntimeJSON] = createSignal('');
   const [loggingJSON, setLoggingJSON] = createSignal('');
   const [codespacesJSON, setCodespacesJSON] = createSignal('');
   const [policyJSON, setPolicyJSON] = createSignal('');
   const [aiJSON, setAiJSON] = createSignal('');
 
+  // Saving states
   const [runtimeSaving, setRuntimeSaving] = createSignal(false);
   const [loggingSaving, setLoggingSaving] = createSignal(false);
   const [codespacesSaving, setCodespacesSaving] = createSignal(false);
@@ -190,6 +375,7 @@ export function EnvSettingsPage() {
   const [disableAIOpen, setDisableAIOpen] = createSignal(false);
   const [disableAISaving, setDisableAISaving] = createSignal(false);
 
+  // Error states
   const [runtimeError, setRuntimeError] = createSignal<string | null>(null);
   const [loggingError, setLoggingError] = createSignal<string | null>(null);
   const [codespacesError, setCodespacesError] = createSignal<string | null>(null);
@@ -359,7 +545,6 @@ export function EnvSettingsPage() {
       const max = Number(c?.code_server_port_max ?? 0);
       const n = normalizePortRange(min, max);
 
-      // Treat invalid/empty config as "default".
       setUseDefaultCodePorts(n.is_default);
       setCodePortMin(n.is_default ? '' : n.effective_min);
       setCodePortMax(n.is_default ? '' : n.effective_max);
@@ -412,6 +597,7 @@ export function EnvSettingsPage() {
     env.bumpSettingsSeq();
   };
 
+  // View switchers
   const switchRuntimeView = (next: ViewMode) => {
     setRuntimeError(null);
     if (next === runtimeView()) return;
@@ -564,6 +750,7 @@ export function EnvSettingsPage() {
     }
   };
 
+  // Save handlers
   const saveRuntime = async () => {
     setRuntimeError(null);
     setRuntimeSaving(true);
@@ -779,307 +966,271 @@ export function EnvSettingsPage() {
     return normalizePortRange(min, max);
   });
 
+  // ============================================================================
+  // Render
+  // ============================================================================
+
   return (
-    <div class="h-full min-h-0 overflow-auto">
-      <div class="p-4 space-y-4">
-        <div class="flex items-start justify-between gap-3">
+    <div class="h-full min-h-0 overflow-auto bg-background">
+      <div class="max-w-4xl mx-auto p-6 space-y-6">
+        {/* Page Header */}
+        <div class="flex items-start justify-between gap-4">
           <div>
-            <div class="text-sm font-semibold">Settings</div>
-            <div class="text-xs text-muted-foreground">AI changes apply immediately. Other changes require an agent restart.</div>
+            <h1 class="text-xl font-semibold text-foreground tracking-tight">Settings</h1>
+            <p class="text-sm text-muted-foreground mt-1">
+              Configure your agent. AI changes apply immediately; other changes require a restart.
+            </p>
           </div>
-          <Button size="sm" variant="outline" onClick={() => void refetch()} disabled={settings.loading}>
-            Refresh
+          <Button size="sm" variant="outline" onClick={() => void refetch()} disabled={settings.loading} class="gap-1.5">
+            <RefreshIcon class="w-3.5 h-3.5" />
+            <span>Refresh</span>
           </Button>
         </div>
 
         <Show when={settings.error}>
-          <div class="text-xs text-error break-words">{settings.error instanceof Error ? settings.error.message : String(settings.error)}</div>
+          <div class="flex items-start gap-2 p-4 rounded-lg bg-destructive/10 border border-destructive/20">
+            <div class="text-sm text-destructive">{settings.error instanceof Error ? settings.error.message : String(settings.error)}</div>
+          </div>
         </Show>
 
-        <Card>
-          <div class="p-4 space-y-3">
-            <div class="flex items-start justify-between gap-2">
-              <div>
-                <div class="text-sm font-medium">Config file</div>
-                <div class="text-xs text-muted-foreground">Read-only.</div>
-              </div>
-              <ViewToggle value={configView} onChange={(v) => setConfigView(v)} />
-            </div>
+        {/* Config File Card */}
+        <SettingsCard
+          icon={FileCode}
+          title="Config File"
+          description="Location of the agent configuration file."
+          badge="Read-only"
+          actions={<ViewToggle value={configView} onChange={(v) => setConfigView(v)} />}
+        >
+          <Show when={configView() === 'ui'} fallback={<JSONEditor value={configJSONText()} onChange={() => {}} disabled rows={4} />}>
+            <InfoRow label="Path" value={configPath() || '(unknown)'} mono />
+          </Show>
+        </SettingsCard>
 
-            <Show when={configView() === 'ui'}>
-              <div class="text-xs text-muted-foreground">
-                Path: <code class="px-1 py-0.5 bg-muted rounded">{configPath() || '(unknown)'}</code>
-              </div>
-            </Show>
-
-            <Show when={configView() === 'json'}>
-              <textarea
-                class="w-full h-[120px] font-mono text-xs border border-border rounded px-2 py-2 bg-background resize-y"
-                value={configJSONText()}
-                spellcheck={false}
-                disabled={true}
-              />
-            </Show>
-          </div>
-        </Card>
-
-        <Card>
-          <div class="p-4 space-y-3">
-            <div class="flex items-start justify-between gap-2">
-              <div>
-                <div class="text-sm font-medium">Connection</div>
-                <div class="text-xs text-muted-foreground">Read-only. Managed by the control plane.</div>
-              </div>
-              <ViewToggle value={connectionView} onChange={(v) => setConnectionView(v)} />
-            </div>
-
-            <Show when={connectionView() === 'ui'}>
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
-                <div>
-                  <div class="text-muted-foreground">Control plane</div>
-                  <div class="font-mono break-all">{String(settings()?.connection?.controlplane_base_url ?? '')}</div>
-                </div>
-                <div>
-                  <div class="text-muted-foreground">Environment ID</div>
-                  <div class="font-mono break-all">{String(settings()?.connection?.environment_id ?? '')}</div>
-                </div>
-                <div>
-                  <div class="text-muted-foreground">Agent instance ID</div>
-                  <div class="font-mono break-all">{String(settings()?.connection?.agent_instance_id ?? '')}</div>
-                </div>
-                <div>
-                  <div class="text-muted-foreground">Direct channel</div>
-                  <div class="font-mono break-all">{String(settings()?.connection?.direct?.channel_id ?? '')}</div>
-                </div>
-                <div>
-                  <div class="text-muted-foreground">Direct suite</div>
-                  <div class="font-mono">{String(settings()?.connection?.direct?.default_suite ?? '')}</div>
-                </div>
-                <div>
-                  <div class="text-muted-foreground">Init expire (unix_s)</div>
-                  <div class="font-mono">{String(settings()?.connection?.direct?.channel_init_expire_at_unix_s ?? '')}</div>
-                </div>
-                <div class="md:col-span-2">
-                  <div class="text-muted-foreground">Direct ws_url</div>
-                  <div class="font-mono break-all">{String(settings()?.connection?.direct?.ws_url ?? '')}</div>
-                </div>
-                <div>
-                  <div class="text-muted-foreground">E2EE PSK</div>
-                  <div class="font-mono">{settings()?.connection?.direct?.e2ee_psk_set ? 'set' : 'missing'}</div>
-                </div>
-              </div>
-            </Show>
-
-            <Show when={connectionView() === 'json'}>
-              <textarea
-                class="w-full h-[220px] font-mono text-xs border border-border rounded px-2 py-2 bg-background resize-y"
-                value={connectionJSONText()}
-                spellcheck={false}
-                disabled={true}
-              />
-            </Show>
-          </div>
-        </Card>
-
-        <Card>
-          <div class="p-4 space-y-3">
-            <div class="flex items-start justify-between gap-2">
-              <div>
-                <div class="text-sm font-medium">Runtime</div>
-                <div class="text-xs text-muted-foreground">Restart required.</div>
-              </div>
-              <div class="flex items-center gap-2">
-                <ViewToggle value={runtimeView} disabled={!canInteract()} onChange={(v) => switchRuntimeView(v)} />
-                <Button size="sm" variant="outline" onClick={() => resetRuntime()} disabled={!canInteract()}>
-                  Reset
-                </Button>
-                <Button size="sm" variant="default" onClick={() => void saveRuntime()} loading={runtimeSaving()} disabled={!canInteract()}>
-                  Save
-                </Button>
+        {/* Connection Card */}
+        <SettingsCard
+          icon={Globe}
+          title="Connection"
+          description="Connection details managed by the control plane."
+          badge="Read-only"
+          actions={<ViewToggle value={connectionView} onChange={(v) => setConnectionView(v)} />}
+        >
+          <Show when={connectionView() === 'ui'} fallback={<JSONEditor value={connectionJSONText()} onChange={() => {}} disabled rows={10} />}>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1 divide-y md:divide-y-0 divide-border">
+              <InfoRow label="Control Plane" value={String(settings()?.connection?.controlplane_base_url ?? '')} mono />
+              <InfoRow label="Environment ID" value={String(settings()?.connection?.environment_id ?? '')} mono />
+              <InfoRow label="Agent Instance ID" value={String(settings()?.connection?.agent_instance_id ?? '')} mono />
+              <InfoRow label="Direct Channel" value={String(settings()?.connection?.direct?.channel_id ?? '')} mono />
+              <InfoRow label="Direct Suite" value={String(settings()?.connection?.direct?.default_suite ?? '')} mono />
+              <InfoRow label="E2EE PSK" value={settings()?.connection?.direct?.e2ee_psk_set ? 'Configured' : 'Not set'} />
+              <div class="md:col-span-2">
+                <InfoRow label="Direct WebSocket URL" value={String(settings()?.connection?.direct?.ws_url ?? '')} mono />
               </div>
             </div>
+          </Show>
+        </SettingsCard>
 
-            <Show when={runtimeError()}>
-              <div class="text-xs text-error break-words">{runtimeError()}</div>
-            </Show>
-
-            <Show when={runtimeView() === 'ui'}>
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div>
-                  <label class="block text-xs font-medium mb-1">root_dir</label>
-                  <Input
-                    value={rootDir()}
-                    onInput={(e) => {
-                      setRootDir(e.currentTarget.value);
-                      setRuntimeDirty(true);
-                    }}
-                    placeholder="(default: user home)"
-                    size="sm"
-                    class="w-full"
-                    disabled={!canInteract()}
-                  />
-                </div>
-                <div>
-                  <label class="block text-xs font-medium mb-1">shell</label>
-                  <Input
-                    value={shell()}
-                    onInput={(e) => {
-                      setShell(e.currentTarget.value);
-                      setRuntimeDirty(true);
-                    }}
-                    placeholder="(default: $SHELL or /bin/bash)"
-                    size="sm"
-                    class="w-full"
-                    disabled={!canInteract()}
-                  />
-                </div>
-              </div>
-            </Show>
-
-            <Show when={runtimeView() === 'json'}>
-              <textarea
-                class="w-full h-[140px] font-mono text-xs border border-border rounded px-2 py-2 bg-background resize-y"
+        {/* Runtime Card */}
+        <SettingsCard
+          icon={Terminal}
+          title="Runtime"
+          description="Shell and working directory configuration."
+          badge="Restart required"
+          badgeVariant="warning"
+          error={runtimeError()}
+          actions={
+            <>
+              <ViewToggle value={runtimeView} disabled={!canInteract()} onChange={(v) => switchRuntimeView(v)} />
+              <Button size="sm" variant="outline" onClick={() => resetRuntime()} disabled={!canInteract()}>
+                Reset
+              </Button>
+              <Button size="sm" variant="default" onClick={() => void saveRuntime()} loading={runtimeSaving()} disabled={!canInteract()}>
+                Save
+              </Button>
+            </>
+          }
+        >
+          <Show
+            when={runtimeView() === 'ui'}
+            fallback={
+              <JSONEditor
                 value={runtimeJSON()}
-                onInput={(e) => {
-                  setRuntimeJSON(e.currentTarget.value);
+                onChange={(v) => {
+                  setRuntimeJSON(v);
                   setRuntimeDirty(true);
                 }}
-                spellcheck={false}
                 disabled={!canInteract()}
+                rows={5}
               />
-            </Show>
-          </div>
-        </Card>
-
-        <Card>
-          <div class="p-4 space-y-3">
-            <div class="flex items-start justify-between gap-2">
+            }
+          >
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <div class="text-sm font-medium">Logging</div>
-                <div class="text-xs text-muted-foreground">Restart required.</div>
-              </div>
-              <div class="flex items-center gap-2">
-                <ViewToggle value={loggingView} disabled={!canInteract()} onChange={(v) => switchLoggingView(v)} />
-                <Button size="sm" variant="outline" onClick={() => resetLogging()} disabled={!canInteract()}>
-                  Reset
-                </Button>
-                <Button size="sm" variant="default" onClick={() => void saveLogging()} loading={loggingSaving()} disabled={!canInteract()}>
-                  Save
-                </Button>
-              </div>
-            </div>
-
-            <Show when={loggingError()}>
-              <div class="text-xs text-error break-words">{loggingError()}</div>
-            </Show>
-
-            <Show when={loggingView() === 'ui'}>
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div>
-                  <label class="block text-xs font-medium mb-1">log_format</label>
-                  <select
-                    class="w-full text-xs border border-border rounded px-2 py-1 bg-background"
-                    value={logFormat()}
-                    onChange={(e) => {
-                      setLogFormat(e.currentTarget.value);
-                      setLoggingDirty(true);
-                    }}
-                    disabled={!canInteract()}
-                  >
-                    <option value="">Default (json)</option>
-                    <option value="json">json</option>
-                    <option value="text">text</option>
-                  </select>
-                </div>
-                <div>
-                  <label class="block text-xs font-medium mb-1">log_level</label>
-                  <select
-                    class="w-full text-xs border border-border rounded px-2 py-1 bg-background"
-                    value={logLevel()}
-                    onChange={(e) => {
-                      setLogLevel(e.currentTarget.value);
-                      setLoggingDirty(true);
-                    }}
-                    disabled={!canInteract()}
-                  >
-                    <option value="">Default (info)</option>
-                    <option value="debug">debug</option>
-                    <option value="info">info</option>
-                    <option value="warn">warn</option>
-                    <option value="error">error</option>
-                  </select>
-                </div>
-              </div>
-            </Show>
-
-            <Show when={loggingView() === 'json'}>
-              <textarea
-                class="w-full h-[140px] font-mono text-xs border border-border rounded px-2 py-2 bg-background resize-y"
-                value={loggingJSON()}
-                onInput={(e) => {
-                  setLoggingJSON(e.currentTarget.value);
-                  setLoggingDirty(true);
-                }}
-                spellcheck={false}
-                disabled={!canInteract()}
-              />
-            </Show>
-          </div>
-        </Card>
-
-        <Card>
-          <div class="p-4 space-y-3">
-            <div class="flex items-start justify-between gap-2">
-              <div>
-                <div class="text-sm font-medium">Codespaces</div>
-                <div class="text-xs text-muted-foreground">Restart required.</div>
-              </div>
-              <div class="flex items-center gap-2">
-                <ViewToggle value={codespacesView} disabled={!canInteract()} onChange={(v) => switchCodespacesView(v)} />
-                <Button size="sm" variant="outline" onClick={() => resetCodespaces()} disabled={!canInteract()}>
-                  Reset
-                </Button>
-                <Button
-                  size="sm"
-                  variant="default"
-                  onClick={() => void saveCodespaces()}
-                  loading={codespacesSaving()}
-                  disabled={!canInteract()}
-                >
-                  Save
-                </Button>
-              </div>
-            </div>
-
-            <Show when={codespacesError()}>
-              <div class="text-xs text-error break-words">{codespacesError()}</div>
-            </Show>
-
-            <Show when={codespacesView() === 'ui'}>
-              <div class="text-xs text-muted-foreground">
-                Default range: <code class="px-1 py-0.5 bg-muted rounded">{DEFAULT_CODE_SERVER_PORT_MIN}</code>-
-                <code class="px-1 py-0.5 bg-muted rounded">{DEFAULT_CODE_SERVER_PORT_MAX}</code>. Effective:{' '}
-                <code class="px-1 py-0.5 bg-muted rounded">{codespacesEffective().effective_min}</code>-
-                <code class="px-1 py-0.5 bg-muted rounded">{codespacesEffective().effective_max}</code>.
-              </div>
-
-              <label class="flex items-center gap-2 text-xs">
-                <input
-                  type="checkbox"
-                  checked={useDefaultCodePorts()}
-                  onChange={(e) => {
-                    setUseDefaultCodePorts(e.currentTarget.checked);
-                    setCodespacesDirty(true);
+                <FieldLabel hint="default: user home">root_dir</FieldLabel>
+                <Input
+                  value={rootDir()}
+                  onInput={(e) => {
+                    setRootDir(e.currentTarget.value);
+                    setRuntimeDirty(true);
                   }}
+                  placeholder="/home/user"
+                  size="sm"
+                  class="w-full"
                   disabled={!canInteract()}
                 />
-                Use default range
-              </label>
+              </div>
+              <div>
+                <FieldLabel hint="default: $SHELL">shell</FieldLabel>
+                <Input
+                  value={shell()}
+                  onInput={(e) => {
+                    setShell(e.currentTarget.value);
+                    setRuntimeDirty(true);
+                  }}
+                  placeholder="/bin/bash"
+                  size="sm"
+                  class="w-full"
+                  disabled={!canInteract()}
+                />
+              </div>
+            </div>
+          </Show>
+        </SettingsCard>
+
+        {/* Logging Card */}
+        <SettingsCard
+          icon={Database}
+          title="Logging"
+          description="Log format and verbosity level."
+          badge="Restart required"
+          badgeVariant="warning"
+          error={loggingError()}
+          actions={
+            <>
+              <ViewToggle value={loggingView} disabled={!canInteract()} onChange={(v) => switchLoggingView(v)} />
+              <Button size="sm" variant="outline" onClick={() => resetLogging()} disabled={!canInteract()}>
+                Reset
+              </Button>
+              <Button size="sm" variant="default" onClick={() => void saveLogging()} loading={loggingSaving()} disabled={!canInteract()}>
+                Save
+              </Button>
+            </>
+          }
+        >
+          <Show
+            when={loggingView() === 'ui'}
+            fallback={
+              <JSONEditor
+                value={loggingJSON()}
+                onChange={(v) => {
+                  setLoggingJSON(v);
+                  setLoggingDirty(true);
+                }}
+                disabled={!canInteract()}
+                rows={5}
+              />
+            }
+          >
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <FieldLabel>log_format</FieldLabel>
+                <SelectField
+                  value={logFormat()}
+                  onChange={(v) => {
+                    setLogFormat(v);
+                    setLoggingDirty(true);
+                  }}
+                  disabled={!canInteract()}
+                  options={[
+                    { value: '', label: 'Default (json)' },
+                    { value: 'json', label: 'json' },
+                    { value: 'text', label: 'text' },
+                  ]}
+                />
+              </div>
+              <div>
+                <FieldLabel>log_level</FieldLabel>
+                <SelectField
+                  value={logLevel()}
+                  onChange={(v) => {
+                    setLogLevel(v);
+                    setLoggingDirty(true);
+                  }}
+                  disabled={!canInteract()}
+                  options={[
+                    { value: '', label: 'Default (info)' },
+                    { value: 'debug', label: 'debug' },
+                    { value: 'info', label: 'info' },
+                    { value: 'warn', label: 'warn' },
+                    { value: 'error', label: 'error' },
+                  ]}
+                />
+              </div>
+            </div>
+          </Show>
+        </SettingsCard>
+
+        {/* Codespaces Card */}
+        <SettingsCard
+          icon={Code}
+          title="Codespaces"
+          description="Port range for code-server instances."
+          badge="Restart required"
+          badgeVariant="warning"
+          error={codespacesError()}
+          actions={
+            <>
+              <ViewToggle value={codespacesView} disabled={!canInteract()} onChange={(v) => switchCodespacesView(v)} />
+              <Button size="sm" variant="outline" onClick={() => resetCodespaces()} disabled={!canInteract()}>
+                Reset
+              </Button>
+              <Button size="sm" variant="default" onClick={() => void saveCodespaces()} loading={codespacesSaving()} disabled={!canInteract()}>
+                Save
+              </Button>
+            </>
+          }
+        >
+          <Show
+            when={codespacesView() === 'ui'}
+            fallback={
+              <JSONEditor
+                value={codespacesJSON()}
+                onChange={(v) => {
+                  setCodespacesJSON(v);
+                  setCodespacesDirty(true);
+                }}
+                disabled={!canInteract()}
+                rows={5}
+              />
+            }
+          >
+            <div class="space-y-4">
+              <div class="flex items-center gap-4 p-3 rounded-lg bg-muted/30 border border-border">
+                <div class="flex-1">
+                  <div class="text-xs text-muted-foreground">Effective port range</div>
+                  <div class="text-sm font-mono mt-0.5">
+                    {codespacesEffective().effective_min} – {codespacesEffective().effective_max}
+                  </div>
+                </div>
+                <div class="text-xs text-muted-foreground">
+                  Default: <CodeBadge>{String(DEFAULT_CODE_SERVER_PORT_MIN)}</CodeBadge> –{' '}
+                  <CodeBadge>{String(DEFAULT_CODE_SERVER_PORT_MAX)}</CodeBadge>
+                </div>
+              </div>
+
+              <CheckboxField
+                checked={useDefaultCodePorts()}
+                onChange={(v) => {
+                  setUseDefaultCodePorts(v);
+                  setCodespacesDirty(true);
+                }}
+                disabled={!canInteract()}
+                label="Use default port range"
+              />
 
               <Show when={!useDefaultCodePorts()}>
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
-                    <label class="block text-xs font-medium mb-1">code_server_port_min</label>
+                    <FieldLabel>code_server_port_min</FieldLabel>
                     <Input
                       value={codePortMin() === '' ? '' : String(codePortMin())}
                       onInput={(e) => {
@@ -1094,7 +1245,7 @@ export function EnvSettingsPage() {
                     />
                   </div>
                   <div>
-                    <label class="block text-xs font-medium mb-1">code_server_port_max</label>
+                    <FieldLabel>code_server_port_max</FieldLabel>
                     <Input
                       value={codePortMax() === '' ? '' : String(codePortMax())}
                       onInput={(e) => {
@@ -1110,96 +1261,89 @@ export function EnvSettingsPage() {
                   </div>
                 </div>
               </Show>
-            </Show>
-
-            <Show when={codespacesView() === 'json'}>
-              <textarea
-                class="w-full h-[140px] font-mono text-xs border border-border rounded px-2 py-2 bg-background resize-y"
-                value={codespacesJSON()}
-                onInput={(e) => {
-                  setCodespacesJSON(e.currentTarget.value);
-                  setCodespacesDirty(true);
-                }}
-                spellcheck={false}
-                disabled={!canInteract()}
-              />
-            </Show>
-          </div>
-        </Card>
-
-        <Card>
-          <div class="p-4 space-y-3">
-            <div class="flex items-start justify-between gap-2">
-              <div>
-                <div class="text-sm font-medium">Permission policy</div>
-                <div class="text-xs text-muted-foreground">Restart required.</div>
-              </div>
-              <div class="flex items-center gap-2">
-                <ViewToggle value={policyView} disabled={!canInteract()} onChange={(v) => switchPolicyView(v)} />
-                <Button size="sm" variant="outline" onClick={() => resetPolicy()} disabled={!canInteract()}>
-                  Reset
-                </Button>
-                <Button size="sm" variant="default" onClick={() => void savePolicy()} loading={policySaving()} disabled={!canInteract()}>
-                  Save
-                </Button>
-              </div>
             </div>
+          </Show>
+        </SettingsCard>
 
-            <Show when={policyError()}>
-              <div class="text-xs text-error break-words">{policyError()}</div>
-            </Show>
-
-            <Show when={policyView() === 'ui'}>
+        {/* Permission Policy Card */}
+        <SettingsCard
+          icon={Shield}
+          title="Permission Policy"
+          description="Control read, write, and execute permissions."
+          badge="Restart required"
+          badgeVariant="warning"
+          error={policyError()}
+          actions={
+            <>
+              <ViewToggle value={policyView} disabled={!canInteract()} onChange={(v) => switchPolicyView(v)} />
+              <Button size="sm" variant="outline" onClick={() => resetPolicy()} disabled={!canInteract()}>
+                Reset
+              </Button>
+              <Button size="sm" variant="default" onClick={() => void savePolicy()} loading={policySaving()} disabled={!canInteract()}>
+                Save
+              </Button>
+            </>
+          }
+        >
+          <Show
+            when={policyView() === 'ui'}
+            fallback={
+              <JSONEditor
+                value={policyJSON()}
+                onChange={(v) => {
+                  setPolicyJSON(v);
+                  setPolicyDirty(true);
+                }}
+                disabled={!canInteract()}
+                rows={12}
+              />
+            }
+          >
+            <div class="space-y-6">
+              {/* Schema version */}
               <div class="text-xs text-muted-foreground">
-                schema_version: <code class="px-1 py-0.5 bg-muted rounded">1</code>
+                schema_version: <CodeBadge>1</CodeBadge>
               </div>
 
-              <div class="space-y-2">
-                <div class="text-xs font-medium">local_max</div>
-                <div class="flex flex-wrap gap-4 text-xs">
-                  <label class="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={policyLocalRead()}
-                      onChange={(e) => {
-                        setPolicyLocalRead(e.currentTarget.checked);
-                        setPolicyDirty(true);
-                      }}
-                      disabled={!canInteract()}
-                    />
-                    read
-                  </label>
-                  <label class="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={policyLocalWrite()}
-                      onChange={(e) => {
-                        setPolicyLocalWrite(e.currentTarget.checked);
-                        setPolicyDirty(true);
-                      }}
-                      disabled={!canInteract()}
-                    />
-                    write
-                  </label>
-                  <label class="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={policyLocalExecute()}
-                      onChange={(e) => {
-                        setPolicyLocalExecute(e.currentTarget.checked);
-                        setPolicyDirty(true);
-                      }}
-                      disabled={!canInteract()}
-                    />
-                    execute
-                  </label>
+              {/* Local max */}
+              <div class="space-y-3">
+                <div class="text-sm font-medium text-foreground">local_max</div>
+                <div class="flex flex-wrap gap-6">
+                  <CheckboxField
+                    checked={policyLocalRead()}
+                    onChange={(v) => {
+                      setPolicyLocalRead(v);
+                      setPolicyDirty(true);
+                    }}
+                    disabled={!canInteract()}
+                    label="read"
+                  />
+                  <CheckboxField
+                    checked={policyLocalWrite()}
+                    onChange={(v) => {
+                      setPolicyLocalWrite(v);
+                      setPolicyDirty(true);
+                    }}
+                    disabled={!canInteract()}
+                    label="write"
+                  />
+                  <CheckboxField
+                    checked={policyLocalExecute()}
+                    onChange={(v) => {
+                      setPolicyLocalExecute(v);
+                      setPolicyDirty(true);
+                    }}
+                    disabled={!canInteract()}
+                    label="execute"
+                  />
                 </div>
-                <div class="text-xs text-muted-foreground">by_user / by_app rules are AND-ed with local_max.</div>
+                <p class="text-xs text-muted-foreground">User and app rules are AND-ed with local_max.</p>
               </div>
 
-              <div class="space-y-2">
-                <div class="flex items-center justify-between gap-2">
-                  <div class="text-xs font-medium">by_user</div>
+              {/* by_user */}
+              <div class="space-y-3">
+                <div class="flex items-center justify-between">
+                  <div class="text-sm font-medium text-foreground">by_user</div>
                   <Button
                     size="sm"
                     variant="outline"
@@ -1209,20 +1353,18 @@ export function EnvSettingsPage() {
                     }}
                     disabled={!canInteract()}
                   >
-                    Add
+                    Add Rule
                   </Button>
                 </div>
-                <Show
-                  when={policyByUser().length > 0}
-                  fallback={<div class="text-xs text-muted-foreground">No user-specific overrides.</div>}
-                >
-                  <div class="space-y-2">
+
+                <Show when={policyByUser().length > 0} fallback={<p class="text-xs text-muted-foreground">No user-specific overrides.</p>}>
+                  <div class="space-y-3">
                     <For each={policyByUser()}>
                       {(row, idx) => (
-                        <div class="border border-border rounded p-2 space-y-2">
-                          <div class="flex items-center justify-between gap-2">
-                            <div class="flex-1 min-w-0">
-                              <label class="block text-xs font-medium mb-1">user_public_id</label>
+                        <div class="p-4 rounded-lg border border-border bg-muted/20 space-y-3">
+                          <div class="flex items-start justify-between gap-3">
+                            <div class="flex-1">
+                              <FieldLabel>user_public_id</FieldLabel>
                               <Input
                                 value={row.key}
                                 onInput={(e) => {
@@ -1238,7 +1380,8 @@ export function EnvSettingsPage() {
                             </div>
                             <Button
                               size="sm"
-                              variant="outline"
+                              variant="ghost"
+                              class="text-muted-foreground hover:text-destructive"
                               onClick={() => {
                                 setPolicyByUser((prev) => prev.filter((_, i) => i !== idx()));
                                 setPolicyDirty(true);
@@ -1248,47 +1391,34 @@ export function EnvSettingsPage() {
                               Remove
                             </Button>
                           </div>
-
-                          <div class="flex flex-wrap gap-4 text-xs">
-                            <label class="flex items-center gap-2">
-                              <input
-                                type="checkbox"
-                                checked={row.read}
-                                onChange={(e) => {
-                                  const v = e.currentTarget.checked;
-                                  setPolicyByUser((prev) => prev.map((it, i) => (i === idx() ? { ...it, read: v } : it)));
-                                  setPolicyDirty(true);
-                                }}
-                                disabled={!canInteract() || !policyLocalRead()}
-                              />
-                              read
-                            </label>
-                            <label class="flex items-center gap-2">
-                              <input
-                                type="checkbox"
-                                checked={row.write}
-                                onChange={(e) => {
-                                  const v = e.currentTarget.checked;
-                                  setPolicyByUser((prev) => prev.map((it, i) => (i === idx() ? { ...it, write: v } : it)));
-                                  setPolicyDirty(true);
-                                }}
-                                disabled={!canInteract() || !policyLocalWrite()}
-                              />
-                              write
-                            </label>
-                            <label class="flex items-center gap-2">
-                              <input
-                                type="checkbox"
-                                checked={row.execute}
-                                onChange={(e) => {
-                                  const v = e.currentTarget.checked;
-                                  setPolicyByUser((prev) => prev.map((it, i) => (i === idx() ? { ...it, execute: v } : it)));
-                                  setPolicyDirty(true);
-                                }}
-                                disabled={!canInteract() || !policyLocalExecute()}
-                              />
-                              execute
-                            </label>
+                          <div class="flex flex-wrap gap-6">
+                            <CheckboxField
+                              checked={row.read}
+                              onChange={(v) => {
+                                setPolicyByUser((prev) => prev.map((it, i) => (i === idx() ? { ...it, read: v } : it)));
+                                setPolicyDirty(true);
+                              }}
+                              disabled={!canInteract() || !policyLocalRead()}
+                              label="read"
+                            />
+                            <CheckboxField
+                              checked={row.write}
+                              onChange={(v) => {
+                                setPolicyByUser((prev) => prev.map((it, i) => (i === idx() ? { ...it, write: v } : it)));
+                                setPolicyDirty(true);
+                              }}
+                              disabled={!canInteract() || !policyLocalWrite()}
+                              label="write"
+                            />
+                            <CheckboxField
+                              checked={row.execute}
+                              onChange={(v) => {
+                                setPolicyByUser((prev) => prev.map((it, i) => (i === idx() ? { ...it, execute: v } : it)));
+                                setPolicyDirty(true);
+                              }}
+                              disabled={!canInteract() || !policyLocalExecute()}
+                              label="execute"
+                            />
                           </div>
                         </div>
                       )}
@@ -1297,9 +1427,10 @@ export function EnvSettingsPage() {
                 </Show>
               </div>
 
-              <div class="space-y-2">
-                <div class="flex items-center justify-between gap-2">
-                  <div class="text-xs font-medium">by_app</div>
+              {/* by_app */}
+              <div class="space-y-3">
+                <div class="flex items-center justify-between">
+                  <div class="text-sm font-medium text-foreground">by_app</div>
                   <Button
                     size="sm"
                     variant="outline"
@@ -1309,17 +1440,18 @@ export function EnvSettingsPage() {
                     }}
                     disabled={!canInteract()}
                   >
-                    Add
+                    Add Rule
                   </Button>
                 </div>
-                <Show when={policyByApp().length > 0} fallback={<div class="text-xs text-muted-foreground">No app-specific overrides.</div>}>
-                  <div class="space-y-2">
+
+                <Show when={policyByApp().length > 0} fallback={<p class="text-xs text-muted-foreground">No app-specific overrides.</p>}>
+                  <div class="space-y-3">
                     <For each={policyByApp()}>
                       {(row, idx) => (
-                        <div class="border border-border rounded p-2 space-y-2">
-                          <div class="flex items-center justify-between gap-2">
-                            <div class="flex-1 min-w-0">
-                              <label class="block text-xs font-medium mb-1">floe_app</label>
+                        <div class="p-4 rounded-lg border border-border bg-muted/20 space-y-3">
+                          <div class="flex items-start justify-between gap-3">
+                            <div class="flex-1">
+                              <FieldLabel>floe_app</FieldLabel>
                               <Input
                                 value={row.key}
                                 onInput={(e) => {
@@ -1335,7 +1467,8 @@ export function EnvSettingsPage() {
                             </div>
                             <Button
                               size="sm"
-                              variant="outline"
+                              variant="ghost"
+                              class="text-muted-foreground hover:text-destructive"
                               onClick={() => {
                                 setPolicyByApp((prev) => prev.filter((_, i) => i !== idx()));
                                 setPolicyDirty(true);
@@ -1345,47 +1478,34 @@ export function EnvSettingsPage() {
                               Remove
                             </Button>
                           </div>
-
-                          <div class="flex flex-wrap gap-4 text-xs">
-                            <label class="flex items-center gap-2">
-                              <input
-                                type="checkbox"
-                                checked={row.read}
-                                onChange={(e) => {
-                                  const v = e.currentTarget.checked;
-                                  setPolicyByApp((prev) => prev.map((it, i) => (i === idx() ? { ...it, read: v } : it)));
-                                  setPolicyDirty(true);
-                                }}
-                                disabled={!canInteract() || !policyLocalRead()}
-                              />
-                              read
-                            </label>
-                            <label class="flex items-center gap-2">
-                              <input
-                                type="checkbox"
-                                checked={row.write}
-                                onChange={(e) => {
-                                  const v = e.currentTarget.checked;
-                                  setPolicyByApp((prev) => prev.map((it, i) => (i === idx() ? { ...it, write: v } : it)));
-                                  setPolicyDirty(true);
-                                }}
-                                disabled={!canInteract() || !policyLocalWrite()}
-                              />
-                              write
-                            </label>
-                            <label class="flex items-center gap-2">
-                              <input
-                                type="checkbox"
-                                checked={row.execute}
-                                onChange={(e) => {
-                                  const v = e.currentTarget.checked;
-                                  setPolicyByApp((prev) => prev.map((it, i) => (i === idx() ? { ...it, execute: v } : it)));
-                                  setPolicyDirty(true);
-                                }}
-                                disabled={!canInteract() || !policyLocalExecute()}
-                              />
-                              execute
-                            </label>
+                          <div class="flex flex-wrap gap-6">
+                            <CheckboxField
+                              checked={row.read}
+                              onChange={(v) => {
+                                setPolicyByApp((prev) => prev.map((it, i) => (i === idx() ? { ...it, read: v } : it)));
+                                setPolicyDirty(true);
+                              }}
+                              disabled={!canInteract() || !policyLocalRead()}
+                              label="read"
+                            />
+                            <CheckboxField
+                              checked={row.write}
+                              onChange={(v) => {
+                                setPolicyByApp((prev) => prev.map((it, i) => (i === idx() ? { ...it, write: v } : it)));
+                                setPolicyDirty(true);
+                              }}
+                              disabled={!canInteract() || !policyLocalWrite()}
+                              label="write"
+                            />
+                            <CheckboxField
+                              checked={row.execute}
+                              onChange={(v) => {
+                                setPolicyByApp((prev) => prev.map((it, i) => (i === idx() ? { ...it, execute: v } : it)));
+                                setPolicyDirty(true);
+                              }}
+                              disabled={!canInteract() || !policyLocalExecute()}
+                              label="execute"
+                            />
                           </div>
                         </div>
                       )}
@@ -1393,101 +1513,106 @@ export function EnvSettingsPage() {
                   </div>
                 </Show>
               </div>
-            </Show>
+            </div>
+          </Show>
+        </SettingsCard>
 
-            <Show when={policyView() === 'json'}>
-              <textarea
-                class="w-full h-[320px] font-mono text-xs border border-border rounded px-2 py-2 bg-background resize-y"
-                value={policyJSON()}
-                onInput={(e) => {
-                  setPolicyJSON(e.currentTarget.value);
-                  setPolicyDirty(true);
-                }}
-                spellcheck={false}
-                disabled={!canInteract()}
-              />
-            </Show>
-          </div>
-        </Card>
-
+        {/* AI Card */}
         <div id="redeven-settings-ai">
-          <Card>
-            <div class="p-4 space-y-3">
-              <div class="flex items-start justify-between gap-2">
-                <div>
-                  <div class="text-sm font-medium">AI</div>
-                  <div class="text-xs text-muted-foreground">
-                    API keys are never stored. Use <code class="px-1 py-0.5 bg-muted rounded">api_key_env</code>.
-                  </div>
-                </div>
-                <div class="flex items-center gap-2">
-                  <ViewToggle value={aiView} disabled={!canInteract()} onChange={(v) => switchAIView(v)} />
-                  <Button size="sm" variant="outline" onClick={() => resetAI()} disabled={!canInteract() || aiSaving()}>
-                    Reset
+          <SettingsCard
+            icon={Bot}
+            title="AI"
+            description="Configure AI providers and models. API keys are never stored."
+            badge={aiEnabled() ? 'Enabled' : 'Disabled'}
+            badgeVariant={aiEnabled() ? 'success' : 'default'}
+            error={aiError()}
+            actions={
+              <>
+                <ViewToggle value={aiView} disabled={!canInteract()} onChange={(v) => switchAIView(v)} />
+                <Button size="sm" variant="outline" onClick={() => resetAI()} disabled={!canInteract() || aiSaving()}>
+                  Reset
+                </Button>
+                <Show when={aiEnabled()}>
+                  <Button size="sm" variant="destructive" onClick={() => setDisableAIOpen(true)} disabled={!canInteract() || aiSaving()}>
+                    Disable
                   </Button>
-                  <Show when={aiEnabled()}>
-                    <Button size="sm" variant="destructive" onClick={() => setDisableAIOpen(true)} disabled={!canInteract() || aiSaving()}>
-                      Disable AI
-                    </Button>
-                  </Show>
-                  <Button size="sm" variant="default" onClick={() => void saveAI()} loading={aiSaving()} disabled={!canInteract()}>
-                    {aiEnabled() ? 'Save' : 'Enable AI'}
-                  </Button>
+                </Show>
+                <Button size="sm" variant="default" onClick={() => void saveAI()} loading={aiSaving()} disabled={!canInteract()}>
+                  {aiEnabled() ? 'Save' : 'Enable AI'}
+                </Button>
+              </>
+            }
+          >
+            <Show when={!aiEnabled() && !settings.loading && !settings.error}>
+              <div class="flex items-center gap-3 p-4 rounded-lg bg-muted/30 border border-border">
+                <Zap class="w-5 h-5 text-muted-foreground" />
+                <div class="text-sm text-muted-foreground">
+                  AI is currently disabled. Configure the settings below and click <strong>Enable AI</strong> to activate.
                 </div>
               </div>
+            </Show>
 
-              <Show when={!aiEnabled() && !settings.loading && !settings.error}>
-                <div class="text-xs text-muted-foreground">
-                  AI is currently disabled. Use “Enable AI” to save this config and activate the AI page.
+            <Show
+              when={aiView() === 'ui'}
+              fallback={
+                <JSONEditor
+                  value={aiJSON()}
+                  onChange={(v) => {
+                    setAiJSON(v);
+                    setAiDirty(true);
+                  }}
+                  disabled={!canInteract()}
+                  rows={14}
+                />
+              }
+            >
+              <div class="space-y-6">
+                {/* Default model */}
+                <div>
+                  <FieldLabel hint="<provider>/<model>">default_model</FieldLabel>
+                  <Input
+                    value={aiDefaultModel()}
+                    onInput={(e) => {
+                      setAiDefaultModel(e.currentTarget.value);
+                      setAiDirty(true);
+                    }}
+                    placeholder="openai/gpt-5-mini"
+                    size="sm"
+                    class="w-full max-w-md"
+                    disabled={!canInteract()}
+                  />
                 </div>
-              </Show>
 
-              <Show when={aiError()}>
-                <div class="text-xs text-error break-words">{aiError()}</div>
-              </Show>
-
-              <Show when={aiView() === 'ui'}>
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div class="md:col-span-2">
-                    <label class="block text-xs font-medium mb-1">default_model</label>
-                    <Input
-                      value={aiDefaultModel()}
-                      onInput={(e) => {
-                        setAiDefaultModel(e.currentTarget.value);
+                {/* Providers */}
+                <div class="space-y-3">
+                  <div class="flex items-center justify-between">
+                    <div class="text-sm font-medium text-foreground">Providers</div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setAiProviders((prev) => [...prev, { id: '', type: 'openai', base_url: '', api_key_env: '' }]);
                         setAiDirty(true);
                       }}
-                      placeholder="openai/gpt-5-mini"
-                      size="sm"
-                      class="w-full"
                       disabled={!canInteract()}
-                    />
-                    <div class="mt-1 text-xs text-muted-foreground">Format: &lt;provider&gt;/&lt;model&gt;.</div>
+                    >
+                      Add Provider
+                    </Button>
                   </div>
 
-                  <div class="md:col-span-2 space-y-2">
-                    <div class="flex items-center justify-between gap-2">
-                      <div class="text-xs font-medium">providers</div>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => {
-                          setAiProviders((prev) => [...prev, { id: '', type: 'openai', base_url: '', api_key_env: '' }]);
-                          setAiDirty(true);
-                        }}
-                        disabled={!canInteract()}
-                      >
-                        Add
-                      </Button>
-                    </div>
-
+                  <div class="space-y-3">
                     <For each={aiProviders()}>
                       {(p, idx) => (
-                        <div class="border border-border rounded p-2 space-y-2">
-                          <div class="flex items-center justify-between gap-2">
-                            <div class="text-xs text-muted-foreground">Provider #{idx() + 1}</div>
+                        <div class="p-4 rounded-lg border border-border bg-muted/20 space-y-4">
+                          <div class="flex items-center justify-between">
+                            <div class="flex items-center gap-2">
+                              <Layers class="w-4 h-4 text-muted-foreground" />
+                              <span class="text-sm font-medium">Provider {idx() + 1}</span>
+                            </div>
                             <Button
                               size="sm"
-                              variant="outline"
+                              variant="ghost"
+                              class="text-muted-foreground hover:text-destructive"
                               onClick={() => {
                                 setAiProviders((prev) => prev.filter((_, i) => i !== idx()));
                                 setAiDirty(true);
@@ -1498,9 +1623,9 @@ export function EnvSettingsPage() {
                             </Button>
                           </div>
 
-                          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div>
-                              <label class="block text-xs font-medium mb-1">id</label>
+                              <FieldLabel>id</FieldLabel>
                               <Input
                                 value={p.id}
                                 onInput={(e) => {
@@ -1515,24 +1640,23 @@ export function EnvSettingsPage() {
                               />
                             </div>
                             <div>
-                              <label class="block text-xs font-medium mb-1">type</label>
-                              <select
-                                class="w-full text-xs border border-border rounded px-2 py-1 bg-background"
+                              <FieldLabel>type</FieldLabel>
+                              <SelectField
                                 value={p.type}
-                                onChange={(e) => {
-                                  const v = e.currentTarget.value as AIProviderType;
-                                  setAiProviders((prev) => prev.map((it, i) => (i === idx() ? { ...it, type: v } : it)));
+                                onChange={(v) => {
+                                  setAiProviders((prev) => prev.map((it, i) => (i === idx() ? { ...it, type: v as AIProviderType } : it)));
                                   setAiDirty(true);
                                 }}
                                 disabled={!canInteract()}
-                              >
-                                <option value="openai">openai</option>
-                                <option value="anthropic">anthropic</option>
-                                <option value="openai_compatible">openai_compatible</option>
-                              </select>
+                                options={[
+                                  { value: 'openai', label: 'openai' },
+                                  { value: 'anthropic', label: 'anthropic' },
+                                  { value: 'openai_compatible', label: 'openai_compatible' },
+                                ]}
+                              />
                             </div>
                             <div class="md:col-span-2">
-                              <label class="block text-xs font-medium mb-1">base_url</label>
+                              <FieldLabel hint={p.type === 'openai_compatible' ? 'required' : 'optional'}>base_url</FieldLabel>
                               <Input
                                 value={p.base_url}
                                 onInput={(e) => {
@@ -1540,60 +1664,59 @@ export function EnvSettingsPage() {
                                   setAiProviders((prev) => prev.map((it, i) => (i === idx() ? { ...it, base_url: v } : it)));
                                   setAiDirty(true);
                                 }}
-                                placeholder={p.type === 'openai_compatible' ? 'https://api.example.com/v1 (required)' : 'https://api.openai.com/v1'}
+                                placeholder={p.type === 'openai_compatible' ? 'https://api.example.com/v1' : 'https://api.openai.com/v1'}
                                 size="sm"
                                 class="w-full"
                                 disabled={!canInteract()}
                               />
-                              <div class="mt-1 text-xs text-muted-foreground">
-                                For openai_compatible, base_url is required. For openai/anthropic, base_url is optional.
-                              </div>
                             </div>
                             <div class="md:col-span-2">
-                              <label class="block text-xs font-medium mb-1">api_key_env</label>
-                              <Input
-                                value={p.api_key_env}
-                                onInput={(e) => {
-                                  const v = e.currentTarget.value;
-                                  setAiProviders((prev) => prev.map((it, i) => (i === idx() ? { ...it, api_key_env: v } : it)));
-                                  setAiDirty(true);
-                                }}
-                                placeholder="OPENAI_API_KEY"
-                                size="sm"
-                                class="w-full"
-                                disabled={!canInteract()}
-                              />
+                              <FieldLabel>api_key_env</FieldLabel>
+                              <div class="flex items-center gap-2">
+                                <Key class="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                                <Input
+                                  value={p.api_key_env}
+                                  onInput={(e) => {
+                                    const v = e.currentTarget.value;
+                                    setAiProviders((prev) => prev.map((it, i) => (i === idx() ? { ...it, api_key_env: v } : it)));
+                                    setAiDirty(true);
+                                  }}
+                                  placeholder="OPENAI_API_KEY"
+                                  size="sm"
+                                  class="w-full font-mono"
+                                  disabled={!canInteract()}
+                                />
+                              </div>
                             </div>
                           </div>
                         </div>
                       )}
                     </For>
                   </div>
+                </div>
 
-                  <div class="md:col-span-2 space-y-2">
-                    <div class="flex items-center justify-between gap-2">
-                      <div class="text-xs font-medium">models (optional allow-list)</div>
-                      <label class="flex items-center gap-2 text-xs">
-                        <input
-                          type="checkbox"
-                          checked={aiUseModelList()}
-                          onChange={(e) => {
-                            setAiUseModelList(e.currentTarget.checked);
-                            setAiDirty(true);
-                          }}
-                          disabled={!canInteract()}
-                        />
-                        Use allow-list
-                      </label>
+                {/* Models allow-list */}
+                <div class="space-y-3">
+                  <div class="flex items-center justify-between">
+                    <div>
+                      <div class="text-sm font-medium text-foreground">Models Allow-list</div>
+                      <p class="text-xs text-muted-foreground mt-0.5">When disabled, only default_model will be exposed.</p>
                     </div>
+                    <CheckboxField
+                      checked={aiUseModelList()}
+                      onChange={(v) => {
+                        setAiUseModelList(v);
+                        setAiDirty(true);
+                      }}
+                      disabled={!canInteract()}
+                      label="Enable allow-list"
+                    />
+                  </div>
 
-                    <Show when={!aiUseModelList()}>
-                      <div class="text-xs text-muted-foreground">When disabled, only default_model will be exposed.</div>
-                    </Show>
-
-                    <Show when={aiUseModelList()}>
-                      <div class="flex items-center justify-between gap-2">
-                        <div class="text-xs text-muted-foreground">Model ids must be in &lt;provider&gt;/&lt;model&gt; format.</div>
+                  <Show when={aiUseModelList()}>
+                    <div class="space-y-3">
+                      <div class="flex items-center justify-between">
+                        <p class="text-xs text-muted-foreground">Model IDs must be in &lt;provider&gt;/&lt;model&gt; format.</p>
                         <Button
                           size="sm"
                           variant="outline"
@@ -1603,20 +1726,21 @@ export function EnvSettingsPage() {
                           }}
                           disabled={!canInteract()}
                         >
-                          Add
+                          Add Model
                         </Button>
                       </div>
 
-                      <Show when={aiModels().length > 0} fallback={<div class="text-xs text-muted-foreground">No models configured.</div>}>
-                        <div class="space-y-2">
+                      <Show when={aiModels().length > 0} fallback={<p class="text-xs text-muted-foreground">No models configured.</p>}>
+                        <div class="space-y-3">
                           <For each={aiModels()}>
                             {(m, idx) => (
-                              <div class="border border-border rounded p-2 space-y-2">
-                                <div class="flex items-center justify-between gap-2">
-                                  <div class="text-xs text-muted-foreground">Model #{idx() + 1}</div>
+                              <div class="p-4 rounded-lg border border-border bg-muted/20 space-y-3">
+                                <div class="flex items-center justify-between">
+                                  <span class="text-sm font-medium">Model {idx() + 1}</span>
                                   <Button
                                     size="sm"
-                                    variant="outline"
+                                    variant="ghost"
+                                    class="text-muted-foreground hover:text-destructive"
                                     onClick={() => {
                                       setAiModels((prev) => prev.filter((_, i) => i !== idx()));
                                       setAiDirty(true);
@@ -1626,9 +1750,9 @@ export function EnvSettingsPage() {
                                     Remove
                                   </Button>
                                 </div>
-                                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                                   <div>
-                                    <label class="block text-xs font-medium mb-1">id</label>
+                                    <FieldLabel>id</FieldLabel>
                                     <Input
                                       value={m.id}
                                       onInput={(e) => {
@@ -1638,12 +1762,12 @@ export function EnvSettingsPage() {
                                       }}
                                       placeholder="openai/gpt-5-mini"
                                       size="sm"
-                                      class="w-full"
+                                      class="w-full font-mono"
                                       disabled={!canInteract()}
                                     />
                                   </div>
                                   <div>
-                                    <label class="block text-xs font-medium mb-1">label</label>
+                                    <FieldLabel hint="optional">label</FieldLabel>
                                     <Input
                                       value={m.label}
                                       onInput={(e) => {
@@ -1663,28 +1787,16 @@ export function EnvSettingsPage() {
                           </For>
                         </div>
                       </Show>
-                    </Show>
-                  </div>
+                    </div>
+                  </Show>
                 </div>
-              </Show>
-
-              <Show when={aiView() === 'json'}>
-                <textarea
-                  class="w-full h-[360px] font-mono text-xs border border-border rounded px-2 py-2 bg-background resize-y"
-                  value={aiJSON()}
-                  onInput={(e) => {
-                    setAiJSON(e.currentTarget.value);
-                    setAiDirty(true);
-                  }}
-                  spellcheck={false}
-                  disabled={!canInteract()}
-                />
-              </Show>
-            </div>
-          </Card>
+              </div>
+            </Show>
+          </SettingsCard>
         </div>
       </div>
 
+      {/* Disable AI Confirmation Dialog */}
       <ConfirmDialog
         open={disableAIOpen()}
         onOpenChange={(open) => setDisableAIOpen(open)}
@@ -1694,17 +1806,17 @@ export function EnvSettingsPage() {
         loading={disableAISaving()}
         onConfirm={() => void disableAI()}
       >
-        <div class="space-y-2">
+        <div class="space-y-3">
           <p class="text-sm">Are you sure you want to disable AI?</p>
           <p class="text-xs text-muted-foreground">
-            This will remove the <code class="px-1 py-0.5 bg-muted rounded">ai</code> section from the agent config file.
+            This will remove the <CodeBadge>ai</CodeBadge> section from the agent config file.
           </p>
         </div>
       </ConfirmDialog>
 
+      {/* Loading Overlays */}
       <LoadingOverlay visible={protocol.status() !== 'connected'} message="Connecting to agent..." />
       <LoadingOverlay visible={settings.loading && protocol.status() === 'connected'} message="Loading settings..." />
     </div>
   );
 }
-
