@@ -6,6 +6,7 @@ export type wire_sessions_active_session = {
 
   floe_app: string;
   code_space_id?: string;
+  session_kind?: string;
   tunnel_url: string;
 
   created_at_unix_ms: number;
