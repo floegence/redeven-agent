@@ -309,6 +309,14 @@ function PortForwardCard(props: {
 }
 
 /**
+ * Validates that the target URL starts with http:// or https://
+ */
+function isValidHttpUrl(url: string): boolean {
+  const trimmed = url.trim().toLowerCase();
+  return trimmed.startsWith('http://') || trimmed.startsWith('https://');
+}
+
+/**
  * CreateForwardDialog - Dialog for creating a new port forward
  */
 function CreateForwardDialog(props: {
@@ -320,23 +328,30 @@ function CreateForwardDialog(props: {
   const [target, setTarget] = createSignal('');
   const [name, setName] = createSignal('');
   const [description, setDescription] = createSignal('');
+  const [touched, setTouched] = createSignal(false);
 
   const handleOpenChange = (open: boolean) => {
     if (!open) {
       setTarget('');
       setName('');
       setDescription('');
+      setTouched(false);
     }
     props.onOpenChange(open);
   };
 
   const handleCreate = () => {
     const targetVal = target().trim();
-    if (!targetVal) return;
+    if (!targetVal || !isValidHttpUrl(targetVal)) return;
     props.onCreate(targetVal, name().trim(), description().trim());
   };
 
-  const isValid = () => target().trim().length > 0;
+  const isValid = () => {
+    const val = target().trim();
+    return val.length > 0 && isValidHttpUrl(val);
+  };
+
+  const showError = () => touched() && target().trim().length > 0 && !isValidHttpUrl(target());
 
   return (
     <Dialog
@@ -365,13 +380,21 @@ function CreateForwardDialog(props: {
           <Input
             value={target()}
             onInput={(e) => setTarget(e.currentTarget.value)}
-            placeholder="localhost:3000"
+            onBlur={() => setTouched(true)}
+            placeholder="http://localhost:3000"
             size="sm"
-            class="w-full font-mono"
+            class={cn('w-full font-mono', showError() && 'border-destructive focus:ring-destructive')}
           />
-          <p class="text-[11px] text-muted-foreground mt-1">
-            The URL or host:port of the service to forward. Examples: localhost:3000, 127.0.0.1:8080, https://internal-service.local
-          </p>
+          <Show
+            when={showError()}
+            fallback={
+              <p class="text-[11px] text-muted-foreground mt-1">
+                Only HTTP services are supported. URL must start with http:// or https://
+              </p>
+            }
+          >
+            <p class="text-[11px] text-destructive mt-1">URL must start with http:// or https://</p>
+          </Show>
         </div>
         <div>
           <label class="block text-xs font-medium mb-1">Name</label>
