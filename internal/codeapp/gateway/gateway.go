@@ -3,6 +3,7 @@ package gateway
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/base32"
 	"encoding/json"
 	"errors"
@@ -21,6 +22,8 @@ import (
 
 	"github.com/floegence/redeven-agent/internal/ai"
 	"github.com/floegence/redeven-agent/internal/config"
+	"github.com/floegence/redeven-agent/internal/portforward"
+	pfregistry "github.com/floegence/redeven-agent/internal/portforward/registry"
 	"github.com/floegence/redeven-agent/internal/session"
 )
 
@@ -29,6 +32,7 @@ type Options struct {
 	ListenAddr         string
 	DistFS             fs.FS
 	Backend            Backend
+	PortForward        PortForwardBackend
 	AI                 *ai.Service
 	ResolveSessionMeta func(channelID string) (*session.Meta, bool)
 	// ConfigPath is the absolute path to the agent config file.
@@ -44,6 +48,15 @@ type Backend interface {
 	StartSpace(ctx context.Context, codeSpaceID string) (*SpaceStatus, error)
 	StopSpace(ctx context.Context, codeSpaceID string) error
 	ResolveCodeServerPort(ctx context.Context, codeSpaceID string) (int, error)
+}
+
+type PortForwardBackend interface {
+	ListForwards(ctx context.Context) ([]pfregistry.Forward, error)
+	GetForward(ctx context.Context, forwardID string) (*pfregistry.Forward, error)
+	CreateForward(ctx context.Context, req portforward.CreateForwardRequest) (*pfregistry.Forward, error)
+	UpdateForward(ctx context.Context, forwardID string, req portforward.UpdateForwardRequest) (*pfregistry.Forward, error)
+	DeleteForward(ctx context.Context, forwardID string) error
+	TouchLastOpened(ctx context.Context, forwardID string) (*pfregistry.Forward, error)
 }
 
 type SpaceStatus struct {
@@ -75,6 +88,7 @@ type Gateway struct {
 	log *slog.Logger
 
 	backend Backend
+	pf      PortForwardBackend
 	ai      *ai.Service
 
 	resolveSessionMeta func(channelID string) (*session.Meta, bool)
@@ -121,6 +135,7 @@ func New(opts Options) (*Gateway, error) {
 	return &Gateway{
 		log:                logger,
 		backend:            opts.Backend,
+		pf:                 opts.PortForward,
 		ai:                 opts.AI,
 		resolveSessionMeta: opts.ResolveSessionMeta,
 		configPath:         strings.TrimSpace(opts.ConfigPath),
@@ -240,14 +255,20 @@ func (g *Gateway) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	// last-opened state, or CLI args. It does not know about the agent registry.
 	// Redirecting here makes the "codespace workspace_path is strongly bound" rule
 	// deterministic for all entry paths (open/refresh/bookmark).
-	if originRole == originRoleCodeSpace {
+	switch originRole {
+	case originRoleCodeSpace:
 		if g.maybeRedirectCodespaceRootToWorkspace(w, r) {
 			return
 		}
+		g.handleCodeServerProxy(w, r)
+		return
+	case originRolePortForward:
+		g.handlePortForwardProxy(w, r)
+		return
+	default:
+		http.Error(w, "not found", http.StatusNotFound)
+		return
 	}
-
-	// Default: proxy to code-server (per-code-space).
-	g.handleCodeServerProxy(w, r)
 }
 
 type apiResp struct {
@@ -804,6 +825,93 @@ func (g *Gateway) handleAPI(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, apiResp{OK: true, Data: map[string]any{"spaces": spaces}})
 		return
 
+	case r.Method == http.MethodGet && r.URL.Path == "/_redeven_proxy/api/forwards":
+		if _, ok := g.requirePermission(w, r, requiredPermissionExecute); !ok {
+			return
+		}
+		if g.pf == nil {
+			writeJSON(w, http.StatusServiceUnavailable, apiResp{OK: false, Error: "portforward not ready"})
+			return
+		}
+		forwards, err := g.pf.ListForwards(r.Context())
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, apiResp{OK: false, Error: err.Error()})
+			return
+		}
+		views := make([]portForwardView, 0, len(forwards))
+		for _, f := range forwards {
+			views = append(views, portForwardView{
+				ForwardID:          f.ForwardID,
+				TargetURL:          f.TargetURL,
+				Name:               f.Name,
+				Description:        f.Description,
+				HealthPath:         f.HealthPath,
+				InsecureSkipVerify: f.InsecureSkipVerify,
+				CreatedAtUnixMs:    f.CreatedAtUnixMs,
+				UpdatedAtUnixMs:    f.UpdatedAtUnixMs,
+				LastOpenedAtUnixMs: f.LastOpenedAtUnixMs,
+				Health:             portForwardHealth{Status: "unknown"},
+			})
+		}
+
+		// Best-effort health probing (bounded concurrency + tight timeout).
+		sem := make(chan struct{}, 8)
+		var wg sync.WaitGroup
+		for i := range views {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				select {
+				case sem <- struct{}{}:
+				case <-r.Context().Done():
+					return
+				}
+				defer func() { <-sem }()
+				views[i].Health = probePortForwardHealth(r.Context(), views[i].TargetURL)
+			}(i)
+		}
+		wg.Wait()
+
+		writeJSON(w, http.StatusOK, apiResp{OK: true, Data: map[string]any{"forwards": views}})
+		return
+
+	case r.Method == http.MethodPost && r.URL.Path == "/_redeven_proxy/api/forwards":
+		if _, ok := g.requirePermission(w, r, requiredPermissionExecute); !ok {
+			return
+		}
+		if g.pf == nil {
+			writeJSON(w, http.StatusServiceUnavailable, apiResp{OK: false, Error: "portforward not ready"})
+			return
+		}
+		var req portforward.CreateForwardRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, apiResp{OK: false, Error: "invalid json"})
+			return
+		}
+		f, err := g.pf.CreateForward(r.Context(), req)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, apiResp{OK: false, Error: err.Error()})
+			return
+		}
+		if f == nil {
+			writeJSON(w, http.StatusInternalServerError, apiResp{OK: false, Error: "failed to create forward"})
+			return
+		}
+		view := portForwardView{
+			ForwardID:          f.ForwardID,
+			TargetURL:          f.TargetURL,
+			Name:               f.Name,
+			Description:        f.Description,
+			HealthPath:         f.HealthPath,
+			InsecureSkipVerify: f.InsecureSkipVerify,
+			CreatedAtUnixMs:    f.CreatedAtUnixMs,
+			UpdatedAtUnixMs:    f.UpdatedAtUnixMs,
+			LastOpenedAtUnixMs: f.LastOpenedAtUnixMs,
+			Health:             probePortForwardHealth(r.Context(), f.TargetURL),
+		}
+		writeJSON(w, http.StatusOK, apiResp{OK: true, Data: view})
+		return
+
 	case r.Method == http.MethodPost && r.URL.Path == "/_redeven_proxy/api/spaces":
 		if _, ok := g.requirePermission(w, r, requiredPermissionAdmin); !ok {
 			return
@@ -822,6 +930,108 @@ func (g *Gateway) handleAPI(w http.ResponseWriter, r *http.Request) {
 		return
 
 	default:
+		if strings.HasPrefix(r.URL.Path, "/_redeven_proxy/api/forwards/") {
+			if _, ok := g.requirePermission(w, r, requiredPermissionExecute); !ok {
+				return
+			}
+			if g.pf == nil {
+				writeJSON(w, http.StatusServiceUnavailable, apiResp{OK: false, Error: "portforward not ready"})
+				return
+			}
+
+			// /_redeven_proxy/api/forwards/<id>[/action]
+			rest := strings.TrimPrefix(r.URL.Path, "/_redeven_proxy/api/forwards/")
+			rest = strings.TrimPrefix(rest, "/")
+			if rest == "" {
+				writeJSON(w, http.StatusNotFound, apiResp{OK: false, Error: "not found"})
+				return
+			}
+			parts := strings.Split(rest, "/")
+			id := strings.TrimSpace(parts[0])
+			action := ""
+			if len(parts) > 1 {
+				action = strings.TrimSpace(parts[1])
+			}
+
+			if r.Method == http.MethodDelete && action == "" {
+				if err := g.pf.DeleteForward(r.Context(), id); err != nil {
+					writeJSON(w, http.StatusBadRequest, apiResp{OK: false, Error: err.Error()})
+					return
+				}
+				writeJSON(w, http.StatusOK, apiResp{OK: true})
+				return
+			}
+
+			if r.Method == http.MethodPatch && action == "" {
+				var req portforward.UpdateForwardRequest
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					writeJSON(w, http.StatusBadRequest, apiResp{OK: false, Error: "invalid json"})
+					return
+				}
+				if req.Target == nil && req.Name == nil && req.Description == nil && req.HealthPath == nil && req.InsecureSkipVerify == nil {
+					writeJSON(w, http.StatusBadRequest, apiResp{OK: false, Error: "missing fields"})
+					return
+				}
+				f, err := g.pf.UpdateForward(r.Context(), id, req)
+				if err != nil {
+					writeJSON(w, http.StatusBadRequest, apiResp{OK: false, Error: err.Error()})
+					return
+				}
+				if f == nil {
+					writeJSON(w, http.StatusNotFound, apiResp{OK: false, Error: "not found"})
+					return
+				}
+				view := portForwardView{
+					ForwardID:          f.ForwardID,
+					TargetURL:          f.TargetURL,
+					Name:               f.Name,
+					Description:        f.Description,
+					HealthPath:         f.HealthPath,
+					InsecureSkipVerify: f.InsecureSkipVerify,
+					CreatedAtUnixMs:    f.CreatedAtUnixMs,
+					UpdatedAtUnixMs:    f.UpdatedAtUnixMs,
+					LastOpenedAtUnixMs: f.LastOpenedAtUnixMs,
+					Health:             probePortForwardHealth(r.Context(), f.TargetURL),
+				}
+				writeJSON(w, http.StatusOK, apiResp{OK: true, Data: view})
+				return
+			}
+
+			if r.Method == http.MethodPost && action == "touch" {
+				f, err := g.pf.TouchLastOpened(r.Context(), id)
+				if err != nil {
+					writeJSON(w, http.StatusBadRequest, apiResp{OK: false, Error: err.Error()})
+					return
+				}
+				if f == nil {
+					writeJSON(w, http.StatusNotFound, apiResp{OK: false, Error: "not found"})
+					return
+				}
+				view := portForwardView{
+					ForwardID:          f.ForwardID,
+					TargetURL:          f.TargetURL,
+					Name:               f.Name,
+					Description:        f.Description,
+					HealthPath:         f.HealthPath,
+					InsecureSkipVerify: f.InsecureSkipVerify,
+					CreatedAtUnixMs:    f.CreatedAtUnixMs,
+					UpdatedAtUnixMs:    f.UpdatedAtUnixMs,
+					LastOpenedAtUnixMs: f.LastOpenedAtUnixMs,
+					Health:             probePortForwardHealth(r.Context(), f.TargetURL),
+				}
+				writeJSON(w, http.StatusOK, apiResp{OK: true, Data: view})
+				return
+			}
+
+			writeJSON(w, http.StatusNotFound, apiResp{OK: false, Error: "not found"})
+			return
+		}
+
+		if !strings.HasPrefix(r.URL.Path, "/_redeven_proxy/api/spaces/") {
+			writeJSON(w, http.StatusNotFound, apiResp{OK: false, Error: "not found"})
+			return
+		}
+
 		// /_redeven_proxy/api/spaces/<id>[/action]
 		rest := strings.TrimPrefix(r.URL.Path, "/_redeven_proxy/api/spaces/")
 		rest = strings.TrimPrefix(rest, "/")
@@ -937,6 +1147,347 @@ func (g *Gateway) handleCodeServerProxy(w http.ResponseWriter, r *http.Request) 
 		},
 	}
 	proxy.ServeHTTP(w, r)
+}
+
+type portForwardHealth struct {
+	Status              string `json:"status"` // healthy|unreachable|unknown
+	LastCheckedAtUnixMs int64  `json:"last_checked_at_unix_ms"`
+	LatencyMs           int64  `json:"latency_ms"`
+	LastError           string `json:"last_error"`
+}
+
+type portForwardView struct {
+	ForwardID          string `json:"forward_id"`
+	TargetURL          string `json:"target_url"`
+	Name               string `json:"name"`
+	Description        string `json:"description"`
+	HealthPath         string `json:"health_path"`
+	InsecureSkipVerify bool   `json:"insecure_skip_verify"`
+
+	CreatedAtUnixMs    int64 `json:"created_at_unix_ms"`
+	UpdatedAtUnixMs    int64 `json:"updated_at_unix_ms"`
+	LastOpenedAtUnixMs int64 `json:"last_opened_at_unix_ms"`
+
+	Health portForwardHealth `json:"health"`
+}
+
+func probePortForwardHealth(ctx context.Context, targetURL string) portForwardHealth {
+	out := portForwardHealth{
+		Status:              "unknown",
+		LastCheckedAtUnixMs: time.Now().UnixMilli(),
+		LatencyMs:           0,
+		LastError:           "",
+	}
+	u, err := portforward.ParseTargetURL(strings.TrimSpace(targetURL))
+	if err != nil || u == nil {
+		out.LastError = truncateErr(err)
+		return out
+	}
+	host := strings.TrimSpace(u.Host)
+	if host == "" {
+		out.LastError = "missing target host"
+		return out
+	}
+
+	probeCtx, cancel := context.WithTimeout(ctx, 800*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	conn, err := (&net.Dialer{Timeout: 800 * time.Millisecond}).DialContext(probeCtx, "tcp", host)
+	latency := time.Since(start).Milliseconds()
+
+	if err != nil {
+		out.Status = "unreachable"
+		out.LatencyMs = latency
+		out.LastError = truncateErr(err)
+		return out
+	}
+	_ = conn.Close()
+
+	out.Status = "healthy"
+	out.LatencyMs = latency
+	return out
+}
+
+func truncateErr(err error) string {
+	if err == nil {
+		return ""
+	}
+	s := strings.TrimSpace(err.Error())
+	const max = 200
+	if len(s) <= max {
+		return s
+	}
+	return strings.TrimSpace(s[:max]) + "..."
+}
+
+func (g *Gateway) handlePortForwardProxy(w http.ResponseWriter, r *http.Request) {
+	if g == nil || r == nil {
+		http.Error(w, "gateway not ready", http.StatusServiceUnavailable)
+		return
+	}
+	if g.pf == nil {
+		http.Error(w, "portforward not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	extScheme, extHost, err := externalOriginFromRequest(r)
+	if err != nil {
+		http.Error(w, "missing external origin", http.StatusBadRequest)
+		return
+	}
+	forwardID, ok := forwardIDFromExternalHost(extHost)
+	if !ok {
+		http.Error(w, "not a port forward origin", http.StatusNotFound)
+		return
+	}
+
+	fw, err := g.pf.GetForward(r.Context(), forwardID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if fw == nil {
+		http.Error(w, "port forward not found", http.StatusNotFound)
+		return
+	}
+
+	targetURL, err := portforward.ParseTargetURL(strings.TrimSpace(fw.TargetURL))
+	if err != nil {
+		http.Error(w, "invalid port forward target", http.StatusInternalServerError)
+		return
+	}
+
+	targetBase := &url.URL{Scheme: targetURL.Scheme, Host: targetURL.Host}
+	targetOrigin := fmt.Sprintf("%s://%s", targetURL.Scheme, targetURL.Host)
+
+	extOrigin := fmt.Sprintf("%s://%s", extScheme, extHost)
+	extWsScheme := "ws"
+	if extScheme == "https" {
+		extWsScheme = "wss"
+	}
+	extWsOrigin := fmt.Sprintf("%s://%s", extWsScheme, extHost)
+
+	transport := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   5 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		ForceAttemptHTTP2:     false,
+		TLSHandshakeTimeout:   5 * time.Second,
+		ResponseHeaderTimeout: 20 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		IdleConnTimeout:       90 * time.Second,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   10,
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: fw.InsecureSkipVerify,
+		},
+		// Disable HTTP/2 to keep WebSocket upgrade behavior predictable.
+		TLSNextProto: make(map[string]func(authority string, c *tls.Conn) http.RoundTripper),
+	}
+
+	proxy := &httputil.ReverseProxy{
+		Transport: transport,
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.SetURL(targetBase)
+
+			// Compatibility-first: make the upstream believe it is serving its own origin.
+			pr.Out.Host = targetURL.Host
+			pr.Out.Header.Set("Origin", targetOrigin)
+			if strings.TrimSpace(pr.Out.Header.Get("Referer")) != "" {
+				pr.Out.Header.Set("Referer", targetOrigin)
+			}
+
+			// Let the Go transport manage gzip so ModifyResponse can safely rewrite HTML.
+			pr.Out.Header.Del("Accept-Encoding")
+
+			// Hardening: ensure upstream getHost() is not polluted by forwarded headers.
+			pr.Out.Header.Del("Forwarded")
+			pr.Out.Header.Del("X-Forwarded-Host")
+			pr.Out.Header.Del("X-Forwarded-Proto")
+			pr.Out.Header.Del("X-Forwarded-For")
+			pr.Out.Header.Del("X-Forwarded-Port")
+		},
+		ModifyResponse: func(resp *http.Response) error {
+			if resp == nil {
+				return nil
+			}
+
+			// Compatibility-first for embedded iframe + injected script.
+			resp.Header.Del("Content-Security-Policy")
+			resp.Header.Del("Content-Security-Policy-Report-Only")
+			resp.Header.Del("X-Frame-Options")
+
+			// Rewrite Location back to the sandbox origin when redirecting to the target itself.
+			if loc := strings.TrimSpace(resp.Header.Get("Location")); loc != "" {
+				resp.Header.Set("Location", rewriteLocationToSandbox(loc, targetURL, extOrigin))
+			}
+
+			// Strip Domain from Set-Cookie so cookies bind to pf-* host.
+			if sc := resp.Header.Values("Set-Cookie"); len(sc) > 0 {
+				resp.Header.Del("Set-Cookie")
+				for _, v := range sc {
+					resp.Header.Add("Set-Cookie", stripCookieDomain(v))
+				}
+			}
+
+			ct := strings.ToLower(strings.TrimSpace(resp.Header.Get("Content-Type")))
+			if !strings.Contains(ct, "text/html") {
+				return nil
+			}
+
+			// Best-effort HTML rewrite for absolute URLs that point back to the target origin.
+			const maxHTMLBytes = 2 << 20 // 2 MiB
+			b, err := io.ReadAll(io.LimitReader(resp.Body, maxHTMLBytes+1))
+			if err != nil {
+				return err
+			}
+			_ = resp.Body.Close()
+
+			// Too large: keep the original body (but it is already decompressed).
+			if len(b) > maxHTMLBytes {
+				resp.Body = io.NopCloser(bytes.NewReader(b))
+				resp.ContentLength = int64(len(b))
+				resp.Header.Set("Content-Length", fmt.Sprintf("%d", len(b)))
+				return nil
+			}
+
+			rewritten := rewriteHTMLOrigins(string(b), targetURL, extOrigin, extWsOrigin)
+			resp.Body = io.NopCloser(strings.NewReader(rewritten))
+			resp.ContentLength = int64(len(rewritten))
+			resp.Header.Set("Content-Length", fmt.Sprintf("%d", len(rewritten)))
+			// Body was modified; validators are no longer reliable.
+			resp.Header.Del("ETag")
+			resp.Header.Del("Last-Modified")
+			return nil
+		},
+		ErrorHandler: func(w http.ResponseWriter, r *http.Request, e error) {
+			http.Error(w, "upstream unavailable", http.StatusBadGateway)
+		},
+	}
+
+	proxy.ServeHTTP(w, r)
+}
+
+func rewriteLocationToSandbox(location string, target *url.URL, externalOrigin string) string {
+	loc := strings.TrimSpace(location)
+	if loc == "" || target == nil {
+		return location
+	}
+	u, err := url.Parse(loc)
+	if err != nil || u == nil {
+		return location
+	}
+	if strings.TrimSpace(u.Host) == "" {
+		// Relative redirects are already sandbox-safe.
+		return location
+	}
+
+	targetHost := strings.ToLower(strings.TrimSpace(target.Hostname()))
+	targetPort := strings.TrimSpace(target.Port())
+	if targetPort == "" {
+		targetPort = defaultPortForScheme(strings.ToLower(strings.TrimSpace(target.Scheme)))
+	}
+
+	locHost := strings.ToLower(strings.TrimSpace(u.Hostname()))
+	locPort := strings.TrimSpace(u.Port())
+	if locPort == "" {
+		scheme := strings.ToLower(strings.TrimSpace(u.Scheme))
+		if scheme == "" {
+			scheme = strings.ToLower(strings.TrimSpace(target.Scheme))
+		}
+		locPort = defaultPortForScheme(scheme)
+	}
+
+	if locHost != targetHost || (targetPort != "" && locPort != "" && locPort != targetPort) {
+		return location
+	}
+
+	// Redirect within the target itself: rewrite back to the sandbox origin.
+	//
+	// Note: return a path-only redirect to avoid leaking the sandbox origin into app logic.
+	path := u.EscapedPath()
+	if strings.TrimSpace(path) == "" {
+		path = "/"
+	}
+	if strings.TrimSpace(u.RawQuery) != "" {
+		path += "?" + u.RawQuery
+	}
+	if strings.TrimSpace(u.Fragment) != "" {
+		path += "#" + u.Fragment
+	}
+	_ = externalOrigin
+	return path
+}
+
+func defaultPortForScheme(scheme string) string {
+	switch strings.ToLower(strings.TrimSpace(scheme)) {
+	case "https", "wss":
+		return "443"
+	case "http", "ws":
+		return "80"
+	default:
+		return ""
+	}
+}
+
+func stripCookieDomain(v string) string {
+	raw := strings.TrimSpace(v)
+	if raw == "" {
+		return v
+	}
+	parts := strings.Split(raw, ";")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		t := strings.TrimSpace(p)
+		if strings.HasPrefix(strings.ToLower(t), "domain=") {
+			continue
+		}
+		out = append(out, t)
+	}
+	return strings.Join(out, "; ")
+}
+
+func rewriteHTMLOrigins(html string, target *url.URL, externalOrigin string, externalWsOrigin string) string {
+	if html == "" || target == nil {
+		return html
+	}
+
+	extOrigin := strings.TrimSpace(externalOrigin)
+	extHost := ""
+	if extOrigin != "" {
+		if u, err := url.Parse(extOrigin); err == nil && u != nil {
+			extHost = strings.TrimSpace(u.Host)
+		}
+	}
+	extWsOrigin := strings.TrimSpace(externalWsOrigin)
+
+	targetHostPort := strings.TrimSpace(target.Host)
+	targetHostname := strings.TrimSpace(target.Hostname())
+	targetPort := strings.TrimSpace(target.Port())
+
+	hosts := []string{targetHostPort}
+	// Also rewrite the no-port variant when the target uses the default port for its scheme.
+	if targetHostname != "" && targetPort != "" && targetPort == defaultPortForScheme(target.Scheme) {
+		hosts = append(hosts, targetHostname)
+	}
+
+	out := html
+	for _, h := range hosts {
+		if h == "" {
+			continue
+		}
+		out = strings.ReplaceAll(out, "http://"+h, extOrigin)
+		out = strings.ReplaceAll(out, "https://"+h, extOrigin)
+		out = strings.ReplaceAll(out, "ws://"+h, extWsOrigin)
+		out = strings.ReplaceAll(out, "wss://"+h, extWsOrigin)
+		if extHost != "" {
+			out = strings.ReplaceAll(out, "//"+h, "//"+extHost)
+		}
+	}
+	return out
 }
 
 func (g *Gateway) maybeRedirectCodespaceRootToWorkspace(w http.ResponseWriter, r *http.Request) bool {
@@ -1067,12 +1618,36 @@ func codeSpaceIDFromExternalHost(host string) (string, bool) {
 	return id, true
 }
 
+func forwardIDFromExternalHost(host string) (string, bool) {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return "", false
+	}
+	// Remove port if present (domain names only).
+	hostNoPort := host
+	if i := strings.IndexByte(hostNoPort, ':'); i >= 0 {
+		hostNoPort = hostNoPort[:i]
+	}
+	firstLabel := strings.Split(hostNoPort, ".")[0]
+	firstLabel = strings.ToLower(strings.TrimSpace(firstLabel))
+	if !strings.HasPrefix(firstLabel, "pf-") {
+		return "", false
+	}
+	id := strings.TrimPrefix(firstLabel, "pf-")
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return "", false
+	}
+	return id, true
+}
+
 type originRole int
 
 const (
 	originRoleUnknown originRole = iota
 	originRoleEnv
 	originRoleCodeSpace
+	originRolePortForward
 )
 
 func originRoleFromRequest(r *http.Request) originRole {
@@ -1091,6 +1666,8 @@ func originRoleFromRequest(r *http.Request) originRole {
 		return originRoleEnv
 	case strings.HasPrefix(first, "cs-"):
 		return originRoleCodeSpace
+	case strings.HasPrefix(first, "pf-"):
+		return originRolePortForward
 	default:
 		return originRoleUnknown
 	}
