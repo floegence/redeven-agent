@@ -12,6 +12,7 @@ type Meta struct {
 	EndpointID        string `json:"endpoint_id"`
 	FloeApp           string `json:"floe_app"`
 	CodeSpaceID       string `json:"code_space_id,omitempty"`
+	SessionKind       string `json:"session_kind,omitempty"`
 	UserPublicID      string `json:"user_public_id"`
 	UserEmail         string `json:"user_email"`
 	NamespacePublicID string `json:"namespace_public_id"`
