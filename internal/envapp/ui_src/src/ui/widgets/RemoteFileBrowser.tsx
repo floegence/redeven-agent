@@ -1,5 +1,8 @@
 import { For, Show, createEffect, createSignal, onCleanup } from 'solid-js';
-import { Button, ConfirmDialog, Dialog, DirectoryPicker, FileBrowser, FileSavePicker, FloatingWindow, LoadingOverlay, useDeck, useNotification, useResolvedFloeConfig, type BuiltinContextMenuAction, type ContextMenuCallbacks, type FileItem } from '@floegence/floe-webapp-core';
+import { useDeck, useNotification, useResolvedFloeConfig } from '@floegence/floe-webapp-core';
+import { FileBrowser, type BuiltinContextMenuAction, type ContextMenuCallbacks, type FileItem } from '@floegence/floe-webapp-core/file-browser';
+import { LoadingOverlay } from '@floegence/floe-webapp-core/loading';
+import { Button, ConfirmDialog, Dialog, DirectoryPicker, FileSavePicker, FloatingWindow } from '@floegence/floe-webapp-core/ui';
 import type { Client } from '@floegence/flowersec-core';
 import { DEFAULT_MAX_JSON_FRAME_BYTES, readJsonFrame, writeJsonFrame } from '@floegence/flowersec-core/framing';
 import { ByteReader, type YamuxStream } from '@floegence/flowersec-core/yamux';
