@@ -17,6 +17,8 @@ import (
 	"github.com/floegence/redeven-agent/internal/codeapp/ui"
 	"github.com/floegence/redeven-agent/internal/config"
 	envui "github.com/floegence/redeven-agent/internal/envapp/ui"
+	"github.com/floegence/redeven-agent/internal/portforward"
+	pfregistry "github.com/floegence/redeven-agent/internal/portforward/registry"
 	"github.com/floegence/redeven-agent/internal/session"
 )
 
@@ -57,6 +59,7 @@ type Service struct {
 	codePortMax int
 
 	reg    *registry.Registry
+	pf     *portforward.Service
 	runner *codeserver.Runner
 	gw     *gateway.Gateway
 }
@@ -99,6 +102,24 @@ func New(ctx context.Context, opts Options) (*Service, error) {
 		return nil, err
 	}
 
+	pfRoot := filepath.Join(stateAbs, "apps", "portforward")
+	if err := os.MkdirAll(pfRoot, 0o700); err != nil {
+		_ = reg.Close()
+		return nil, err
+	}
+	pfRegPath := filepath.Join(pfRoot, "registry.sqlite")
+	pfReg, err := pfregistry.Open(pfRegPath)
+	if err != nil {
+		_ = reg.Close()
+		return nil, err
+	}
+	pfSvc, err := portforward.New(pfReg)
+	if err != nil {
+		_ = reg.Close()
+		_ = pfReg.Close()
+		return nil, err
+	}
+
 	portMin, portMax := normalizePortRange(opts.CodeServerPortMin, opts.CodeServerPortMax)
 	runner := codeserver.NewRunner(codeserver.RunnerOptions{
 		Logger:   logger,
@@ -115,6 +136,7 @@ func New(ctx context.Context, opts Options) (*Service, error) {
 		codePortMin: portMin,
 		codePortMax: portMax,
 		reg:         reg,
+		pf:          pfSvc,
 		runner:      runner,
 	}
 
@@ -128,6 +150,7 @@ func New(ctx context.Context, opts Options) (*Service, error) {
 	})
 	if err != nil {
 		_ = reg.Close()
+		_ = pfSvc.Close()
 		return nil, err
 	}
 
@@ -135,6 +158,7 @@ func New(ctx context.Context, opts Options) (*Service, error) {
 		Logger:             logger,
 		DistFS:             mergedFS{primary: ui.DistFS(), secondary: envui.DistFS()},
 		Backend:            svc,
+		PortForward:        pfSvc,
 		AI:                 aiSvc,
 		ResolveSessionMeta: opts.ResolveSessionMeta,
 		ConfigPath:         strings.TrimSpace(opts.ConfigPath),
@@ -142,10 +166,12 @@ func New(ctx context.Context, opts Options) (*Service, error) {
 	})
 	if err != nil {
 		_ = reg.Close()
+		_ = pfSvc.Close()
 		return nil, err
 	}
 	if err := gw.Start(ctx); err != nil {
 		_ = reg.Close()
+		_ = pfSvc.Close()
 		return nil, err
 	}
 	svc.gw = gw
@@ -165,6 +191,9 @@ func (s *Service) Close() error {
 	}
 	if s.reg != nil {
 		_ = s.reg.Close()
+	}
+	if s.pf != nil {
+		_ = s.pf.Close()
 	}
 	return nil
 }
@@ -188,6 +217,20 @@ func (s *Service) ExternalOriginForCodeSpace(codeSpaceID string) (string, error)
 		return "", fmt.Errorf("invalid codeSpaceID: %q", id)
 	}
 	return fmt.Sprintf("%s://cs-%s.%s", s.cpScheme, id, s.cpHost), nil
+}
+
+func (s *Service) ExternalOriginForPortForward(forwardID string) (string, error) {
+	if s == nil {
+		return "", errors.New("nil service")
+	}
+	id := strings.TrimSpace(forwardID)
+	if id == "" {
+		return "", errors.New("missing forwardID")
+	}
+	if !portforward.IsValidForwardID(id) {
+		return "", fmt.Errorf("invalid forwardID: %q", id)
+	}
+	return fmt.Sprintf("%s://pf-%s.%s", s.cpScheme, id, s.cpHost), nil
 }
 
 func (s *Service) ExternalOriginForEnvApp(envPublicID string) (string, error) {

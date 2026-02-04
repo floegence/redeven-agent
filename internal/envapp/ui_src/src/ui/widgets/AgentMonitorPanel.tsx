@@ -81,6 +81,7 @@ function formatAppLabel(floeApp: string): string {
   const v = String(floeApp ?? '').trim();
   if (v === 'com.floegence.redeven.agent') return 'Agent';
   if (v === 'com.floegence.redeven.code') return 'Code';
+  if (v === 'com.floegence.redeven.portforward') return 'Port Forward';
   return v || '-';
 }
 
