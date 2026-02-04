@@ -382,10 +382,26 @@
   var RUNTIME_GLOBAL = "__flowersecProxyRuntime";
   var ERR_SW_REGISTER_DISABLED = "service worker register is disabled by flowersec-proxy runtime";
   var CODE_SERVER_WEBVIEW_SW_SUFFIX = "/out/vs/workbench/contrib/webview/browser/pre/service-worker.js";
+  var CODE_SERVER_PWA_SW_SUFFIX = "/out/browser/serviceWorker.js";
   function rejectSWRegister() {
     return Promise.reject(new Error(ERR_SW_REGISTER_DISABLED));
   }
-  function patchServiceWorkerRegisterForCodeServerWebview() {
+  function noopSWRegister(options) {
+    let scope = `${window.location.origin}/`;
+    try {
+      const scopeRaw = String(options?.scope ?? "").trim();
+      if (scopeRaw) scope = new URL(scopeRaw, window.location.href).toString();
+    } catch {
+    }
+    const reg = {
+      scope,
+      update: async () => {
+      },
+      unregister: async () => true
+    };
+    return Promise.resolve(reg);
+  }
+  function patchServiceWorkerRegisterForCodeServer() {
     const sw = globalThis.navigator?.serviceWorker;
     if (!sw || typeof sw.register !== "function") return;
     const current = sw.register;
@@ -394,18 +410,21 @@
     const patched = ((scriptURL, options) => {
       try {
         const u = new URL(String(scriptURL), window.location.href);
-        if (!u.pathname.endsWith(CODE_SERVER_WEBVIEW_SW_SUFFIX)) {
-          return rejectSWRegister();
-        }
-        const scopeRaw = String(options?.scope ?? "").trim();
-        if (scopeRaw) {
-          const scopeURL = new URL(scopeRaw, window.location.href);
-          const dir = u.pathname.slice(0, u.pathname.lastIndexOf("/") + 1);
-          if (!scopeURL.pathname.startsWith(dir)) {
-            return rejectSWRegister();
+        if (u.pathname.endsWith(CODE_SERVER_WEBVIEW_SW_SUFFIX)) {
+          const scopeRaw = String(options?.scope ?? "").trim();
+          if (scopeRaw) {
+            const scopeURL = new URL(scopeRaw, window.location.href);
+            const dir = u.pathname.slice(0, u.pathname.lastIndexOf("/") + 1);
+            if (!scopeURL.pathname.startsWith(dir)) {
+              return rejectSWRegister();
+            }
           }
+          return originalRegister(scriptURL, options);
         }
-        return originalRegister(scriptURL, options);
+        if (u.pathname.endsWith(CODE_SERVER_PWA_SW_SUFFIX)) {
+          return noopSWRegister(options);
+        }
+        return rejectSWRegister();
       } catch {
         return rejectSWRegister();
       }
@@ -426,7 +445,7 @@
   try {
     const rt = getProxyRuntime();
     if (rt) {
-      patchServiceWorkerRegisterForCodeServerWebview();
+      patchServiceWorkerRegisterForCodeServer();
       installWebSocketPatch({ runtime: rt });
     }
   } catch {
