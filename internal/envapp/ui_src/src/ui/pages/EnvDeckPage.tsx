@@ -1,4 +1,6 @@
-import { DeckGrid, DeckTopBar, LoadingOverlay, useDeckDrag } from '@floegence/floe-webapp-core';
+import { useDeckDrag } from '@floegence/floe-webapp-core';
+import { DeckGrid, DeckTopBar } from '@floegence/floe-webapp-core/deck';
+import { LoadingOverlay } from '@floegence/floe-webapp-core/loading';
 import { useProtocol } from '@floegence/floe-webapp-protocol';
 
 export function EnvDeckPage() {

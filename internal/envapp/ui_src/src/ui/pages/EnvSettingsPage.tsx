@@ -1,12 +1,7 @@
 import { Show, createEffect, createMemo, createResource, createSignal } from 'solid-js';
-import {
-  Button,
-  Card,
-  ConfirmDialog,
-  Input,
-  LoadingOverlay,
-  useNotification,
-} from '@floegence/floe-webapp-core';
+import { useNotification } from '@floegence/floe-webapp-core';
+import { LoadingOverlay } from '@floegence/floe-webapp-core/loading';
+import { Button, Card, ConfirmDialog, Input } from '@floegence/floe-webapp-core/ui';
 import { useProtocol } from '@floegence/floe-webapp-protocol';
 
 import { fetchGatewayJSON } from '../services/gatewayApi';
