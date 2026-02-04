@@ -26,8 +26,10 @@ const (
 )
 
 type Options struct {
-	Logger              *slog.Logger
-	StateDir            string
+	Logger   *slog.Logger
+	StateDir string
+	// ConfigPath is the absolute path to the agent config file (used to persist AI settings).
+	ConfigPath          string
 	ControlplaneBaseURL string
 
 	// CodeServerPortMin/Max configures the dynamic port range used for code-server processes.
@@ -119,6 +121,7 @@ func New(ctx context.Context, opts Options) (*Service, error) {
 	aiSvc, err := ai.NewService(ai.Options{
 		Logger:             logger,
 		StateDir:           stateAbs,
+		ConfigPath:         strings.TrimSpace(opts.ConfigPath),
 		FSRoot:             strings.TrimSpace(opts.FSRoot),
 		Shell:              strings.TrimSpace(opts.Shell),
 		Config:             opts.AIConfig,
