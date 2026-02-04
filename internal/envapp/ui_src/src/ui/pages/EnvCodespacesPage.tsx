@@ -475,7 +475,10 @@ function CreateCodespaceDialog(props: {
           <Button size="sm" variant="outline" onClick={() => handleOpenChange(false)} disabled={props.loading}>
             Cancel
           </Button>
-          <Button size="sm" variant="default" onClick={handleCreate} loading={props.loading} disabled={!selectedPath()}>
+          <Button size="sm" variant="default" onClick={handleCreate} disabled={props.loading || !selectedPath()}>
+            <Show when={props.loading}>
+              <InlineButtonSnakeLoading class="mr-1" />
+            </Show>
             Create
           </Button>
         </div>
