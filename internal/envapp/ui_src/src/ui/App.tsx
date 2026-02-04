@@ -1,4 +1,5 @@
-import { CommandPalette, FileBrowserDragProvider, FloeProvider, NotificationContainer } from '@floegence/floe-webapp-core';
+import { FileBrowserDragProvider, FloeProvider, NotificationContainer } from '@floegence/floe-webapp-core';
+import { CommandPalette } from '@floegence/floe-webapp-core/ui';
 import { ProtocolProvider } from '@floegence/floe-webapp-protocol';
 import { EnvAppShell } from './EnvAppShell';
 import { redevenV1Contract } from './protocol/redeven_v1';
