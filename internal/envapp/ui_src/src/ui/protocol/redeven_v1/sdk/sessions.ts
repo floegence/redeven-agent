@@ -6,6 +6,7 @@ export type ActiveSession = {
 
   floeApp: string;
   codeSpaceID?: string;
+  sessionKind?: string;
   tunnelUrl: string;
 
   createdAtUnixMs: number;

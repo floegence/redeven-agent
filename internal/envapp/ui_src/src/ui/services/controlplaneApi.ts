@@ -187,7 +187,13 @@ export async function exchangeBrokerToEntryTicket(args: {
   const out = await fetchJSON<{ entry_ticket: string }>(`/api/srv/v1/floeproxy/entry`, {
     method: 'POST',
     bearerToken: brokerToken,
-    body: JSON.stringify({ endpoint_id: endpointId, floe_app: floeApp, code_space_id: codeSpaceId }),
+    body: JSON.stringify({
+      endpoint_id: endpointId,
+      floe_app: floeApp,
+      code_space_id: codeSpaceId,
+      // Env App UI business session (RPC/streams).
+      session_kind: 'envapp_rpc',
+    }),
   });
   const t = String(out?.entry_ticket ?? '').trim();
   if (!t) throw new Error('Invalid entry_ticket response');
@@ -208,7 +214,12 @@ export async function mintEnvEntryTicketForApp(args: { envId: string; floeApp: s
   const out = await fetchJSON<{ entry_ticket: string }>(`/api/srv/v1/floeproxy/environments/${encodeURIComponent(envId)}/entry`, {
     method: 'POST',
     bearerToken: brokerToken,
-    body: JSON.stringify({ floe_app: floeApp, code_space_id: codeSpaceId }),
+    body: JSON.stringify({
+      floe_app: floeApp,
+      code_space_id: codeSpaceId,
+      // Codespaces (code-server) and other apps are single-channel sessions on the data plane; tag them as codeapp/app.
+      session_kind: floeApp === 'com.floegence.redeven.code' ? 'codeapp' : 'app',
+    }),
   });
   const t = String(out?.entry_ticket ?? '').trim();
   if (!t) throw new Error('Invalid entry_ticket response');
