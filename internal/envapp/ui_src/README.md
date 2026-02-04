@@ -17,9 +17,9 @@ Notes:
 From this directory:
 
 ```bash
-npm ci
-npm run typecheck
-npm run build
+pnpm install --frozen-lockfile
+pnpm run typecheck
+pnpm run build
 ```
 
 The build output is written to `../ui/dist/`.
