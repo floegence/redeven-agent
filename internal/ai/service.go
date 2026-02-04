@@ -20,11 +20,15 @@ import (
 var (
 	ErrNotConfigured = errors.New("ai not configured")
 	ErrRunActive     = errors.New("run already active")
+	ErrConfigLocked  = errors.New("cannot update ai settings while a run is active")
 )
 
 type Options struct {
 	Logger   *slog.Logger
 	StateDir string
+	// ConfigPath is the absolute path to the agent config file.
+	// It is used to persist AI settings updates initiated from the Env App UI.
+	ConfigPath string
 
 	FSRoot string
 	Shell  string
@@ -37,9 +41,10 @@ type Options struct {
 type Service struct {
 	log *slog.Logger
 
-	stateDir string
-	fsRoot   string
-	shell    string
+	stateDir   string
+	configPath string
+	fsRoot     string
+	shell      string
 
 	cfg *config.AIConfig
 
@@ -55,6 +60,9 @@ type Service struct {
 func NewService(opts Options) (*Service, error) {
 	if strings.TrimSpace(opts.StateDir) == "" {
 		return nil, errors.New("missing StateDir")
+	}
+	if strings.TrimSpace(opts.ConfigPath) == "" {
+		return nil, errors.New("missing ConfigPath")
 	}
 	if strings.TrimSpace(opts.FSRoot) == "" {
 		return nil, errors.New("missing FSRoot")
@@ -73,6 +81,7 @@ func NewService(opts Options) (*Service, error) {
 	return &Service{
 		log:                logger,
 		stateDir:           strings.TrimSpace(opts.StateDir),
+		configPath:         strings.TrimSpace(opts.ConfigPath),
 		fsRoot:             strings.TrimSpace(opts.FSRoot),
 		shell:              strings.TrimSpace(opts.Shell),
 		cfg:                opts.Config,
@@ -84,7 +93,13 @@ func NewService(opts Options) (*Service, error) {
 }
 
 func (s *Service) Enabled() bool {
-	return s != nil && s.cfg != nil
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	enabled := s.cfg != nil
+	s.mu.Unlock()
+	return enabled
 }
 
 func (s *Service) HasActiveRun(channelID string) bool {
@@ -101,10 +116,15 @@ func (s *Service) HasActiveRun(channelID string) bool {
 }
 
 func (s *Service) ListModels() (*ModelsResponse, error) {
-	if s == nil || s.cfg == nil {
+	if s == nil {
 		return nil, ErrNotConfigured
 	}
+	s.mu.Lock()
 	cfg := s.cfg
+	s.mu.Unlock()
+	if cfg == nil {
+		return nil, ErrNotConfigured
+	}
 
 	out := &ModelsResponse{
 		DefaultModel: strings.TrimSpace(cfg.DefaultModel),
@@ -171,16 +191,18 @@ func (s *Service) StartRun(ctx context.Context, channelID string, runID string, 
 	if strings.TrimSpace(runID) == "" {
 		return errors.New("missing run_id")
 	}
-	if s.cfg == nil {
-		return ErrNotConfigured
-	}
 
 	// Ensure at most one active run per channel.
 	s.mu.Lock()
+	if s.cfg == nil {
+		s.mu.Unlock()
+		return ErrNotConfigured
+	}
 	if existing := s.activeRunByChan[channelID]; existing != "" {
 		s.mu.Unlock()
 		return ErrRunActive
 	}
+	cfg := s.cfg
 	messageID, err := newMessageID()
 	if err != nil {
 		s.mu.Unlock()
@@ -191,7 +213,7 @@ func (s *Service) StartRun(ctx context.Context, channelID string, runID string, 
 		StateDir:           s.stateDir,
 		FSRoot:             s.fsRoot,
 		Shell:              s.shell,
-		AIConfig:           s.cfg,
+		AIConfig:           cfg,
 		ResolveSessionMeta: s.resolveSessionMeta,
 		RunID:              runID,
 		ChannelID:          channelID,

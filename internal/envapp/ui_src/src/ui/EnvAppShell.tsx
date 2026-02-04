@@ -16,6 +16,7 @@ import {
   Refresh,
   Sparkles,
   Search,
+  Settings,
   Shell,
   StatusIndicator,
   Sun,
@@ -43,6 +44,7 @@ import { EnvAIPage } from './pages/EnvAIPage';
 import { redevenDeckWidgets } from './deck/redevenDeckWidgets';
 import { useRedevenRpc } from './protocol/redeven_v1';
 import { GrantAuditDialog } from './widgets/GrantAuditDialog';
+import { EnvAISettingsDialog } from './widgets/EnvAISettingsDialog';
 import { getSandboxWindowInfo } from './services/sandboxWindowRegistry';
 import {
   channelInitEntry,
@@ -110,6 +112,12 @@ export function EnvAppShell() {
 
   const [aiInjectionSeq, setAiInjectionSeq] = createSignal(0);
   const [aiInjectionMarkdown, setAiInjectionMarkdown] = createSignal<string | null>(null);
+
+  const [aiConfigSeq, setAiConfigSeq] = createSignal(0);
+  const bumpAiConfigSeq = () => setAiConfigSeq((n) => n + 1);
+
+  const [aiSettingsOpen, setAiSettingsOpen] = createSignal(false);
+  const openAiSettings = () => setAiSettingsOpen(true);
 
   const injectAiMarkdown = (markdown: string) => {
     setAiInjectionMarkdown(String(markdown ?? ''));
@@ -402,6 +410,11 @@ export function EnvAppShell() {
     return items;
   };
 
+  const activityBottomItems = (): ActivityBarItem[] => {
+    if (layout.isMobile()) return [];
+    return [{ id: 'ai-settings', icon: Settings, label: 'AI Settings', onClick: () => openAiSettings() }];
+  };
+
   const envName = () => {
     if (env.state !== 'ready') return 'Loading...';
     return env()?.name || 'Environment';
@@ -557,6 +570,8 @@ export function EnvAppShell() {
         connecting,
         connectError,
         goTab,
+        aiConfigSeq,
+        openAiSettings,
         aiInjectionSeq,
         aiInjectionMarkdown,
         injectAiMarkdown,
@@ -578,6 +593,7 @@ export function EnvAppShell() {
             </Tooltip>
           }
           activityItems={activityItems()}
+          activityBottomItems={activityBottomItems()}
           topBarActions={
             <div class="flex items-center gap-1">
               <Tooltip content="Command palette" placement="bottom" delay={0}>
@@ -641,6 +657,11 @@ export function EnvAppShell() {
           </div>
 
           <GrantAuditDialog open={auditOpen()} envId={envId()} onClose={() => setAuditOpen(false)} />
+          <EnvAISettingsDialog
+            open={aiSettingsOpen()}
+            onClose={() => setAiSettingsOpen(false)}
+            onSaved={() => bumpAiConfigSeq()}
+          />
         </Shell>
       </FloeRegistryRuntime>
     </EnvContext.Provider>
