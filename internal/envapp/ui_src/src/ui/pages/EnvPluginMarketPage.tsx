@@ -1,5 +1,7 @@
 import { For, Show, createMemo, createResource, createSignal } from 'solid-js';
-import { Button, Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle, Input, LoadingOverlay, Panel, PanelContent } from '@floegence/floe-webapp-core';
+import { Panel, PanelContent } from '@floegence/floe-webapp-core/layout';
+import { LoadingOverlay } from '@floegence/floe-webapp-core/loading';
+import { Button, Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle, Input } from '@floegence/floe-webapp-core/ui';
 import { getEnvironmentFloeApps, setEnvironmentFloeAppEnabled, type EnvFloeApp } from '../services/controlplaneApi';
 import { useEnvContext } from './EnvContext';
 

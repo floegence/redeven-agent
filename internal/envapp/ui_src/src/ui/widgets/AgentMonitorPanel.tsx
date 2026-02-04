@@ -1,5 +1,8 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, untrack } from 'solid-js';
-import { LoadingOverlay, MonitoringChart, Panel, PanelContent, useNotification } from '@floegence/floe-webapp-core';
+import { useNotification } from '@floegence/floe-webapp-core';
+import { LoadingOverlay } from '@floegence/floe-webapp-core/loading';
+import { Panel, PanelContent } from '@floegence/floe-webapp-core/layout';
+import { MonitoringChart } from '@floegence/floe-webapp-core/ui';
 import { useProtocol } from '@floegence/floe-webapp-protocol';
 import { useRedevenRpc, type ActiveSession, type SysMonitorProcessInfo, type SysMonitorSnapshot, type SysMonitorSortBy } from '../protocol/redeven_v1';
 
