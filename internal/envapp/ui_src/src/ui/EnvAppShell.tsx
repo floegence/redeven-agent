@@ -6,6 +6,7 @@ import {
   Code,
   Copy,
   Files,
+  Globe,
   Grid,
   Grid3x3,
   LayoutDashboard,
@@ -28,6 +29,7 @@ import { EnvTerminalPage } from './pages/EnvTerminalPage';
 import { EnvMonitorPage } from './pages/EnvMonitorPage';
 import { EnvFileBrowserPage } from './pages/EnvFileBrowserPage';
 import { EnvCodespacesPage } from './pages/EnvCodespacesPage';
+import { EnvPortForwardsPage } from './pages/EnvPortForwardsPage';
 import { EnvPluginMarketPage } from './pages/EnvPluginMarketPage';
 import { EnvAIPage } from './pages/EnvAIPage';
 import { EnvSettingsPage } from './pages/EnvSettingsPage';
@@ -59,6 +61,7 @@ function readPersistedActiveTab(): EnvNavTab | null {
       v === 'monitor' ||
       v === 'files' ||
       v === 'codespaces' ||
+      v === 'ports' ||
       v === 'market' ||
       v === 'ai'
     ) {
@@ -386,8 +389,9 @@ export function EnvAppShell() {
     { id: 'monitor', name: 'Monitoring', icon: Activity, component: EnvMonitorPage, sidebar: { order: 3, fullScreen: true } },
     { id: 'files', name: 'File Browser', icon: Files, component: EnvFileBrowserPage, sidebar: { order: 4, fullScreen: true } },
     { id: 'codespaces', name: 'Codespaces', icon: Code, component: EnvCodespacesPage, sidebar: { order: 5, fullScreen: true } },
-    { id: 'market', name: 'Plugin Market', icon: Grid, component: EnvPluginMarketPage, sidebar: { order: 6, fullScreen: true } },
-    { id: 'ai', name: 'AI', icon: Sparkles, component: EnvAIPage, sidebar: { order: 7, fullScreen: true } },
+    { id: 'ports', name: 'Ports', icon: Globe, component: EnvPortForwardsPage, sidebar: { order: 6, fullScreen: true } },
+    { id: 'market', name: 'Plugin Market', icon: Grid, component: EnvPluginMarketPage, sidebar: { order: 7, fullScreen: true } },
+    { id: 'ai', name: 'AI', icon: Sparkles, component: EnvAIPage, sidebar: { order: 8, fullScreen: true } },
     { id: 'settings', name: 'Settings', icon: Settings, component: EnvSettingsPage, sidebar: { order: 99, fullScreen: true } },
   ];
 
@@ -410,6 +414,7 @@ export function EnvAppShell() {
       { id: 'monitor', icon: Activity, label: 'Monitoring', onClick: () => goTab('monitor') },
       { id: 'files', icon: Files, label: 'File Browser', onClick: () => goTab('files') },
       { id: 'codespaces', icon: Code, label: 'Codespaces', onClick: () => goTab('codespaces') },
+      { id: 'ports', icon: Globe, label: 'Ports', onClick: () => goTab('ports') },
       { id: 'market', icon: Grid, label: 'Plugin Market', onClick: () => goTab('market') },
       { id: 'ai', icon: Sparkles, label: 'AI', onClick: () => goTab('ai') },
     );
@@ -498,6 +503,15 @@ export function EnvAppShell() {
         keybind: 'mod+shift+c',
         icon: Code,
         execute: () => goTab('codespaces'),
+      },
+      {
+        id: 'redeven.env.goToPorts',
+        title: 'Go to Ports',
+        description: 'Open port forwards',
+        category: 'Navigation',
+        keybind: 'mod+shift+o',
+        icon: Globe,
+        execute: () => goTab('ports'),
       },
       {
         id: 'redeven.env.goToMarket',
