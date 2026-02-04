@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -422,7 +423,7 @@ func TestGateway_CodeServerProxy_RewritesHostAndStripsForwardedHeaders(t *testin
 	}
 
 	origin := "https://cs-abc.example.com"
-	req := httptest.NewRequest(http.MethodGet, "http://ignored.local/", nil)
+	req := httptest.NewRequest(http.MethodGet, "http://ignored.local/foo", nil)
 	req.Header.Set("Origin", origin)
 	req.Header.Set("Forwarded", "for=1.2.3.4;proto=https;host=evil.example.com")
 	req.Header.Set("X-Forwarded-Host", "evil.example.com")
@@ -447,6 +448,52 @@ func TestGateway_CodeServerProxy_RewritesHostAndStripsForwardedHeaders(t *testin
 	}
 	if got.Forwarded != "" || got.XForwardedHost != "" || got.XForwardedFor != "" || got.XForwardedProto != "" {
 		t.Fatalf("forwarded headers were not stripped: %+v", got)
+	}
+}
+
+func TestGateway_CodeServerProxy_CodespaceRootRedirectsToWorkspaceFolder(t *testing.T) {
+	t.Parallel()
+
+	dist := fstest.MapFS{
+		"env/index.html": {Data: []byte("<html>env</html>")},
+		"inject.js":      {Data: []byte("console.log('inject');")},
+	}
+	b := &stubBackend{
+		listSpaces: func(ctx context.Context) ([]SpaceStatus, error) {
+			return []SpaceStatus{
+				{CodeSpaceID: "abc", WorkspacePath: "/tmp/ws"},
+			}, nil
+		},
+		resolveCodeServerPort: func(ctx context.Context, codeSpaceID string) (int, error) {
+			return 0, errors.New("should not be called")
+		},
+	}
+	gw, err := New(Options{Backend: b, DistFS: dist, ListenAddr: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "http://ignored.local/", nil)
+	req.Header.Set("Origin", "https://cs-abc.example.com")
+	rr := httptest.NewRecorder()
+	gw.serveHTTP(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusFound)
+	}
+
+	loc := rr.Header().Get("Location")
+	u, err := url.Parse(loc)
+	if err != nil {
+		t.Fatalf("parse Location %q: %v", loc, err)
+	}
+	if u.Path != "/" {
+		t.Fatalf("Location path = %q, want %q", u.Path, "/")
+	}
+	if got := u.Query().Get("folder"); got != "/tmp/ws" {
+		t.Fatalf("Location folder = %q, want %q (Location=%q)", got, "/tmp/ws", loc)
+	}
+	if got := u.Query().Get("workspace"); got != "" {
+		t.Fatalf("Location workspace = %q, want empty (Location=%q)", got, loc)
 	}
 }
 
