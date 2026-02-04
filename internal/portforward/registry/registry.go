@@ -1,0 +1,373 @@
+package registry
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	_ "modernc.org/sqlite"
+)
+
+type Forward struct {
+	ForwardID          string `json:"forward_id"`
+	TargetURL          string `json:"target_url"`
+	Name               string `json:"name"`
+	Description        string `json:"description"`
+	HealthPath         string `json:"health_path"`
+	InsecureSkipVerify bool   `json:"insecure_skip_verify"`
+
+	CreatedAtUnixMs    int64 `json:"created_at_unix_ms"`
+	UpdatedAtUnixMs    int64 `json:"updated_at_unix_ms"`
+	LastOpenedAtUnixMs int64 `json:"last_opened_at_unix_ms"`
+}
+
+type Registry struct {
+	db *sql.DB
+}
+
+func Open(path string) (*Registry, error) {
+	p := filepath.Clean(strings.TrimSpace(path))
+	if p == "" {
+		return nil, errors.New("missing registry path")
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		return nil, err
+	}
+
+	// modernc.org/sqlite uses a file path as DSN.
+	db, err := sql.Open("sqlite", p)
+	if err != nil {
+		return nil, err
+	}
+	if err := initSchema(db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+
+	// Keep the connection open (single-process local DB).
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+
+	return &Registry{db: db}, nil
+}
+
+func (r *Registry) Close() error {
+	if r == nil || r.db == nil {
+		return nil
+	}
+	return r.db.Close()
+}
+
+func (r *Registry) ListForwards(ctx context.Context) ([]Forward, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("registry not initialized")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	rows, err := r.db.QueryContext(ctx, `
+SELECT forward_id, target_url, name, description, health_path, insecure_skip_verify, created_at_unix_ms, updated_at_unix_ms, last_opened_at_unix_ms
+FROM port_forwards
+ORDER BY created_at_unix_ms ASC
+`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Forward
+	for rows.Next() {
+		var f Forward
+		var insecure int
+		if err := rows.Scan(
+			&f.ForwardID,
+			&f.TargetURL,
+			&f.Name,
+			&f.Description,
+			&f.HealthPath,
+			&insecure,
+			&f.CreatedAtUnixMs,
+			&f.UpdatedAtUnixMs,
+			&f.LastOpenedAtUnixMs,
+		); err != nil {
+			return nil, err
+		}
+		f.InsecureSkipVerify = insecure != 0
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+func (r *Registry) GetForward(ctx context.Context, forwardID string) (*Forward, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("registry not initialized")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	id := strings.TrimSpace(forwardID)
+	if id == "" {
+		return nil, errors.New("missing forwardID")
+	}
+
+	var f Forward
+	var insecure int
+	err := r.db.QueryRowContext(ctx, `
+SELECT forward_id, target_url, name, description, health_path, insecure_skip_verify, created_at_unix_ms, updated_at_unix_ms, last_opened_at_unix_ms
+FROM port_forwards
+WHERE forward_id = ?
+`, id).Scan(
+		&f.ForwardID,
+		&f.TargetURL,
+		&f.Name,
+		&f.Description,
+		&f.HealthPath,
+		&insecure,
+		&f.CreatedAtUnixMs,
+		&f.UpdatedAtUnixMs,
+		&f.LastOpenedAtUnixMs,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	f.InsecureSkipVerify = insecure != 0
+	return &f, nil
+}
+
+func (r *Registry) CreateForward(ctx context.Context, f Forward) error {
+	if r == nil || r.db == nil {
+		return errors.New("registry not initialized")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	f.ForwardID = strings.TrimSpace(f.ForwardID)
+	f.TargetURL = strings.TrimSpace(f.TargetURL)
+	f.Name = strings.TrimSpace(f.Name)
+	f.Description = strings.TrimSpace(f.Description)
+	f.HealthPath = strings.TrimSpace(f.HealthPath)
+
+	id := strings.TrimSpace(f.ForwardID)
+	if id == "" {
+		return errors.New("missing forward_id")
+	}
+	if f.TargetURL == "" {
+		return errors.New("missing target_url")
+	}
+
+	now := time.Now().UnixMilli()
+	if f.CreatedAtUnixMs <= 0 {
+		f.CreatedAtUnixMs = now
+	}
+	if f.UpdatedAtUnixMs <= 0 {
+		f.UpdatedAtUnixMs = f.CreatedAtUnixMs
+	}
+
+	_, err := r.db.ExecContext(ctx, `
+INSERT INTO port_forwards(
+  forward_id, target_url, name, description, health_path, insecure_skip_verify,
+  created_at_unix_ms, updated_at_unix_ms, last_opened_at_unix_ms
+) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+`,
+		f.ForwardID,
+		f.TargetURL,
+		f.Name,
+		f.Description,
+		f.HealthPath,
+		boolToInt(f.InsecureSkipVerify),
+		f.CreatedAtUnixMs,
+		f.UpdatedAtUnixMs,
+		f.LastOpenedAtUnixMs,
+	)
+	return err
+}
+
+type UpdateForwardPatch struct {
+	TargetURL          *string
+	Name               *string
+	Description        *string
+	HealthPath         *string
+	InsecureSkipVerify *bool
+	UpdatedAtUnixMs    int64
+}
+
+func (r *Registry) UpdateForward(ctx context.Context, forwardID string, patch UpdateForwardPatch) error {
+	if r == nil || r.db == nil {
+		return errors.New("registry not initialized")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	id := strings.TrimSpace(forwardID)
+	if id == "" {
+		return errors.New("missing forward_id")
+	}
+
+	if patch.UpdatedAtUnixMs <= 0 {
+		patch.UpdatedAtUnixMs = time.Now().UnixMilli()
+	}
+
+	// Build an UPDATE with only the fields present.
+	set := make([]string, 0, 6)
+	args := make([]any, 0, 8)
+
+	if patch.TargetURL != nil {
+		set = append(set, "target_url = ?")
+		args = append(args, strings.TrimSpace(*patch.TargetURL))
+	}
+	if patch.Name != nil {
+		set = append(set, "name = ?")
+		args = append(args, strings.TrimSpace(*patch.Name))
+	}
+	if patch.Description != nil {
+		set = append(set, "description = ?")
+		args = append(args, strings.TrimSpace(*patch.Description))
+	}
+	if patch.HealthPath != nil {
+		set = append(set, "health_path = ?")
+		args = append(args, strings.TrimSpace(*patch.HealthPath))
+	}
+	if patch.InsecureSkipVerify != nil {
+		set = append(set, "insecure_skip_verify = ?")
+		args = append(args, boolToInt(*patch.InsecureSkipVerify))
+	}
+	if len(set) == 0 {
+		return errors.New("no fields to update")
+	}
+	set = append(set, "updated_at_unix_ms = ?")
+	args = append(args, patch.UpdatedAtUnixMs)
+
+	args = append(args, id)
+	q := fmt.Sprintf("UPDATE port_forwards SET %s WHERE forward_id = ?", strings.Join(set, ", "))
+	_, err := r.db.ExecContext(ctx, q, args...)
+	return err
+}
+
+func (r *Registry) DeleteForward(ctx context.Context, forwardID string) error {
+	if r == nil || r.db == nil {
+		return errors.New("registry not initialized")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	id := strings.TrimSpace(forwardID)
+	if id == "" {
+		return errors.New("missing forward_id")
+	}
+	_, err := r.db.ExecContext(ctx, `DELETE FROM port_forwards WHERE forward_id = ?`, id)
+	return err
+}
+
+func (r *Registry) TouchLastOpened(ctx context.Context, forwardID string) error {
+	if r == nil || r.db == nil {
+		return errors.New("registry not initialized")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	id := strings.TrimSpace(forwardID)
+	if id == "" {
+		return errors.New("missing forward_id")
+	}
+	now := time.Now().UnixMilli()
+	_, err := r.db.ExecContext(ctx, `
+UPDATE port_forwards
+SET last_opened_at_unix_ms = ?, updated_at_unix_ms = ?
+WHERE forward_id = ?
+`, now, now, id)
+	return err
+}
+
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+func initSchema(db *sql.DB) error {
+	if db == nil {
+		return errors.New("nil db")
+	}
+
+	// WAL is safer for local concurrent readers.
+	if _, err := db.Exec(`PRAGMA journal_mode=WAL;`); err != nil {
+		return fmt.Errorf("pragma journal_mode: %w", err)
+	}
+	if _, err := db.Exec(`PRAGMA busy_timeout=3000;`); err != nil {
+		return fmt.Errorf("pragma busy_timeout: %w", err)
+	}
+	return migrateSchema(db)
+}
+
+func migrateSchema(db *sql.DB) error {
+	if db == nil {
+		return errors.New("nil db")
+	}
+
+	// Schema versions:
+	// - v1: initial port_forwards table
+	const targetVersion = 1
+
+	var v int
+	if err := db.QueryRow(`PRAGMA user_version;`).Scan(&v); err != nil {
+		return fmt.Errorf("pragma user_version: %w", err)
+	}
+	if v >= targetVersion {
+		return nil
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	// If this is a fresh database (no table yet), create v1 directly.
+	var exists int
+	if err := tx.QueryRow(`
+SELECT COUNT(1)
+FROM sqlite_master
+WHERE type = 'table' AND name = 'port_forwards'
+`).Scan(&exists); err != nil {
+		return err
+	}
+	if exists == 0 {
+		if _, err := tx.Exec(`
+CREATE TABLE IF NOT EXISTS port_forwards (
+  forward_id TEXT PRIMARY KEY,
+  target_url TEXT NOT NULL,
+  name TEXT NOT NULL DEFAULT '',
+  description TEXT NOT NULL DEFAULT '',
+  health_path TEXT NOT NULL DEFAULT '',
+  insecure_skip_verify INTEGER NOT NULL DEFAULT 0,
+  created_at_unix_ms INTEGER NOT NULL,
+  updated_at_unix_ms INTEGER NOT NULL,
+  last_opened_at_unix_ms INTEGER NOT NULL
+);
+`); err != nil {
+			return fmt.Errorf("create table v1: %w", err)
+		}
+		if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version=%d;", targetVersion)); err != nil {
+			return fmt.Errorf("set user_version: %w", err)
+		}
+		return tx.Commit()
+	}
+
+	// No migrations yet.
+	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version=%d;", targetVersion)); err != nil {
+		return fmt.Errorf("set user_version: %w", err)
+	}
+	return tx.Commit()
+}
