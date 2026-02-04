@@ -12,6 +12,9 @@ export type EnvContextValue = {
 
   goTab: (tab: EnvNavTab) => void;
 
+  aiConfigSeq: () => number;
+  openAiSettings: () => void;
+
   aiInjectionSeq: () => number;
   aiInjectionMarkdown: () => string | null;
   injectAiMarkdown: (markdown: string) => void;

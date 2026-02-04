@@ -4,6 +4,8 @@ import {
   ChatInput,
   ChatProvider,
   LoadingOverlay,
+  Settings,
+  Tooltip,
   VirtualMessageList,
   useChatContext,
   useNotification,
@@ -16,6 +18,8 @@ import {
 import { useProtocol } from '@floegence/floe-webapp-protocol';
 import { useEnvContext } from './EnvContext';
 
+import { fetchGatewayJSON } from '../services/gatewayApi';
+
 type ModelsResponse = Readonly<{
   default_model: string;
   models: Array<{ id: string; label?: string }>;
@@ -23,22 +27,11 @@ type ModelsResponse = Readonly<{
 
 type RunHistoryMsg = Readonly<{ role: 'user' | 'assistant'; text: string }>;
 
-async function fetchGatewayJSON<T>(url: string, init: RequestInit): Promise<T> {
-  const headers = new Headers(init.headers);
-  if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
-
-  const resp = await fetch(url, { ...init, headers, credentials: 'omit', cache: 'no-store' });
-  const text = await resp.text();
-  let data: any = null;
-  try {
-    data = text ? JSON.parse(text) : null;
-  } catch {
-    // ignore
-  }
-  if (!resp.ok) throw new Error(data?.error ?? `HTTP ${resp.status}`);
-  if (data?.ok === false) throw new Error(String(data?.error ?? 'Request failed'));
-  return (data?.data ?? data) as T;
-}
+type AIConfigView = Readonly<{
+  config_path: string;
+  enabled: boolean;
+  ai: any | null;
+}>;
 
 function createUserMarkdownMessage(markdown: string): Message {
   return {
@@ -61,9 +54,25 @@ export function EnvAIPage() {
   const protocol = useProtocol();
   const notify = useNotification();
 
-  const [models] = createResource(async () => {
-    return await fetchGatewayJSON<ModelsResponse>('/_redeven_proxy/api/ai/models', { method: 'GET' });
+  const cfgKey = createMemo<number | null>(() => (protocol.status() === 'connected' ? env.aiConfigSeq() : null));
+
+  const [aiCfg] = createResource<AIConfigView | null, number | null>(
+    () => cfgKey(),
+    async (k) => (k == null ? null : await fetchGatewayJSON<AIConfigView>('/_redeven_proxy/api/ai/config', { method: 'GET' })),
+  );
+
+  const aiEnabled = createMemo(() => !!aiCfg()?.enabled);
+
+  const modelsKey = createMemo<number | null>(() => {
+    if (cfgKey() == null) return null;
+    if (!aiEnabled()) return null;
+    return env.aiConfigSeq();
   });
+
+  const [models] = createResource<ModelsResponse | null, number | null>(
+    () => modelsKey(),
+    async (k) => (k == null ? null : await fetchGatewayJSON<ModelsResponse>('/_redeven_proxy/api/ai/models', { method: 'GET' })),
+  );
 
   const [selectedModel, setSelectedModel] = createSignal('');
   const [history, setHistory] = createSignal<RunHistoryMsg[]>([]);
@@ -78,7 +87,7 @@ export function EnvAIPage() {
   let assistantText = '';
 
   const modelsReady = createMemo(() => !!models() && !models.loading && !models.error);
-  const canInteract = createMemo(() => protocol.status() === 'connected' && !running() && modelsReady());
+  const canInteract = createMemo(() => protocol.status() === 'connected' && !running() && aiEnabled() && modelsReady());
 
   createEffect(() => {
     const m = models();
@@ -188,6 +197,10 @@ export function EnvAIPage() {
     }
     if (running()) {
       notify.info('AI is busy', 'Please wait for the current run to finish.');
+      return;
+    }
+    if (!aiEnabled()) {
+      notify.error('AI not configured', 'Open AI Settings to enable AI.');
       return;
     }
     if (models.error) {
@@ -344,22 +357,35 @@ export function EnvAIPage() {
           <div class="chat-header">
             <div class="chat-header-title">AI</div>
             <div class="flex items-center gap-2">
-              <select
-                class="text-xs border border-border rounded px-2 py-1 bg-background max-w-[280px]"
-                value={selectedModel()}
-                onChange={(e) => setSelectedModel(e.currentTarget.value)}
-                disabled={models.loading || !!models.error || running()}
-              >
-                <Show when={models()}>
-                  {(m) => (
-                    <>
-                      {m().models.map((it) => (
-                        <option value={it.id}>{it.label ?? it.id}</option>
-                      ))}
-                    </>
-                  )}
-                </Show>
-              </select>
+              <Tooltip content="AI Settings" placement="bottom" delay={0}>
+                <button
+                  type="button"
+                  class="flex items-center justify-center w-8 h-8 rounded cursor-pointer hover:bg-muted/60 transition-colors"
+                  onClick={() => env.openAiSettings()}
+                  aria-label="AI Settings"
+                >
+                  <Settings class="w-4 h-4" />
+                </button>
+              </Tooltip>
+
+              <Show when={aiEnabled()}>
+                <select
+                  class="text-xs border border-border rounded px-2 py-1 bg-background max-w-[280px]"
+                  value={selectedModel()}
+                  onChange={(e) => setSelectedModel(e.currentTarget.value)}
+                  disabled={models.loading || !!models.error || running()}
+                >
+                  <Show when={models()}>
+                    {(m) => (
+                      <>
+                        {m().models.map((it) => (
+                          <option value={it.id}>{it.label ?? it.id}</option>
+                        ))}
+                      </>
+                    )}
+                  </Show>
+                </select>
+              </Show>
 
               <Show when={running()}>
                 <Button size="sm" variant="secondary" onClick={() => void cancel()}>
@@ -369,13 +395,28 @@ export function EnvAIPage() {
             </div>
           </div>
 
-          <Show when={models.error}>
+          <Show when={aiCfg.error}>
+            <div class="px-3 py-2 text-xs border-b border-border text-muted-foreground">
+              <div class="font-medium text-foreground">AI settings are not available.</div>
+              <div class="mt-1">Error: {aiCfg.error instanceof Error ? aiCfg.error.message : String(aiCfg.error)}</div>
+            </div>
+          </Show>
+
+          <Show when={aiCfg() && !aiEnabled() && !aiCfg.error && !aiCfg.loading}>
+            <div class="px-3 py-2 text-xs border-b border-border text-muted-foreground">
+              <div class="font-medium text-foreground">AI is not configured.</div>
+              <div class="mt-1">Open AI Settings to enable AI.</div>
+              <div class="mt-2">
+                <Button size="sm" variant="default" onClick={() => env.openAiSettings()}>
+                  Open AI Settings
+                </Button>
+              </div>
+            </div>
+          </Show>
+
+          <Show when={models.error && aiEnabled()}>
             <div class="px-3 py-2 text-xs border-b border-border text-muted-foreground">
               <div class="font-medium text-foreground">AI is not available.</div>
-              <div class="mt-1">
-                Configure the <code class="px-1 py-0.5 bg-muted rounded">ai</code> section in{' '}
-                <code class="px-1 py-0.5 bg-muted rounded">~/.redeven-agent/config.json</code> and restart the agent.
-              </div>
               <div class="mt-1">Error: {models.error instanceof Error ? models.error.message : String(models.error)}</div>
             </div>
           </Show>
@@ -391,7 +432,8 @@ export function EnvAIPage() {
       </ChatProvider>
 
       <LoadingOverlay visible={protocol.status() !== 'connected'} message="Connecting to agent..." />
-      <LoadingOverlay visible={models.loading} message="Loading models..." />
+      <LoadingOverlay visible={aiCfg.loading && protocol.status() === 'connected'} message="Loading AI settings..." />
+      <LoadingOverlay visible={models.loading && aiEnabled()} message="Loading models..." />
     </div>
   );
 }

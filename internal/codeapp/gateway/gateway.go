@@ -1,11 +1,13 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
 	"encoding/base32"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net"
@@ -17,6 +19,7 @@ import (
 	"time"
 
 	"github.com/floegence/redeven-agent/internal/ai"
+	"github.com/floegence/redeven-agent/internal/config"
 )
 
 type Options struct {
@@ -230,6 +233,72 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func (g *Gateway) handleAPI(w http.ResponseWriter, r *http.Request) {
 	switch {
+	case r.Method == http.MethodGet && r.URL.Path == "/_redeven_proxy/api/ai/config":
+		if g.ai == nil {
+			writeJSON(w, http.StatusOK, apiResp{OK: true, Data: ai.ConfigView{Enabled: false}})
+			return
+		}
+		writeJSON(w, http.StatusOK, apiResp{OK: true, Data: g.ai.GetConfig()})
+		return
+
+	case r.Method == http.MethodPut && r.URL.Path == "/_redeven_proxy/api/ai/config":
+		if g.ai == nil {
+			writeJSON(w, http.StatusServiceUnavailable, apiResp{OK: false, Error: "ai service not ready"})
+			return
+		}
+
+		type reqBody struct {
+			AI json.RawMessage `json:"ai"`
+		}
+
+		dec := json.NewDecoder(r.Body)
+		dec.DisallowUnknownFields()
+
+		var body reqBody
+		if err := dec.Decode(&body); err != nil {
+			writeJSON(w, http.StatusBadRequest, apiResp{OK: false, Error: "invalid json"})
+			return
+		}
+		// No trailing tokens.
+		if err := dec.Decode(&struct{}{}); err != io.EOF {
+			writeJSON(w, http.StatusBadRequest, apiResp{OK: false, Error: "invalid json"})
+			return
+		}
+
+		if len(body.AI) == 0 {
+			writeJSON(w, http.StatusBadRequest, apiResp{OK: false, Error: "missing ai"})
+			return
+		}
+
+		var nextAI *config.AIConfig
+		raw := bytes.TrimSpace(body.AI)
+		if !bytes.Equal(raw, []byte("null")) {
+			var cfg config.AIConfig
+			aiDec := json.NewDecoder(bytes.NewReader(raw))
+			aiDec.DisallowUnknownFields()
+			if err := aiDec.Decode(&cfg); err != nil {
+				writeJSON(w, http.StatusBadRequest, apiResp{OK: false, Error: "invalid ai config json"})
+				return
+			}
+			if err := aiDec.Decode(&struct{}{}); err != io.EOF {
+				writeJSON(w, http.StatusBadRequest, apiResp{OK: false, Error: "invalid ai config json"})
+				return
+			}
+			nextAI = &cfg
+		}
+
+		out, err := g.ai.UpdateConfig(nextAI)
+		if err != nil {
+			status := http.StatusBadRequest
+			if errors.Is(err, ai.ErrConfigLocked) {
+				status = http.StatusConflict
+			}
+			writeJSON(w, status, apiResp{OK: false, Error: err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, apiResp{OK: true, Data: out})
+		return
+
 	case r.Method == http.MethodGet && r.URL.Path == "/_redeven_proxy/api/ai/models":
 		if g.ai == nil || !g.ai.Enabled() {
 			writeJSON(w, http.StatusServiceUnavailable, apiResp{OK: false, Error: "ai not configured"})
