@@ -1,4 +1,4 @@
-import { LoadingOverlay } from '@floegence/floe-webapp-core';
+import { LoadingOverlay } from '@floegence/floe-webapp-core/loading';
 import { useProtocol } from '@floegence/floe-webapp-protocol';
 import { AgentMonitorPanel } from '../widgets/AgentMonitorPanel';
 
@@ -12,4 +12,3 @@ export function EnvMonitorPage() {
     </div>
   );
 }
-

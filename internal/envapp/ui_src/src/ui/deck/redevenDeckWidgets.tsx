@@ -1,5 +1,5 @@
 import type { WidgetDefinition, WidgetProps } from '@floegence/floe-webapp-core';
-import { Activity, Files, Terminal } from '@floegence/floe-webapp-core';
+import { Activity, Files, Terminal } from '@floegence/floe-webapp-core/icons';
 import { RemoteFileBrowser } from '../widgets/RemoteFileBrowser';
 import { AgentMonitorPanel } from '../widgets/AgentMonitorPanel';
 import { TerminalPanel } from '../widgets/TerminalPanel';

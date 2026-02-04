@@ -1,4 +1,8 @@
 import { For, Show, createEffect, createResource, createSignal } from "solid-js";
+import { cn, useNotification } from "@floegence/floe-webapp-core";
+import type { FileItem } from "@floegence/floe-webapp-core/file-browser";
+import { Panel, PanelContent } from "@floegence/floe-webapp-core/layout";
+import { LoadingOverlay, SnakeLoader } from "@floegence/floe-webapp-core/loading";
 import {
   Button,
   Card,
@@ -7,18 +11,11 @@ import {
   CardFooter,
   CardHeader,
   CardTitle,
-  cn,
   Dialog,
   DirectoryInput,
   Input,
-  LoadingOverlay,
-  Panel,
-  PanelContent,
-  SnakeLoader,
   Tooltip,
-  useNotification,
-  type FileItem,
-} from "@floegence/floe-webapp-core";
+} from "@floegence/floe-webapp-core/ui";
 import { useProtocol } from "@floegence/floe-webapp-protocol";
 import { useRedevenRpc, type FsFileInfo } from "../protocol/redeven_v1";
 import { getEnvPublicIDFromSession, mintEnvEntryTicketForApp } from "../services/controlplaneApi";

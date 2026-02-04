@@ -1,23 +1,9 @@
 import { Index, Show, createEffect, createMemo, createSignal, onCleanup, untrack } from 'solid-js';
-import {
-  Button,
-  Dropdown,
-  type DropdownItem,
-  Input,
-  NumberInput,
-  LoadingOverlay,
-  Panel,
-  PanelContent,
-  Tabs,
-  TabPanel,
-  Terminal,
-  Trash,
-  type TabItem,
-  useCurrentWidgetId,
-  useResolvedFloeConfig,
-  useTheme,
-  useViewActivation,
-} from '@floegence/floe-webapp-core';
+import { useCurrentWidgetId, useResolvedFloeConfig, useTheme, useViewActivation } from '@floegence/floe-webapp-core';
+import { Terminal, Trash } from '@floegence/floe-webapp-core/icons';
+import { Panel, PanelContent } from '@floegence/floe-webapp-core/layout';
+import { LoadingOverlay } from '@floegence/floe-webapp-core/loading';
+import { Button, Dropdown, type DropdownItem, Input, NumberInput, Tabs, TabPanel, type TabItem } from '@floegence/floe-webapp-core/ui';
 import { useProtocol } from '@floegence/floe-webapp-protocol';
 import { useRedevenRpc } from '../protocol/redeven_v1';
 import {

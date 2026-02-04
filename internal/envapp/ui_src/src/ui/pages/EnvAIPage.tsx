@@ -1,20 +1,19 @@
 import { Show, createEffect, createMemo, createResource, createSignal, onCleanup, type Component } from 'solid-js';
+import { useNotification } from '@floegence/floe-webapp-core';
+import { Settings } from '@floegence/floe-webapp-core/icons';
+import { LoadingOverlay } from '@floegence/floe-webapp-core/loading';
+import { Button, Tooltip } from '@floegence/floe-webapp-core/ui';
 import {
-  Button,
   ChatInput,
   ChatProvider,
-  LoadingOverlay,
-  Settings,
-  Tooltip,
   VirtualMessageList,
   useChatContext,
-  useNotification,
   type Attachment,
   type ChatCallbacks,
   type ChatContextValue,
   type Message,
   type StreamEvent,
-} from '@floegence/floe-webapp-core';
+} from '@floegence/floe-webapp-core/chat';
 import { useProtocol } from '@floegence/floe-webapp-protocol';
 import { useEnvContext } from './EnvContext';
 
