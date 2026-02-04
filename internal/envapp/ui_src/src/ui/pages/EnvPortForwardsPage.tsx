@@ -17,12 +17,7 @@ import {
   Tooltip,
 } from '@floegence/floe-webapp-core/ui';
 
-import {
-  getEnvironmentFloeApps,
-  getEnvPublicIDFromSession,
-  mintEnvEntryTicketForApp,
-  type EnvFloeApp,
-} from '../services/controlplaneApi';
+import { getEnvPublicIDFromSession, mintEnvEntryTicketForApp } from '../services/controlplaneApi';
 import { fetchGatewayJSON } from '../services/gatewayApi';
 import { registerSandboxWindow } from '../services/sandboxWindowRegistry';
 import { useEnvContext } from './EnvContext';
@@ -231,7 +226,6 @@ function PlusIcon(props: { class?: string }) {
  */
 function PortForwardCard(props: {
   forward: PortForward;
-  enabled: boolean;
   busy: boolean;
   busyText?: string;
   onOpen: () => void;
@@ -290,11 +284,8 @@ function PortForwardCard(props: {
       </CardContent>
 
       <CardFooter class="pt-2 flex items-center justify-between gap-2 border-t border-border/50">
-        <Tooltip
-          content={!props.enabled ? 'Enable Port Forward in Plugin Market to open' : props.busyText || 'Open in new window'}
-          placement="top"
-        >
-          <Button size="sm" variant="default" onClick={props.onOpen} disabled={!props.enabled || props.busy} class="flex-1">
+        <Tooltip content={props.busyText || 'Open in new window'} placement="top">
+          <Button size="sm" variant="default" onClick={props.onOpen} disabled={props.busy} class="flex-1">
             <Show when={props.busy} fallback={<ExternalLinkIcon class="w-3.5 h-3.5 mr-1" />}>
               <InlineButtonSnakeLoading class="mr-1" />
             </Show>
@@ -459,19 +450,9 @@ export function EnvPortForwardsPage() {
   // Permission checks
   const permissionReady = () => ctx.env.state === 'ready';
   const canExecute = () => Boolean(ctx.env()?.permissions?.can_execute);
-  const canAdmin = () => Boolean(ctx.env()?.permissions?.can_admin);
 
   // Search/filter state
   const [searchQuery, setSearchQuery] = createSignal('');
-
-  // Floe apps resource to check if port forward is enabled
-  const [apps, { refetch: refetchApps }] = createResource<EnvFloeApp[], string>(() => ctx.env_id(), (id) => getEnvironmentFloeApps(id));
-
-  const portForwardEnabled = createMemo(() => {
-    const list = apps() ?? [];
-    const pf = list.find((a) => String(a?.app_id ?? '').trim() === FLOE_APP_PORT_FORWARD);
-    return Boolean(pf?.enabled);
-  });
 
   // Forwards resource
   const [refreshSeq, setRefreshSeq] = createSignal(0);
@@ -609,15 +590,7 @@ export function EnvPortForwardsPage() {
               </div>
             </div>
             <div class="flex items-center gap-2 flex-shrink-0">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => {
-                  bumpRefresh();
-                  void refetchApps();
-                }}
-                disabled={!!busyID() || forwards.loading}
-              >
+              <Button size="sm" variant="outline" onClick={bumpRefresh} disabled={!!busyID() || forwards.loading}>
                 <RefreshIcon class="w-3.5 h-3.5 mr-1" />
                 Refresh
               </Button>
@@ -644,25 +617,6 @@ export function EnvPortForwardsPage() {
                 />
               </svg>
               <span>Execute permission is required to manage port forwards.</span>
-            </div>
-          </Show>
-
-          {/* Port Forward app not enabled warning */}
-          <Show when={apps.state === 'ready' && !portForwardEnabled()}>
-            <div class="flex items-center justify-between gap-3 rounded-md border border-border bg-muted/30 p-3">
-              <div class="flex items-center gap-3 text-xs text-muted-foreground">
-                <svg class="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z"
-                  />
-                </svg>
-                <span>Port Forward is disabled for this environment. Enable it in Plugin Market to open forwards.</span>
-              </div>
-              <Button size="sm" variant="outline" disabled={!canAdmin()} onClick={() => ctx.goTab('market')}>
-                Plugin Market
-              </Button>
             </div>
           </Show>
 
@@ -724,7 +678,6 @@ export function EnvPortForwardsPage() {
                       {(f) => (
                         <PortForwardCard
                           forward={f}
-                          enabled={portForwardEnabled()}
                           busy={busyID() === f.forward_id}
                           busyText={busyID() === f.forward_id ? busyText() : undefined}
                           onOpen={() => void doOpen(f)}
