@@ -212,6 +212,18 @@ func (g *Gateway) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// UX: ensure code-server always opens the codespace's bound workspace directory.
+	//
+	// code-server decides the initial workspace based on ?folder/?workspace (first),
+	// last-opened state, or CLI args. It does not know about the agent registry.
+	// Redirecting here makes the "codespace workspace_path is strongly bound" rule
+	// deterministic for all entry paths (open/refresh/bookmark).
+	if originRole == originRoleCodeSpace {
+		if g.maybeRedirectCodespaceRootToWorkspace(w, r) {
+			return
+		}
+	}
+
 	// Default: proxy to code-server (per-code-space).
 	g.handleCodeServerProxy(w, r)
 }
@@ -537,6 +549,55 @@ func (g *Gateway) handleCodeServerProxy(w http.ResponseWriter, r *http.Request) 
 		},
 	}
 	proxy.ServeHTTP(w, r)
+}
+
+func (g *Gateway) maybeRedirectCodespaceRootToWorkspace(w http.ResponseWriter, r *http.Request) bool {
+	if g == nil || r == nil || g.backend == nil || r.URL == nil {
+		return false
+	}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return false
+	}
+	if r.URL.Path != "/" {
+		return false
+	}
+
+	q := r.URL.Query()
+	if strings.TrimSpace(q.Get("folder")) != "" || strings.TrimSpace(q.Get("workspace")) != "" {
+		return false
+	}
+
+	_, host, err := externalOriginFromRequest(r)
+	if err != nil {
+		return false
+	}
+	codeSpaceID, ok := codeSpaceIDFromExternalHost(host)
+	if !ok {
+		return false
+	}
+
+	spaces, err := g.backend.ListSpaces(r.Context())
+	if err != nil {
+		return false
+	}
+	var workspacePath string
+	for _, sp := range spaces {
+		if sp.CodeSpaceID != codeSpaceID {
+			continue
+		}
+		workspacePath = strings.TrimSpace(sp.WorkspacePath)
+		break
+	}
+	if workspacePath == "" {
+		return false
+	}
+
+	q.Set("folder", workspacePath)
+	q.Del("workspace")
+
+	u := &url.URL{Path: r.URL.Path, RawQuery: q.Encode()}
+	http.Redirect(w, r, u.String(), http.StatusFound)
+	return true
 }
 
 func externalOriginFromRequest(r *http.Request) (scheme string, host string, err error) {
