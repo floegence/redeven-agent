@@ -23,7 +23,7 @@ import (
 const (
 	// TypeID_SYS_MONITOR provides a monitoring snapshot (CPU/network/top processes).
 	//
-	// NOTE: The type_id must match Region Frontend: frontend/region/src/ui/services/typeIds.ts.
+	// NOTE: The type_id must match Env App: internal/envapp/ui_src/src/ui/protocol/redeven_v1/typeIds.ts.
 	TypeID_SYS_MONITOR uint32 = 3001
 )
 
