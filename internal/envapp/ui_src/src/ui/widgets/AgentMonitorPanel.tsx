@@ -5,6 +5,9 @@ import { Panel, PanelContent } from '@floegence/floe-webapp-core/layout';
 import { MonitoringChart } from '@floegence/floe-webapp-core/ui';
 import { useProtocol } from '@floegence/floe-webapp-protocol';
 import { useRedevenRpc, type ActiveSession, type SysMonitorProcessInfo, type SysMonitorSnapshot, type SysMonitorSortBy } from '../protocol/redeven_v1';
+import { useEnvContext } from '../pages/EnvContext';
+import { isPermissionDeniedError } from '../utils/permission';
+import { PermissionEmptyState } from './PermissionEmptyState';
 
 export type AgentMonitorPanelVariant = 'page' | 'deck';
 
@@ -99,6 +102,7 @@ function formatTunnelHost(tunnelURL: string): string {
 export function AgentMonitorPanel(props: AgentMonitorPanelProps) {
   const protocol = useProtocol();
   const rpc = useRedevenRpc();
+  const ctx = useEnvContext();
   const notify = useNotification();
 
   const [sortBy, setSortBy] = createSignal<SysMonitorSortBy>('cpu');
@@ -108,6 +112,7 @@ export function AgentMonitorPanel(props: AgentMonitorPanelProps) {
   const [sessions, setSessions] = createSignal<ActiveSession[]>([]);
   const [sessionsError, setSessionsError] = createSignal<string | null>(null);
   const [loading, setLoading] = createSignal(false);
+  const [executeDenied, setExecuteDenied] = createSignal(false);
 
   const [sample, setSample] = createSignal<chart_sample | null>(null);
   const [sampleSeq, setSampleSeq] = createSignal(0);
@@ -158,6 +163,10 @@ export function AgentMonitorPanel(props: AgentMonitorPanelProps) {
 
   const isConnected = () => protocol.status() === 'connected' && !!protocol.client();
 
+  const permissionReady = () => ctx.env.state === 'ready';
+  const canExecute = () => Boolean(ctx.env()?.permissions?.can_execute);
+  const noExecute = createMemo(() => executeDenied() || (permissionReady() && !canExecute()));
+
   const POLL_MS = 2000;
   const CHART_RESET_THRESHOLD_MS = 30_000;
 
@@ -174,6 +183,8 @@ export function AgentMonitorPanel(props: AgentMonitorPanelProps) {
   };
 
   const fetchOnce = async (opts: { silent?: boolean } = {}) => {
+    if (noExecute()) return;
+
     const seq = ++reqSeq;
     if (!opts.silent) setLoading(true);
 
@@ -212,6 +223,12 @@ export function AgentMonitorPanel(props: AgentMonitorPanelProps) {
         setSampleSeq((v) => v + 1);
       } else {
         const e = monitorRes.reason;
+        if (isPermissionDeniedError(e, 'execute')) {
+          setExecuteDenied(true);
+          setError(null);
+          setSessionsError(null);
+          return;
+        }
         setError(e instanceof Error ? e.message : String(e));
       }
 
@@ -229,7 +246,7 @@ export function AgentMonitorPanel(props: AgentMonitorPanelProps) {
 
   const startPolling = () => {
     stopPolling();
-    if (!isConnected()) return;
+    if (!isConnected() || noExecute()) return;
 
     untrack(() => void fetchOnce({ silent: false }));
 
@@ -241,14 +258,31 @@ export function AgentMonitorPanel(props: AgentMonitorPanelProps) {
   createEffect(() => {
     const connected = isConnected();
     const _sortBy = sortBy();
+    const denied = noExecute();
 
-    if (!connected) {
+    if (!connected || denied) {
       stopPolling();
       return;
     }
 
     setChartToken((v) => v + 1);
     startPolling();
+  });
+
+  createEffect(() => {
+    // Avoid "error-looking" UI when a capability is intentionally not granted.
+    if (protocol.status() !== 'connected' || noExecute()) {
+      setLoading(false);
+      setError(null);
+      setSessionsError(null);
+    }
+  });
+
+  createEffect(() => {
+    // Reset when disconnected so users can reconnect after policy changes.
+    if (protocol.status() !== 'connected') {
+      setExecuteDenied(false);
+    }
   });
 
   onCleanup(() => stopPolling());
@@ -306,15 +340,25 @@ export function AgentMonitorPanel(props: AgentMonitorPanelProps) {
 
   return (
     <div class={containerClass()}>
-      <div class="max-w-7xl mx-auto space-y-3 h-full flex flex-col">
-        <Show when={error()}>
-          <Panel class="border-error/40">
-            <PanelContent class="p-3 text-xs">
-              <div class="text-error font-medium">Monitor request failed</div>
-              <div class="text-muted-foreground break-words mt-1">{error()}</div>
-            </PanelContent>
-          </Panel>
-        </Show>
+      <Show
+        when={!noExecute()}
+        fallback={
+          <PermissionEmptyState
+            variant={props.variant === 'deck' ? 'deck' : 'page'}
+            title="Execute permission required"
+            description="Monitoring is disabled because execute permission is not granted for this session."
+          />
+        }
+      >
+        <div class="max-w-7xl mx-auto space-y-3 h-full flex flex-col">
+          <Show when={error()}>
+            <Panel class="border-error/40">
+              <PanelContent class="p-3 text-xs">
+                <div class="text-error font-medium">Monitor request failed</div>
+                <div class="text-muted-foreground break-words mt-1">{error()}</div>
+              </PanelContent>
+            </Panel>
+          </Show>
 
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-3 flex-shrink-0">
           <Panel class="overflow-hidden">
@@ -528,9 +572,9 @@ export function AgentMonitorPanel(props: AgentMonitorPanelProps) {
             </PanelContent>
           </Panel>
         </div>
-      </div>
-
-      <LoadingOverlay visible={loading() && !data()} message="Loading monitoring data..." />
+          <LoadingOverlay visible={loading() && !data()} message="Loading monitoring data..." />
+        </div>
+      </Show>
     </div>
   );
 }
