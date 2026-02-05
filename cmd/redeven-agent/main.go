@@ -12,6 +12,7 @@ import (
 
 	"github.com/floegence/redeven-agent/internal/agent"
 	"github.com/floegence/redeven-agent/internal/config"
+	"github.com/floegence/redeven-agent/internal/localui"
 	"github.com/floegence/redeven-agent/internal/lockfile"
 )
 
@@ -110,6 +111,7 @@ func runCmd(args []string) {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	cfgPath := fs.String("config", config.DefaultConfigPath(), "Config file path")
 	localUI := fs.Bool("local-ui", false, "Enable unauthenticated local UI on loopback (HTTP)")
+	localUIPort := fs.Int("local-ui-port", defaultLocalUIPort, "Local UI port (default: 23998)")
 	_ = fs.Parse(args)
 
 	cfgPathClean := filepath.Clean(*cfgPath)
@@ -127,8 +129,30 @@ func runCmd(args []string) {
 
 	cfg, err := config.Load(cfgPathClean)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)
-		os.Exit(1)
+		// Local UI mode must be able to start from a clean machine (no bootstrap yet).
+		if *localUI && os.IsNotExist(err) {
+			p, _ := config.ParsePermissionPolicyPreset("")
+			cfg = &config.Config{
+				PermissionPolicy: p,
+				LogFormat:        "json",
+				LogLevel:         "info",
+			}
+			if err := config.Save(cfgPathClean, cfg); err != nil {
+				fmt.Fprintf(os.Stderr, "failed to init default config: %v\n", err)
+				os.Exit(1)
+			}
+		} else {
+			fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	if !*localUI {
+		if err := cfg.ValidateRemoteStrict(); err != nil {
+			fmt.Fprintf(os.Stderr, "agent not bootstrapped: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Hint: run `redeven-agent bootstrap` first.\n")
+			os.Exit(1)
+		}
 	}
 
 	announce := func() {
@@ -137,16 +161,24 @@ func runCmd(args []string) {
 			ControlplaneBaseURL: cfg.ControlplaneBaseURL,
 			EnvironmentID:       cfg.EnvironmentID,
 			LocalUIEnabled:      *localUI,
+			LocalUIPort:         *localUIPort,
 		})
 	}
 
+	var allowedOrigins []string
+	if *localUI {
+		allowedOrigins = localui.AllowedOriginsForPort(*localUIPort)
+	}
+
 	a, err := agent.New(agent.Options{
-		Config:             cfg,
-		ConfigPath:         cfgPathClean,
-		Version:            Version,
-		Commit:             Commit,
-		BuildTime:          BuildTime,
-		OnControlConnected: announce,
+		Config:                cfg,
+		ConfigPath:            cfgPathClean,
+		LocalUIEnabled:        *localUI,
+		LocalUIAllowedOrigins: allowedOrigins,
+		Version:               Version,
+		Commit:                Commit,
+		BuildTime:             BuildTime,
+		OnControlConnected:    announce,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to init agent: %v\n", err)
@@ -163,6 +195,44 @@ func runCmd(args []string) {
 		<-stop
 		cancel()
 	}()
+
+	// Start the Local UI server before running the control channel loop so users can open
+	// the local page immediately (Local-only mode does not require a Region Center).
+	if *localUI {
+		cfgPathAbs, err := filepath.Abs(cfgPathClean)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to resolve config path: %v\n", err)
+			os.Exit(1)
+		}
+		gw := a.CodeGateway()
+		if gw == nil {
+			fmt.Fprintf(os.Stderr, "local ui unavailable: gateway not initialized\n")
+			os.Exit(1)
+		}
+
+		srv, err := localui.New(localui.Options{
+			Port:       *localUIPort,
+			Gateway:    gw,
+			Agent:      a,
+			ConfigPath: cfgPathAbs,
+			Version:    Version,
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to init local ui: %v\n", err)
+			os.Exit(1)
+		}
+		if err := srv.Start(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to start local ui: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Print the local URL immediately, even when Standard Mode is not available.
+		printWelcomeBanner(os.Stderr, welcomeBannerOptions{
+			Version:        Version,
+			LocalUIEnabled: true,
+			LocalUIPort:    srv.Port(),
+		})
+	}
 
 	if err := a.Run(ctx); err != nil && ctx.Err() == nil {
 		fmt.Fprintf(os.Stderr, "agent exited with error: %v\n", err)
