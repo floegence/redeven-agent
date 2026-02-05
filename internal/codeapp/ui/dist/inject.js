@@ -383,6 +383,45 @@
   var ERR_SW_REGISTER_DISABLED = "service worker register is disabled by flowersec-proxy runtime";
   var CODE_SERVER_WEBVIEW_SW_SUFFIX = "/out/vs/workbench/contrib/webview/browser/pre/service-worker.js";
   var CODE_SERVER_PWA_SW_SUFFIX = "/out/browser/serviceWorker.js";
+  var WEBVIEW_PRE_PROXY_FETCH_MSG_TYPE = "redeven:webview_pre_proxy_fetch";
+  var REDEVEN_PROXY_FETCH_MSG_TYPE = "redeven:proxy_fetch";
+  async function forwardProxyFetchToRedevenSW(req, port) {
+    try {
+      const reg = await navigator.serviceWorker.getRegistration("/");
+      const sw = reg?.active;
+      if (!sw) {
+        port.postMessage({ type: "flowersec-proxy:response_error", status: 503, message: "redeven proxy service worker not available" });
+        try {
+          port.close();
+        } catch {
+        }
+        return;
+      }
+      sw.postMessage({ type: REDEVEN_PROXY_FETCH_MSG_TYPE, req }, [port]);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      port.postMessage({ type: "flowersec-proxy:response_error", status: 502, message: msg });
+      try {
+        port.close();
+      } catch {
+      }
+    }
+  }
+  function installWebviewPreProxyFetchForwarder() {
+    const sw = globalThis.navigator?.serviceWorker;
+    if (!sw) return;
+    const current = sw;
+    if (current.__redeven_webview_pre_proxy_forwarder) return;
+    current.__redeven_webview_pre_proxy_forwarder = true;
+    sw.addEventListener("message", (ev) => {
+      const data = ev.data;
+      if (!data || typeof data !== "object") return;
+      if (data.type !== WEBVIEW_PRE_PROXY_FETCH_MSG_TYPE) return;
+      const port = ev.ports?.[0];
+      if (!port) return;
+      void forwardProxyFetchToRedevenSW(data.req, port);
+    });
+  }
   function rejectSWRegister() {
     return Promise.reject(new Error(ERR_SW_REGISTER_DISABLED));
   }
@@ -446,6 +485,7 @@
     const rt = getProxyRuntime();
     if (rt) {
       patchServiceWorkerRegisterForCodeServer();
+      installWebviewPreProxyFetchForwarder();
       installWebSocketPatch({ runtime: rt });
     }
   } catch {
