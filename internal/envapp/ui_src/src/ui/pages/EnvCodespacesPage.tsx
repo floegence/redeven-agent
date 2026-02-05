@@ -18,7 +18,7 @@ import {
 } from "@floegence/floe-webapp-core/ui";
 import { useProtocol } from "@floegence/floe-webapp-protocol";
 import { useRedevenRpc, type FsFileInfo } from "../protocol/redeven_v1";
-import { getEnvPublicIDFromSession, mintEnvEntryTicketForApp } from "../services/controlplaneApi";
+import { getEnvPublicIDFromSession, getLocalRuntime, mintEnvEntryTicketForApp } from "../services/controlplaneApi";
 import { registerSandboxWindow } from "../services/sandboxWindowRegistry";
 
 type SpaceStatus = Readonly<{
@@ -114,6 +114,35 @@ function validateMeta(name: string, description: string): string | null {
 async function openCodespace(codeSpaceID: string, setStatus: (s: string) => void): Promise<void> {
   const envPublicID = getEnvPublicIDFromSession();
   if (!envPublicID) throw new Error("Missing env context. Please reopen from the Redeven Portal.");
+
+  const local = await getLocalRuntime();
+  if (local) {
+    const win = window.open("about:blank", `redeven_codespace_${codeSpaceID}`);
+    if (!win) throw new Error("Popup was blocked. Please allow popups and try again.");
+
+    try {
+      setStatus("Starting codespace...");
+      const sp = await fetchGatewayJSON<SpaceStatus>(`/_redeven_proxy/api/spaces/${encodeURIComponent(codeSpaceID)}/start`, { method: "POST" });
+      const codePort = Number(sp?.code_port ?? 0);
+      if (!Number.isFinite(codePort) || codePort <= 0) throw new Error("Invalid code server port");
+
+      const origin = `http://127.0.0.1:${codePort}`;
+      registerSandboxWindow(win, { origin, floe_app: FLOE_APP_CODE, code_space_id: codeSpaceID, app_path: "/" });
+
+      const folder = String(sp?.workspace_path ?? "").trim();
+      const url = folder ? `${origin}/?folder=${encodeURIComponent(folder)}` : `${origin}/`;
+      setStatus("Opening...");
+      win.location.assign(url);
+      return;
+    } catch (e) {
+      try {
+        win.close();
+      } catch {
+        // ignore
+      }
+      throw e;
+    }
+  }
 
   const origin = codespaceOrigin(codeSpaceID);
   // Keep `?env=` in the final URL so users can copy/paste the link and reopen the codespace later.
