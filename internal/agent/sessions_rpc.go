@@ -50,8 +50,10 @@ func (a *Agent) registerSessionsRPC(r *rpc.Router, meta *session.Meta) {
 	}
 
 	rpctyped.Register[sessionsListActiveReq, sessionsListActiveResp](r, TypeID_SESSIONS_LIST_ACTIVE, func(_ctx context.Context, _ *sessionsListActiveReq) (*sessionsListActiveResp, error) {
-		if meta == nil {
-			return nil, &rpc.Error{Code: 403, Message: "permission denied"}
+		// Treat this as a monitoring capability: listing active sessions leaks user identities
+		// and connection metadata (tunnel URL), so require execute permission.
+		if meta == nil || !meta.CanExecute {
+			return nil, &rpc.Error{Code: 403, Message: "execute permission denied"}
 		}
 		return &sessionsListActiveResp{Sessions: a.listActiveSessionsSnapshot()}, nil
 	})

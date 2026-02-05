@@ -36,9 +36,8 @@ Example:
     "channel_id": "ch_..."
   },
   "permission_policy": {
-    "can_read_files": true,
-    "can_write_files": true,
-    "can_execute": true
+    "schema_version": 1,
+    "local_max": { "read": true, "write": true, "execute": true }
   },
   "ai": {
     "default_model": "openai/gpt-5-mini",
@@ -73,3 +72,6 @@ Some tools are high-risk and require explicit user approval **every time**:
 
 The Env App UI will show an Approve/Reject prompt for each such tool call.
 
+See also:
+- `PERMISSION_POLICY.md` for how the local RWX cap works (and what it does not cap).
+- `CAPABILITY_PERMISSIONS.md` for the complete capability-to-permission mapping.

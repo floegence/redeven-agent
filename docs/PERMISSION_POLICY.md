@@ -8,16 +8,22 @@ Redeven agents enforce permissions from two sources:
 The agent must always compute:
 
 ```
-cap = permission_policy.local_max
-if by_user[user_public_id] exists: cap = cap ∩ by_user[user_public_id]
-if by_app[floe_app] exists: cap = cap ∩ by_app[floe_app]
-effective = session_meta ∩ cap
+cap_rwx = permission_policy.local_max
+if by_user[user_public_id] exists: cap_rwx = cap_rwx ∩ by_user[user_public_id]
+if by_app[floe_app] exists: cap_rwx = cap_rwx ∩ by_app[floe_app]
+
+effective_rwx = session_meta.rwx ∩ cap_rwx
+effective_admin = session_meta.can_admin  // NOTE: not clamped by permission_policy
 ```
 
 The local cap is designed to protect users from:
 - accidental misconfiguration,
 - overly-broad grants,
 - and (in the worst case) compromised control-plane behavior.
+
+Notes:
+- The local cap only applies to `read/write/execute` (RWX).
+- `can_admin` is a separate namespace-level capability bit delivered by Region Center in `session_meta`.
 
 ## Config Schema
 
@@ -58,6 +64,9 @@ Rationale:
 - Terminal requires `execute` and is the core feature.
 - File browsing requires `read` and should work out of the box.
 - Filesystem mutations are high risk and should be explicitly enabled.
+
+Security note:
+- `write=false` only disables FS write-style RPCs (and some destructive gateway actions). If `execute=true`, terminal commands can still mutate files. Use the `read_only` preset for strict read-only (`execute=false, read=true, write=false`).
 
 ## Bootstrap CLI
 
