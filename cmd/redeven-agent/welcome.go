@@ -25,6 +25,7 @@ type welcomeBannerOptions struct {
 	ControlplaneBaseURL string
 	EnvironmentID       string
 	LocalUIEnabled      bool
+	LocalUIPort         int
 }
 
 func printWelcomeBanner(w io.Writer, opts welcomeBannerOptions) {
@@ -61,7 +62,11 @@ func printWelcomeBanner(w io.Writer, opts welcomeBannerOptions) {
 		fmt.Fprintln(w, centerWithAnsi(line, width))
 	}
 	if opts.LocalUIEnabled {
-		localURL := fmt.Sprintf("http://localhost:%d/", defaultLocalUIPort)
+		port := opts.LocalUIPort
+		if port <= 0 {
+			port = defaultLocalUIPort
+		}
+		localURL := fmt.Sprintf("http://localhost:%d/", port)
 		line := fmt.Sprintf("Local URL: %s", styleURL(localURL, useANSI))
 		fmt.Fprintln(w, centerWithAnsi(line, width))
 	}

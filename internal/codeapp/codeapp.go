@@ -44,8 +44,11 @@ type Options struct {
 	FSRoot string
 	Shell  string
 
-	AIConfig                *config.AIConfig
-	Audit                   *auditlog.Store
+	AIConfig *config.AIConfig
+	Audit    *auditlog.Store
+	// LocalUIAllowedOrigins enables the Local UI path for /_redeven_proxy/* (loopback HTTP entry).
+	// When empty, gateway uses the Standard Mode origin semantics only.
+	LocalUIAllowedOrigins   []string
 	ResolveSessionMeta      func(channelID string) (*session.Meta, bool)
 	ResolveSessionTunnelURL func(channelID string) (string, bool)
 }
@@ -169,6 +172,7 @@ func New(ctx context.Context, opts Options) (*Service, error) {
 		ResolveSessionTunnelURL: opts.ResolveSessionTunnelURL,
 		ConfigPath:              strings.TrimSpace(opts.ConfigPath),
 		ListenAddr:              "127.0.0.1:0",
+		LocalUIAllowedOrigins:   opts.LocalUIAllowedOrigins,
 	})
 	if err != nil {
 		_ = reg.Close()
@@ -217,9 +221,19 @@ func (s *Service) GatewayURL() string {
 	return s.gw.URL()
 }
 
+func (s *Service) Gateway() *gateway.Gateway {
+	if s == nil {
+		return nil
+	}
+	return s.gw
+}
+
 func (s *Service) ExternalOriginForCodeSpace(codeSpaceID string) (string, error) {
 	if s == nil {
 		return "", errors.New("nil service")
+	}
+	if strings.TrimSpace(s.cpScheme) == "" || strings.TrimSpace(s.cpHost) == "" {
+		return "", errors.New("controlplane base not configured")
 	}
 	id := strings.TrimSpace(codeSpaceID)
 	if id == "" {
@@ -235,6 +249,9 @@ func (s *Service) ExternalOriginForPortForward(forwardID string) (string, error)
 	if s == nil {
 		return "", errors.New("nil service")
 	}
+	if strings.TrimSpace(s.cpScheme) == "" || strings.TrimSpace(s.cpHost) == "" {
+		return "", errors.New("controlplane base not configured")
+	}
 	id := strings.TrimSpace(forwardID)
 	if id == "" {
 		return "", errors.New("missing forwardID")
@@ -248,6 +265,9 @@ func (s *Service) ExternalOriginForPortForward(forwardID string) (string, error)
 func (s *Service) ExternalOriginForEnvApp(envPublicID string) (string, error) {
 	if s == nil {
 		return "", errors.New("nil service")
+	}
+	if strings.TrimSpace(s.cpScheme) == "" || strings.TrimSpace(s.cpHost) == "" {
+		return "", errors.New("controlplane base not configured")
 	}
 	sandboxID, err := envSandboxIDFromEnvPublicID(envPublicID)
 	if err != nil {
@@ -285,9 +305,13 @@ func envSandboxIDFromEnvPublicID(envPublicID string) (string, error) {
 }
 
 func parseControlplaneBase(raw string) (scheme string, host string, err error) {
+	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return "", "", errors.New("missing ControlplaneBaseURL")
+		// Local UI mode does not require a Region Center. Keep the service usable
+		// without a configured controlplane base.
+		return "", "", nil
 	}
+
 	u, err := url.Parse(raw)
 	if err != nil {
 		return "", "", err
