@@ -28,6 +28,7 @@ Notes:
 - `write` does NOT imply `execute`, and vice versa.
 - `execute=true` does NOT mean "read-only": terminal commands can still mutate files even when `write=false`. For strict read-only, require `write=false` **and** `execute=false`.
 - `admin` is a separate capability dimension from RWX.
+- UIs should treat permission denials as a normal capability state (not an exceptional error): when a capability is not granted (or is locally capped by `permission_policy`), stop polling and show a permission empty state.
 
 ## Effective Permissions (Control-Plane Grant ∩ Endpoint Local Cap)
 
