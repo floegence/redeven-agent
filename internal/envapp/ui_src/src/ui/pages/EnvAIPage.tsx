@@ -1,11 +1,9 @@
-import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, type Component } from 'solid-js';
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, untrack, type Component } from 'solid-js';
 import { cn, useNotification } from '@floegence/floe-webapp-core';
 import {
   Code,
   FileText,
-  MessageSquare,
   Pencil,
-  Plus,
   Settings,
   Sparkles,
   Stop,
@@ -14,7 +12,6 @@ import {
   Zap,
 } from '@floegence/floe-webapp-core/icons';
 import { LoadingOverlay, SnakeLoader } from '@floegence/floe-webapp-core/loading';
-import { Sidebar, SidebarContent, SidebarSection, SidebarItem, SidebarItemList } from '@floegence/floe-webapp-core/layout';
 import { Button, ConfirmDialog, Dialog, Input, Select, Tooltip } from '@floegence/floe-webapp-core/ui';
 import {
   ChatInput,
@@ -29,80 +26,8 @@ import {
 } from '@floegence/floe-webapp-core/chat';
 import { useProtocol } from '@floegence/floe-webapp-protocol';
 import { useEnvContext } from './EnvContext';
-
+import { useAIChatContext, type ListThreadMessagesResponse } from './AIChatContext';
 import { fetchGatewayJSON } from '../services/gatewayApi';
-
-type ModelsResponse = Readonly<{
-  default_model: string;
-  models: Array<{ id: string; label?: string }>;
-}>;
-
-type SettingsResponse = Readonly<{
-  ai: any | null;
-}>;
-
-type ThreadView = Readonly<{
-  thread_id: string;
-  title: string;
-  created_at_unix_ms: number;
-  updated_at_unix_ms: number;
-  last_message_at_unix_ms: number;
-  last_message_preview: string;
-}>;
-
-type ListThreadsResponse = Readonly<{
-  threads: ThreadView[];
-  next_cursor?: string;
-}>;
-
-type CreateThreadResponse = Readonly<{
-  thread: ThreadView;
-}>;
-
-type ListThreadMessagesResponse = Readonly<{
-  messages: Message[];
-  next_before_id?: number;
-  has_more?: boolean;
-  total_returned?: number;
-}>;
-
-const ACTIVE_THREAD_STORAGE_KEY = 'redeven_ai_active_thread_id';
-
-function readPersistedActiveThreadId(): string | null {
-  try {
-    const v = String(localStorage.getItem(ACTIVE_THREAD_STORAGE_KEY) ?? '').trim();
-    return v || null;
-  } catch {
-    return null;
-  }
-}
-
-function persistActiveThreadId(threadId: string): void {
-  try {
-    localStorage.setItem(ACTIVE_THREAD_STORAGE_KEY, threadId);
-  } catch {
-    // ignore
-  }
-}
-
-function fmtRelativeTime(ms: number): string {
-  if (!ms) return 'Never';
-  try {
-    const now = Date.now();
-    const diff = now - ms;
-    const seconds = Math.floor(diff / 1000);
-    const minutes = Math.floor(seconds / 60);
-    const hours = Math.floor(minutes / 60);
-    const days = Math.floor(hours / 24);
-
-    if (days > 0) return `${days}d ago`;
-    if (hours > 0) return `${hours}h ago`;
-    if (minutes > 0) return `${minutes}m ago`;
-    return 'Just now';
-  } catch {
-    return String(ms);
-  }
-}
 
 function createUserMarkdownMessage(markdown: string): Message {
   return {
@@ -257,63 +182,15 @@ const MessageListWithEmptyState: Component<MessageListWithEmptyStateProps> = (pr
   );
 };
 
+/**
+ * AI chat page — renders only the chat area (header + messages + input).
+ * The thread sidebar is managed by Shell's native sidebar via AIChatSidebar.
+ */
 export function EnvAIPage() {
   const env = useEnvContext();
   const protocol = useProtocol();
   const notify = useNotification();
-
-  const settingsKey = createMemo<number | null>(() => (protocol.status() === 'connected' ? env.settingsSeq() : null));
-  const [settings] = createResource<SettingsResponse | null, number | null>(
-    () => settingsKey(),
-    async (k) => (k == null ? null : await fetchGatewayJSON<SettingsResponse>('/_redeven_proxy/api/settings', { method: 'GET' })),
-  );
-  const aiEnabled = createMemo(() => !!settings()?.ai);
-
-  const modelsKey = createMemo<number | null>(() => {
-    if (settingsKey() == null) return null;
-    if (!aiEnabled()) return null;
-    return env.settingsSeq();
-  });
-
-  const [models] = createResource<ModelsResponse | null, number | null>(
-    () => modelsKey(),
-    async (k) => (k == null ? null : await fetchGatewayJSON<ModelsResponse>('/_redeven_proxy/api/ai/models', { method: 'GET' })),
-  );
-
-  const [selectedModel, setSelectedModel] = createSignal('');
-
-  const [threadsSeq, setThreadsSeq] = createSignal(0);
-  const bumpThreadsSeq = () => setThreadsSeq((n) => n + 1);
-
-  const threadsKey = createMemo<number | null>(() => {
-    if (settingsKey() == null) return null;
-    if (!aiEnabled()) return null;
-    return threadsSeq();
-  });
-
-  const [threads] = createResource<ListThreadsResponse | null, number | null>(
-    () => threadsKey(),
-    async (k) =>
-      k == null
-        ? null
-        : await fetchGatewayJSON<ListThreadsResponse>('/_redeven_proxy/api/ai/threads?limit=200', {
-            method: 'GET',
-          }),
-  );
-
-  const [activeThreadId, setActiveThreadId] = createSignal<string | null>(null);
-  const activeThread = createMemo<ThreadView | null>(() => {
-    const list = threads();
-    const id = activeThreadId();
-    if (!list || !id) return null;
-    return list.threads.find((t) => t.thread_id === id) ?? null;
-  });
-  const activeThreadTitle = createMemo(() => {
-    const t = activeThread();
-    return t?.title?.trim() || 'New chat';
-  });
-
-  const [creatingThread, setCreatingThread] = createSignal(false);
+  const ai = useAIChatContext();
 
   const [renameOpen, setRenameOpen] = createSignal(false);
   const [renameTitle, setRenameTitle] = createSignal('');
@@ -326,84 +203,17 @@ export function EnvAIPage() {
   const [hasMessages, setHasMessages] = createSignal(false);
 
   const [runId, setRunId] = createSignal<string | null>(null);
-  const [running, setRunning] = createSignal(false);
 
   let chat: ChatContextValue | null = null;
   const [chatReady, setChatReady] = createSignal(false);
-
-  // Track pending suggestion text to send after chat is ready
-  const [pendingSuggestion, setPendingSuggestion] = createSignal<string | null>(null);
 
   let abortCtrl: AbortController | null = null;
   let assistantText = '';
   let lastMessagesReq = 0;
 
-  const modelsReady = createMemo(() => !!models() && !models.loading && !models.error);
   const canInteract = createMemo(
-    () => protocol.status() === 'connected' && !running() && aiEnabled() && modelsReady() && !!activeThreadId(),
+    () => protocol.status() === 'connected' && !ai.running() && ai.aiEnabled() && ai.modelsReady() && !!ai.activeThreadId(),
   );
-
-  createEffect(() => {
-    const m = models();
-    if (!m) return;
-    const current = selectedModel().trim();
-    if (!current && m.default_model) {
-      setSelectedModel(m.default_model);
-    }
-  });
-
-  createEffect(() => {
-    const id = activeThreadId();
-    if (!id) return;
-    persistActiveThreadId(id);
-  });
-
-  const createThread = async (): Promise<ThreadView> => {
-    const resp = await fetchGatewayJSON<CreateThreadResponse>('/_redeven_proxy/api/ai/threads', {
-      method: 'POST',
-      body: JSON.stringify({ title: '' }),
-    });
-    return resp.thread;
-  };
-
-  // Ensure we always have an active thread when AI is enabled.
-  let initInFlight = false;
-  createEffect(() => {
-    if (protocol.status() !== 'connected' || !aiEnabled()) {
-      setActiveThreadId(null);
-      return;
-    }
-    const list = threads();
-    if (!list || threads.loading || threads.error) return;
-
-    const current = activeThreadId();
-    if (current && list.threads.some((t) => t.thread_id === current)) return;
-
-    const persisted = readPersistedActiveThreadId();
-    const picked =
-      (persisted && list.threads.some((t) => t.thread_id === persisted) ? persisted : null) ||
-      (list.threads[0]?.thread_id ? String(list.threads[0].thread_id) : null);
-
-    if (picked) {
-      setActiveThreadId(picked);
-      return;
-    }
-
-    if (initInFlight) return;
-    initInFlight = true;
-    void (async () => {
-      try {
-        const th = await createThread();
-        bumpThreadsSeq();
-        setActiveThreadId(th.thread_id);
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        notify.error('Failed to create chat', msg || 'Request failed.');
-      } finally {
-        initInFlight = false;
-      }
-    })();
-  });
 
   const loadThreadMessages = async (threadId: string): Promise<void> => {
     if (!chat) return;
@@ -429,17 +239,37 @@ export function EnvAIPage() {
     }
   };
 
-  // Load messages when switching threads (or on initial selection).
+  // Cancel any ongoing run (synchronous abort + best-effort server cancel).
+  const cancelRun = () => {
+    abortCtrl?.abort();
+    abortCtrl = null;
+    ai.setRunning(false);
+
+    const rid = runId();
+    setRunId(null);
+    if (rid) {
+      void fetchGatewayJSON<void>(`/_redeven_proxy/api/ai/runs/${encodeURIComponent(rid)}/cancel`, { method: 'POST' }).catch(() => {});
+    }
+  };
+
+  // Load messages when the active thread changes (or on initial selection).
+  // If a run is in progress, cancel it first before switching.
   createEffect(() => {
     if (!chatReady()) return;
 
-    if (protocol.status() !== 'connected' || !aiEnabled()) {
+    if (protocol.status() !== 'connected' || !ai.aiEnabled()) {
       chat?.clearMessages();
       setHasMessages(false);
       return;
     }
 
-    const tid = activeThreadId();
+    const tid = ai.activeThreadId();
+
+    // Cancel running state without re-tracking `running` signal
+    if (untrack(ai.running)) {
+      cancelRun();
+    }
+
     assistantText = '';
     chat?.clearMessages();
     setHasMessages(false);
@@ -451,9 +281,9 @@ export function EnvAIPage() {
   let lastInjectionSeq = 0;
   createEffect(() => {
     if (!chatReady()) return;
-    if (protocol.status() !== 'connected' || !aiEnabled()) return;
+    if (protocol.status() !== 'connected' || !ai.aiEnabled()) return;
 
-    const tid = activeThreadId();
+    const tid = ai.activeThreadId();
     if (!tid) return;
 
     const seq = env.aiInjectionSeq();
@@ -472,7 +302,7 @@ export function EnvAIPage() {
           method: 'POST',
           body: JSON.stringify({ role: 'user', text: md, format: 'markdown' }),
         });
-        bumpThreadsSeq();
+        ai.bumpThreadsSeq();
         await loadThreadMessages(tid);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -516,29 +346,6 @@ export function EnvAIPage() {
     });
   };
 
-  const cancel = async (opts?: { skipReload?: boolean }) => {
-    const id = runId();
-    const tid = activeThreadId();
-
-    abortCtrl?.abort();
-    abortCtrl = null;
-    setRunning(false);
-    setRunId(null);
-
-    try {
-      if (id) {
-        await fetchGatewayJSON<void>(`/_redeven_proxy/api/ai/runs/${encodeURIComponent(id)}/cancel`, { method: 'POST' });
-      }
-    } catch {
-      // best-effort
-    }
-
-    if (!opts?.skipReload && tid) {
-      bumpThreadsSeq();
-      void loadThreadMessages(tid);
-    }
-  };
-
   const handleStreamEvent = (ev: StreamEvent) => {
     chat?.handleStreamEvent(ev);
 
@@ -548,10 +355,10 @@ export function EnvAIPage() {
     }
     if (ev.type === 'message-end') {
       assistantText = '';
-      setRunning(false);
+      ai.setRunning(false);
       setRunId(null);
       abortCtrl = null;
-      bumpThreadsSeq();
+      ai.bumpThreadsSeq();
       setHasMessages(true);
       return;
     }
@@ -559,10 +366,10 @@ export function EnvAIPage() {
       const msg = String((ev as any).error ?? 'AI error');
       notify.error('AI failed', msg);
       assistantText = '';
-      setRunning(false);
+      ai.setRunning(false);
       setRunId(null);
       abortCtrl = null;
-      bumpThreadsSeq();
+      ai.bumpThreadsSeq();
       return;
     }
   };
@@ -572,41 +379,35 @@ export function EnvAIPage() {
       notify.error('AI unavailable', 'Chat is not ready.');
       return;
     }
-    if (running()) {
+    if (ai.running()) {
       notify.info('AI is busy', 'Please wait for the current run to finish.');
       return;
     }
-    if (!aiEnabled()) {
+    if (!ai.aiEnabled()) {
       notify.error('AI not configured', 'Open Settings to enable AI.');
       return;
     }
-    if (models.error) {
-      const msg = models.error instanceof Error ? models.error.message : String(models.error);
+    if (ai.models.error) {
+      const msg = ai.models.error instanceof Error ? ai.models.error.message : String(ai.models.error);
       notify.error('AI unavailable', msg || 'Failed to load models.');
       return;
     }
-    const model = selectedModel().trim();
+    const model = ai.selectedModel().trim();
     if (!model) {
       notify.error('Missing model', 'Please select a model.');
       return;
     }
 
-    let tid = activeThreadId();
+    let tid = ai.activeThreadId();
     if (!tid) {
       try {
-        setCreatingThread(true);
-        const th = await createThread();
-        bumpThreadsSeq();
-        tid = th.thread_id;
-        setActiveThreadId(tid);
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        notify.error('Failed to create chat', msg || 'Request failed.');
+        await ai.createNewChat();
+        tid = ai.activeThreadId();
+      } catch {
         return;
-      } finally {
-        setCreatingThread(false);
       }
     }
+    if (!tid) return;
 
     const uploaded = attachments.filter((a) => a.status === 'uploaded' && !!String(a.url ?? '').trim());
     const attIn = uploaded.map((a) => ({
@@ -616,7 +417,7 @@ export function EnvAIPage() {
     }));
 
     assistantText = '';
-    setRunning(true);
+    ai.setRunning(true);
     setHasMessages(true);
 
     const userText = String(content ?? '').trim();
@@ -657,7 +458,7 @@ export function EnvAIPage() {
       if (rid) setRunId(rid);
 
       // Thread metadata (title/preview) is updated server-side on each persisted message.
-      bumpThreadsSeq();
+      ai.bumpThreadsSeq();
 
       const stream = resp.body;
       if (!stream) throw new Error('Missing response body');
@@ -686,13 +487,13 @@ export function EnvAIPage() {
       }
 
       // If the stream ended without a terminal event, mark the current message as errored to avoid a stuck UI.
-      if (running()) {
+      if (ai.running()) {
         const streamingMessageId = chat.streamingMessageId?.() ?? null;
         if (streamingMessageId) {
           handleStreamEvent({ type: 'error', messageId: streamingMessageId, error: 'AI connection closed.' } as any);
         } else {
           notify.error('AI failed', 'AI connection closed.');
-          setRunning(false);
+          ai.setRunning(false);
           setRunId(null);
           abortCtrl = null;
         }
@@ -700,7 +501,7 @@ export function EnvAIPage() {
     } catch (e) {
       // Abort is a normal control flow when the user clicks "Stop".
       if (e && typeof e === 'object' && (e as any).name === 'AbortError') {
-        setRunning(false);
+        ai.setRunning(false);
         setRunId(null);
         abortCtrl = null;
         assistantText = '';
@@ -709,7 +510,7 @@ export function EnvAIPage() {
 
       const msg = e instanceof Error ? e.message : String(e);
       notify.error('AI failed', msg || 'Request failed.');
-      setRunning(false);
+      ai.setRunning(false);
       setRunId(null);
       abortCtrl = null;
       assistantText = '';
@@ -733,58 +534,23 @@ export function EnvAIPage() {
     abortCtrl = null;
   });
 
-  const createNewChat = async () => {
-    if (protocol.status() !== 'connected') {
-      notify.error('Not connected', 'Connecting to agent...');
-      return;
-    }
-    if (!aiEnabled()) {
-      notify.error('AI not configured', 'Open Settings to enable AI.');
-      return;
-    }
-    if (running()) {
-      await cancel({ skipReload: true });
-    }
-
-    setCreatingThread(true);
-    try {
-      const th = await createThread();
-      bumpThreadsSeq();
-      setActiveThreadId(th.thread_id);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      notify.error('Failed to create chat', msg || 'Request failed.');
-    } finally {
-      setCreatingThread(false);
-    }
-  };
-
-  const selectThread = async (threadId: string) => {
-    const next = String(threadId ?? '').trim();
-    if (!next || next === activeThreadId()) return;
-    if (running()) {
-      await cancel({ skipReload: true });
-    }
-    setActiveThreadId(next);
-  };
-
   const openRename = () => {
-    const t = activeThread();
+    const t = ai.activeThread();
     setRenameTitle(String(t?.title ?? ''));
     setRenameOpen(true);
   };
 
   const doRename = async () => {
-    const tid = activeThreadId();
+    const tid = ai.activeThreadId();
     if (!tid) return;
 
     setRenaming(true);
     try {
-      await fetchGatewayJSON<{ thread: ThreadView }>(`/_redeven_proxy/api/ai/threads/${encodeURIComponent(tid)}`, {
+      await fetchGatewayJSON<{ thread: any }>(`/_redeven_proxy/api/ai/threads/${encodeURIComponent(tid)}`, {
         method: 'PATCH',
         body: JSON.stringify({ title: renameTitle().trim() }),
       });
-      bumpThreadsSeq();
+      ai.bumpThreadsSeq();
       setRenameOpen(false);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -795,17 +561,17 @@ export function EnvAIPage() {
   };
 
   const doDelete = async () => {
-    const tid = activeThreadId();
+    const tid = ai.activeThreadId();
     if (!tid) return;
 
     setDeleting(true);
     try {
       await fetchGatewayJSON<void>(`/_redeven_proxy/api/ai/threads/${encodeURIComponent(tid)}`, { method: 'DELETE' });
       setDeleteOpen(false);
-      setActiveThreadId(null);
+      ai.setActiveThreadId(null);
       chat?.clearMessages();
       setHasMessages(false);
-      bumpThreadsSeq();
+      ai.bumpThreadsSeq();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       notify.error('Failed to delete chat', msg || 'Request failed.');
@@ -814,30 +580,11 @@ export function EnvAIPage() {
     }
   };
 
-  const modelOptions = createMemo(() => {
-    const m = models();
-    if (!m) return [];
-    return m.models.map((it) => ({
-      value: it.id,
-      label: it.label ?? it.id,
-    }));
-  });
-
   // Handle suggestion click from empty state
   const handleSuggestionClick = (prompt: string) => {
     if (!canInteract()) return;
-    // Trigger the run with the suggestion prompt
     void startRun(prompt, []);
   };
-
-  // Process pending suggestion when chat becomes ready
-  createEffect(() => {
-    const suggestion = pendingSuggestion();
-    if (suggestion && chatReady() && canInteract()) {
-      setPendingSuggestion(null);
-      void startRun(suggestion, []);
-    }
-  });
 
   return (
     <div class="h-full min-h-0 overflow-hidden relative">
@@ -857,209 +604,130 @@ export function EnvAIPage() {
           }}
         />
 
-        <Show when={aiEnabled() || settings.loading}>
-          <div class="flex h-full min-h-0 overflow-hidden">
-            {/* Thread sidebar */}
-            <Show when={aiEnabled()}>
-              <Sidebar width={260}>
-                <SidebarContent>
-                  <SidebarSection
-                    title="AI Chats"
-                    actions={
-                      <Tooltip content="New chat" placement="bottom" delay={0}>
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          icon={Plus}
-                          onClick={() => void createNewChat()}
-                          disabled={creatingThread() || protocol.status() !== 'connected'}
-                          class="w-6 h-6"
-                          aria-label="New chat"
-                        >
-                          <Show when={creatingThread()}>
-                            <InlineButtonSnakeLoading />
-                          </Show>
-                        </Button>
-                      </Tooltip>
-                    }
-                  >
-                    <Show when={!threads.loading} fallback={
-                      <div class="px-2.5 py-2 text-xs text-muted-foreground flex items-center gap-2">
-                        <SnakeLoader size="sm" />
-                        <span>Loading chats...</span>
-                      </div>
-                    }>
-                      <Show
-                        when={!threads.error}
-                        fallback={
-                          <div class="px-2.5 py-2 text-xs text-error">
-                            {threads.error instanceof Error ? threads.error.message : String(threads.error)}
-                          </div>
-                        }
-                      >
-                        <Show
-                          when={(threads()?.threads?.length ?? 0) > 0}
-                          fallback={
-                            <div class="px-2.5 py-4 text-xs text-muted-foreground text-center">
-                              <MessageSquare class="w-8 h-8 mx-auto mb-2 text-muted-foreground/50" />
-                              <div>No chats yet</div>
-                              <div class="mt-1 text-[11px]">Start a new conversation</div>
-                            </div>
-                          }
-                        >
-                          <SidebarItemList>
-                            <For each={threads()?.threads ?? []}>
-                              {(t) => (
-                                <SidebarItem
-                                  icon={<MessageSquare class="w-4 h-4" />}
-                                  active={t.thread_id === activeThreadId()}
-                                  onClick={() => void selectThread(t.thread_id)}
-                                >
-                                  <div class="flex flex-col gap-0.5 min-w-0 w-full">
-                                    <div class="flex items-center justify-between gap-2">
-                                      <span class="truncate">{t.title?.trim() || 'New chat'}</span>
-                                      <span class="text-[10px] text-muted-foreground shrink-0">{fmtRelativeTime(t.updated_at_unix_ms)}</span>
-                                    </div>
-                                    <Show when={!!t.last_message_preview?.trim()}>
-                                      <span class="text-[11px] text-muted-foreground/70 truncate">{t.last_message_preview}</span>
-                                    </Show>
-                                  </div>
-                                </SidebarItem>
-                              )}
-                            </For>
-                          </SidebarItemList>
-                        </Show>
-                      </Show>
-                    </Show>
-                  </SidebarSection>
-                </SidebarContent>
-              </Sidebar>
-            </Show>
+        <Show when={ai.aiEnabled() || ai.settings.loading}>
+          {/* Chat area — sidebar is managed by Shell */}
+          <div class="flex-1 min-w-0 flex flex-col h-full">
+            {/* Header */}
+            <div class="chat-header border-b border-border bg-background/95 backdrop-blur-sm">
+              <div class="chat-header-title flex items-center gap-2 min-w-0">
+                <Sparkles class="w-4 h-4 text-primary shrink-0" />
+                <span class="truncate font-medium">{ai.activeThreadTitle()}</span>
+              </div>
+              <div class="flex items-center gap-1.5">
+                {/* Model selector */}
+                <Show when={ai.aiEnabled() && ai.modelOptions().length > 0}>
+                  <Select
+                    value={ai.selectedModel()}
+                    onChange={ai.setSelectedModel}
+                    options={ai.modelOptions()}
+                    placeholder="Select model..."
+                    disabled={ai.models.loading || !!ai.models.error || ai.running()}
+                    class="min-w-[140px] max-w-[200px] h-7 text-[11px]"
+                  />
+                </Show>
 
-            {/* Chat area */}
-            <div class="flex-1 min-w-0 flex flex-col">
-              {/* Header */}
-              <div class="chat-header border-b border-border bg-background/95 backdrop-blur-sm">
-                <div class="chat-header-title flex items-center gap-2 min-w-0">
-                  <Sparkles class="w-4 h-4 text-primary shrink-0" />
-                  <span class="truncate font-medium">{activeThreadTitle()}</span>
+                {/* Stop button */}
+                <Show when={ai.running()}>
+                  <Tooltip content="Stop generation" placement="bottom" delay={0}>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      icon={Stop}
+                      onClick={() => cancelRun()}
+                      class="h-7 px-2 text-error border-error/30 hover:bg-error/10 hover:text-error"
+                    >
+                      Stop
+                    </Button>
+                  </Tooltip>
+                </Show>
+
+                <div class="w-px h-5 bg-border mx-1" />
+
+                {/* Rename */}
+                <Tooltip content="Rename chat" placement="bottom" delay={0}>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    icon={Pencil}
+                    onClick={() => openRename()}
+                    aria-label="Rename"
+                    disabled={!ai.activeThreadId() || ai.running()}
+                    class="w-7 h-7"
+                  />
+                </Tooltip>
+
+                {/* Delete */}
+                <Tooltip content="Delete chat" placement="bottom" delay={0}>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    icon={Trash}
+                    onClick={() => setDeleteOpen(true)}
+                    aria-label="Delete"
+                    disabled={!ai.activeThreadId() || ai.running()}
+                    class="w-7 h-7 text-muted-foreground hover:text-error hover:bg-error/10"
+                  />
+                </Tooltip>
+
+                {/* Settings button */}
+                <Tooltip content="AI Settings" placement="bottom" delay={0}>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    icon={Settings}
+                    onClick={() => env.openSettings('ai')}
+                    aria-label="Settings"
+                    class="w-7 h-7"
+                  />
+                </Tooltip>
+              </div>
+            </div>
+
+            {/* Error banner: Settings unavailable */}
+            <Show when={ai.settings.error}>
+              <div class="px-4 py-3 text-xs border-b border-border bg-error/5">
+                <div class="flex items-center gap-2 font-medium text-error">
+                  <span class="w-1.5 h-1.5 rounded-full bg-error" />
+                  Settings are not available
                 </div>
-                <div class="flex items-center gap-1.5">
-                  {/* Model selector */}
-                  <Show when={aiEnabled() && modelOptions().length > 0}>
-                    <Select
-                      value={selectedModel()}
-                      onChange={setSelectedModel}
-                      options={modelOptions()}
-                      placeholder="Select model..."
-                      disabled={models.loading || !!models.error || running()}
-                      class="min-w-[140px] max-w-[200px] h-7 text-[11px]"
-                    />
-                  </Show>
-
-                  {/* Stop button */}
-                  <Show when={running()}>
-                    <Tooltip content="Stop generation" placement="bottom" delay={0}>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        icon={Stop}
-                        onClick={() => void cancel()}
-                        class="h-7 px-2 text-error border-error/30 hover:bg-error/10 hover:text-error"
-                      >
-                        Stop
-                      </Button>
-                    </Tooltip>
-                  </Show>
-
-                  <div class="w-px h-5 bg-border mx-1" />
-
-                  {/* Rename */}
-                  <Tooltip content="Rename chat" placement="bottom" delay={0}>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      icon={Pencil}
-                      onClick={() => openRename()}
-                      aria-label="Rename"
-                      disabled={!activeThreadId() || running()}
-                      class="w-7 h-7"
-                    />
-                  </Tooltip>
-
-                  {/* Delete */}
-                  <Tooltip content="Delete chat" placement="bottom" delay={0}>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      icon={Trash}
-                      onClick={() => setDeleteOpen(true)}
-                      aria-label="Delete"
-                      disabled={!activeThreadId() || running()}
-                      class="w-7 h-7 text-muted-foreground hover:text-error hover:bg-error/10"
-                    />
-                  </Tooltip>
-
-                  {/* Settings button */}
-                  <Tooltip content="AI Settings" placement="bottom" delay={0}>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      icon={Settings}
-                      onClick={() => env.openSettings('ai')}
-                      aria-label="Settings"
-                      class="w-7 h-7"
-                    />
-                  </Tooltip>
+                <div class="mt-1 text-muted-foreground">
+                  {ai.settings.error instanceof Error ? ai.settings.error.message : String(ai.settings.error)}
                 </div>
               </div>
+            </Show>
 
-              {/* Error banner: Settings unavailable */}
-              <Show when={settings.error}>
-                <div class="px-4 py-3 text-xs border-b border-border bg-error/5">
-                  <div class="flex items-center gap-2 font-medium text-error">
-                    <span class="w-1.5 h-1.5 rounded-full bg-error" />
-                    Settings are not available
-                  </div>
-                  <div class="mt-1 text-muted-foreground">
-                    {settings.error instanceof Error ? settings.error.message : String(settings.error)}
-                  </div>
+            {/* Error banner: Models unavailable */}
+            <Show when={ai.models.error && ai.aiEnabled()}>
+              <div class="px-4 py-3 text-xs border-b border-border bg-error/5">
+                <div class="flex items-center gap-2 font-medium text-error">
+                  <span class="w-1.5 h-1.5 rounded-full bg-error" />
+                  AI is not available
                 </div>
-              </Show>
-
-              {/* Error banner: Models unavailable */}
-              <Show when={models.error && aiEnabled()}>
-                <div class="px-4 py-3 text-xs border-b border-border bg-error/5">
-                  <div class="flex items-center gap-2 font-medium text-error">
-                    <span class="w-1.5 h-1.5 rounded-full bg-error" />
-                    AI is not available
-                  </div>
-                  <div class="mt-1 text-muted-foreground">
-                    {models.error instanceof Error ? models.error.message : String(models.error)}
-                  </div>
+                <div class="mt-1 text-muted-foreground">
+                  {ai.models.error instanceof Error ? ai.models.error.message : String(ai.models.error)}
                 </div>
-              </Show>
+              </div>
+            </Show>
 
-              {/* Message list with empty state */}
-              <MessageListWithEmptyState
-                hasMessages={hasMessages()}
-                onSuggestionClick={handleSuggestionClick}
-                disabled={!canInteract()}
-                class="flex-1 min-h-0"
-              />
+            {/* Message list with empty state */}
+            <MessageListWithEmptyState
+              hasMessages={hasMessages()}
+              onSuggestionClick={handleSuggestionClick}
+              disabled={!canInteract()}
+              class="flex-1 min-h-0"
+            />
 
-              {/* Input area */}
-              <ChatInput
-                class="chat-container-input border-t border-border"
-                disabled={!canInteract()}
-                placeholder={aiEnabled() ? 'Type a message...' : 'Configure AI in settings to start...'}
-              />
-            </div>
+            {/* Input area */}
+            <ChatInput
+              class="chat-container-input border-t border-border"
+              disabled={!canInteract()}
+              placeholder={ai.aiEnabled() ? 'Type a message...' : 'Configure AI in settings to start...'}
+            />
           </div>
         </Show>
 
         {/* Empty state: AI not configured */}
-        <Show when={settings() && !aiEnabled() && !settings.error && !settings.loading}>
+        <Show when={ai.settings() && !ai.aiEnabled() && !ai.settings.error && !ai.settings.loading}>
           <div class="flex flex-col items-center justify-center h-full p-8 text-center">
             <div class="relative inline-flex items-center justify-center mb-6">
               <div class="absolute inset-0 rounded-full bg-primary/20 animate-[pulse_3s_ease-in-out_infinite]" />
@@ -1135,7 +803,7 @@ export function EnvAIPage() {
         >
           <div class="space-y-2">
             <p class="text-sm">
-              Delete <span class="font-semibold">"{activeThreadTitle()}"</span>?
+              Delete <span class="font-semibold">"{ai.activeThreadTitle()}"</span>?
             </p>
             <p class="text-xs text-muted-foreground">This cannot be undone.</p>
           </div>
@@ -1143,10 +811,10 @@ export function EnvAIPage() {
       </ChatProvider>
 
       <LoadingOverlay visible={protocol.status() !== 'connected'} message="Connecting to agent..." />
-      <LoadingOverlay visible={settings.loading && protocol.status() === 'connected'} message="Loading settings..." />
-      <LoadingOverlay visible={models.loading && aiEnabled()} message="Loading models..." />
-      <LoadingOverlay visible={threads.loading && aiEnabled()} message="Loading chats..." />
-      <LoadingOverlay visible={messagesLoading() && aiEnabled()} message="Loading chat..." />
+      <LoadingOverlay visible={ai.settings.loading && protocol.status() === 'connected'} message="Loading settings..." />
+      <LoadingOverlay visible={ai.models.loading && ai.aiEnabled()} message="Loading models..." />
+      <LoadingOverlay visible={ai.threads.loading && ai.aiEnabled()} message="Loading chats..." />
+      <LoadingOverlay visible={messagesLoading() && ai.aiEnabled()} message="Loading chat..." />
     </div>
   );
 }
