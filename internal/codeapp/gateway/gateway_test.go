@@ -118,9 +118,9 @@ func writeTestConfigWithAI(t *testing.T) string {
     "default_suite": 1
   },
   "ai": {
-    "default_model": "openai/gpt-5-mini",
+    "default_model": { "provider_id": "openai", "model_name": "gpt-5-mini" },
     "providers": [
-      { "id": "openai", "type": "openai", "base_url": "https://api.openai.com/v1", "api_key_env": "REDEVEN_API_KEY" }
+      { "id": "openai", "name": "OpenAI", "type": "openai", "base_url": "https://api.openai.com/v1" }
     ]
   }
 }
