@@ -14,9 +14,8 @@ import (
 //     and injected into the AI sidecar process env at run start.
 //   - Field names are snake_case to match the rest of the agent config surface.
 type AIConfig struct {
-	// DefaultModel is the default model id used by the UI when starting a run.
-	// Format: "<provider_id>/<model_name>" (example: "openai/gpt-5-mini").
-	DefaultModel string `json:"default_model,omitempty"`
+	// DefaultModel is the default model reference used by the UI when starting a run.
+	DefaultModel AIModelRef `json:"default_model"`
 
 	// Models is an explicit allow-list. If empty, the agent will expose only default_model.
 	Models []AIModel `json:"models,omitempty"`
@@ -25,25 +24,31 @@ type AIConfig struct {
 	Providers []AIProvider `json:"providers,omitempty"`
 }
 
+// AIModelRef is a structured model reference (avoids stringly-typed "<provider>/<model>" editing mistakes).
+type AIModelRef struct {
+	ProviderID string `json:"provider_id"`
+	ModelName  string `json:"model_name"`
+}
+
 type AIModel struct {
-	ID    string `json:"id"`
-	Label string `json:"label,omitempty"`
+	ProviderID string `json:"provider_id"`
+	ModelName  string `json:"model_name"`
+	Label      string `json:"label,omitempty"`
 }
 
 type AIProvider struct {
+	// ID is a stable internal id (primary key). It must not change once used for secrets/model routing.
 	ID string `json:"id"`
+
+	// Name is a human-friendly display name (safe to rename at any time).
+	Name string `json:"name,omitempty"`
+
 	// Type is one of: "openai" | "anthropic" | "openai_compatible".
 	Type string `json:"type"`
 
 	// BaseURL overrides the provider endpoint (example: "https://api.openai.com/v1").
 	// When empty, provider defaults apply (except openai_compatible where base_url is required).
 	BaseURL string `json:"base_url,omitempty"`
-
-	// APIKeyEnv is the environment variable name used by the sidecar to read the provider API key.
-	//
-	// This value is fixed to AIProviderAPIKeyEnvFixed to keep the UI intuitive and avoid conflicts
-	// with other local tools.
-	APIKeyEnv string `json:"api_key_env"`
 }
 
 // AIProviderAPIKeyEnvFixed is the fixed environment variable name injected into the AI sidecar process.
@@ -56,9 +61,13 @@ func (c *AIConfig) Validate() error {
 		return errors.New("nil config")
 	}
 
-	defaultModel := strings.TrimSpace(c.DefaultModel)
-	if defaultModel == "" {
+	defaultProviderID := strings.TrimSpace(c.DefaultModel.ProviderID)
+	defaultModelName := strings.TrimSpace(c.DefaultModel.ModelName)
+	if defaultProviderID == "" || defaultModelName == "" {
 		return errors.New("missing default_model")
+	}
+	if strings.Contains(defaultProviderID, "/") || strings.Contains(defaultModelName, "/") {
+		return errors.New("invalid default_model (provider_id/model_name must not contain '/')")
 	}
 
 	// Validate providers.
@@ -72,6 +81,9 @@ func (c *AIConfig) Validate() error {
 		if id == "" {
 			return fmt.Errorf("providers[%d]: missing id", i)
 		}
+		if strings.Contains(id, "/") {
+			return fmt.Errorf("providers[%d]: invalid id %q (must not contain '/')", i, id)
+		}
 		if _, ok := seen[id]; ok {
 			return fmt.Errorf("providers[%d]: duplicate id %q", i, id)
 		}
@@ -82,13 +94,6 @@ func (c *AIConfig) Validate() error {
 		case "openai", "anthropic", "openai_compatible":
 		default:
 			return fmt.Errorf("providers[%d]: invalid type %q", i, t)
-		}
-
-		if strings.TrimSpace(p.APIKeyEnv) == "" {
-			return fmt.Errorf("providers[%d]: missing api_key_env", i)
-		}
-		if strings.TrimSpace(p.APIKeyEnv) != AIProviderAPIKeyEnvFixed {
-			return fmt.Errorf("providers[%d]: api_key_env must be %q", i, AIProviderAPIKeyEnvFixed)
 		}
 
 		baseURL := strings.TrimSpace(p.BaseURL)
@@ -115,33 +120,33 @@ func (c *AIConfig) Validate() error {
 		modelIDs := make(map[string]struct{}, len(c.Models))
 		for i := range c.Models {
 			m := c.Models[i]
-			id := strings.TrimSpace(m.ID)
-			if id == "" {
-				return fmt.Errorf("models[%d]: missing id", i)
+			providerID := strings.TrimSpace(m.ProviderID)
+			modelName := strings.TrimSpace(m.ModelName)
+			if providerID == "" || modelName == "" {
+				return fmt.Errorf("models[%d]: missing provider_id/model_name", i)
 			}
-			if _, ok := modelIDs[id]; ok {
-				return fmt.Errorf("models[%d]: duplicate id %q", i, id)
+			if strings.Contains(providerID, "/") || strings.Contains(modelName, "/") {
+				return fmt.Errorf("models[%d]: invalid provider_id/model_name (must not contain '/')", i)
 			}
-			modelIDs[id] = struct{}{}
 
-			providerID, modelName, ok := strings.Cut(id, "/")
-			if !ok || strings.TrimSpace(providerID) == "" || strings.TrimSpace(modelName) == "" {
-				return fmt.Errorf("models[%d]: invalid id %q (expected <provider>/<model>)", i, id)
-			}
 			if _, ok := seen[providerID]; !ok {
 				return fmt.Errorf("models[%d]: unknown provider %q", i, providerID)
 			}
+
+			id := providerID + "/" + modelName
+			if _, ok := modelIDs[id]; ok {
+				return fmt.Errorf("models[%d]: duplicate model %q", i, id)
+			}
+			modelIDs[id] = struct{}{}
 		}
-		if _, ok := modelIDs[defaultModel]; !ok {
-			return fmt.Errorf("default_model %q must be listed in models when models is set", defaultModel)
+
+		defaultID := defaultProviderID + "/" + defaultModelName
+		if _, ok := modelIDs[defaultID]; !ok {
+			return fmt.Errorf("default_model %q must be listed in models when models is set", defaultID)
 		}
 	} else {
-		providerID, modelName, ok := strings.Cut(defaultModel, "/")
-		if !ok || strings.TrimSpace(providerID) == "" || strings.TrimSpace(modelName) == "" {
-			return fmt.Errorf("invalid default_model %q (expected <provider>/<model>)", defaultModel)
-		}
-		if _, ok := seen[providerID]; !ok {
-			return fmt.Errorf("default_model references unknown provider %q", providerID)
+		if _, ok := seen[defaultProviderID]; !ok {
+			return fmt.Errorf("default_model references unknown provider %q", defaultProviderID)
 		}
 	}
 

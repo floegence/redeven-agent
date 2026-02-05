@@ -79,6 +79,13 @@ type run struct {
 	assistantBlocks          []any
 }
 
+type sidecarProvider struct {
+	ID        string `json:"id"`
+	Type      string `json:"type"`
+	BaseURL   string `json:"base_url,omitempty"`
+	APIKeyEnv string `json:"api_key_env"`
+}
+
 func newRun(opts runOptions) *run {
 	r := &run{
 		log:                opts.Log,
@@ -190,6 +197,17 @@ func (r *run) run(ctx context.Context, req RunRequest) error {
 		return fmt.Errorf("unknown provider %q", providerID)
 	}
 
+	providerDisplay := providerID
+	for _, p := range r.cfg.Providers {
+		if strings.TrimSpace(p.ID) != providerID {
+			continue
+		}
+		if n := strings.TrimSpace(p.Name); n != "" {
+			providerDisplay = n + " (" + providerID + ")"
+		}
+		break
+	}
+
 	if r.resolveProviderKey == nil {
 		_ = r.stream.send(streamEventError{Type: "error", MessageID: r.messageID, Error: "AI provider key resolver not configured"})
 		return errors.New("missing provider key resolver")
@@ -203,7 +221,7 @@ func (r *run) run(ctx context.Context, req RunRequest) error {
 		_ = r.stream.send(streamEventError{
 			Type:      "error",
 			MessageID: r.messageID,
-			Error:     fmt.Sprintf("AI provider %q is missing API key. Open Settings to configure it.", providerID),
+			Error:     fmt.Sprintf("AI provider %q is missing API key. Open Settings to configure it.", providerDisplay),
 		})
 		return fmt.Errorf("missing api key for provider %q", providerID)
 	}
@@ -231,10 +249,24 @@ func (r *run) run(ctx context.Context, req RunRequest) error {
 	defer sc.close()
 
 	// Initialize + start.
+	providers := make([]sidecarProvider, 0, len(r.cfg.Providers))
+	for _, p := range r.cfg.Providers {
+		out := sidecarProvider{
+			ID:        strings.TrimSpace(p.ID),
+			Type:      strings.TrimSpace(p.Type),
+			BaseURL:   strings.TrimSpace(p.BaseURL),
+			APIKeyEnv: config.AIProviderAPIKeyEnvFixed,
+		}
+		if out.ID == "" || out.Type == "" {
+			continue
+		}
+		providers = append(providers, out)
+	}
+
 	_ = sc.send("initialize", map[string]any{
 		"v":         1,
 		"run_id":    r.id,
-		"providers": r.cfg.Providers,
+		"providers": providers,
 	})
 
 	// Resolve attachments (best-effort).
