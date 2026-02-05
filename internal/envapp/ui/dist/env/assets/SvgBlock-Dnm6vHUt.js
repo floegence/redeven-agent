@@ -1,5 +1,0 @@
-<<<<<<<< HEAD:internal/envapp/ui/dist/env/assets/SvgBlock-D1QyzYta.js
-import{v as n,x as i,y as o,C as p}from"./index-DScqdu-F.js";var v=p("<div>");const g=e=>{const s=t=>t.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi,"").replace(/on\w+="[^"]*"/gi,"").replace(/on\w+='[^']*'/gi,"");return(()=>{var t=v();return n(r=>{var a=i("chat-svg-block",e.class),c=s(e.content);return a!==r.e&&o(t,r.e=a),c!==r.t&&(t.innerHTML=r.t=c),r},{e:void 0,t:void 0}),t})()};export{g as SvgBlock};
-========
-import{v as n,x as i,y as o,C as p}from"./index-Cx53HSnX.js";var v=p("<div>");const g=e=>{const s=t=>t.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi,"").replace(/on\w+="[^"]*"/gi,"").replace(/on\w+='[^']*'/gi,"");return(()=>{var t=v();return n(r=>{var a=i("chat-svg-block",e.class),c=s(e.content);return a!==r.e&&o(t,r.e=a),c!==r.t&&(t.innerHTML=r.t=c),r},{e:void 0,t:void 0}),t})()};export{g as SvgBlock};
->>>>>>>> 2ad2695 (refactor(permission): rename can_read_files/can_write_files to can_read/can_write):internal/envapp/ui/dist/env/assets/SvgBlock-Dnm6vHUt.js
