@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/floegence/flowersec/flowersec-go/realtime/ws"
 	"github.com/floegence/redeven-agent/internal/ai"
 	"github.com/floegence/redeven-agent/internal/auditlog"
 	"github.com/floegence/redeven-agent/internal/config"
@@ -43,6 +44,13 @@ type Options struct {
 	// ConfigPath is the absolute path to the agent config file.
 	// It is used to read and persist settings updates initiated from the Env App UI.
 	ConfigPath string
+	// LocalUIAllowedOrigins enables Local UI semantics for the gateway:
+	// - allow loopback browser navigations without Origin
+	// - treat allowed loopback origins as Env App origin for /_redeven_proxy/*
+	// - inject a fixed local session_meta for permission checks (no ch- label required)
+	//
+	// When empty, the gateway runs in Standard Mode only (env-/cs-/pf- origin model).
+	LocalUIAllowedOrigins []string
 }
 
 type Backend interface {
@@ -103,6 +111,8 @@ type Gateway struct {
 	configPath string
 	configMu   sync.Mutex
 
+	localUIAllowedOrigins []string
+
 	distFS fs.FS
 	dist   http.Handler
 
@@ -148,10 +158,23 @@ func New(opts Options) (*Gateway, error) {
 		resolveSessionMeta:      opts.ResolveSessionMeta,
 		resolveSessionTunnelURL: opts.ResolveSessionTunnelURL,
 		configPath:              strings.TrimSpace(opts.ConfigPath),
+		localUIAllowedOrigins:   sanitizeOrigins(opts.LocalUIAllowedOrigins),
 		distFS:                  opts.DistFS,
 		dist:                    dist,
 		addr:                    addr,
 	}, nil
+}
+
+func sanitizeOrigins(in []string) []string {
+	var out []string
+	for _, o := range in {
+		v := strings.TrimSpace(o)
+		if v == "" {
+			continue
+		}
+		out = append(out, v)
+	}
+	return out
 }
 
 func (g *Gateway) Start(ctx context.Context) error {
@@ -214,6 +237,10 @@ func (g *Gateway) URL() string {
 	return "http://" + g.ln.Addr().String()
 }
 
+func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	g.serveHTTP(w, r)
+}
+
 func (g *Gateway) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	if g == nil || r == nil {
 		http.Error(w, "gateway not ready", http.StatusServiceUnavailable)
@@ -221,12 +248,24 @@ func (g *Gateway) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	p := r.URL.Path
 
+	localUI := g.isLocalUIRequest(r)
 	originRole := originRoleFromRequest(r)
+	if localUI {
+		// Local UI mode does not use env-/cs-/pf- origins; treat allowed loopback origins
+		// as Env App origin for /_redeven_proxy/* requests.
+		originRole = originRoleEnv
+	}
 
 	// No caching: UI + inject are agent-versioned and delivered over E2EE.
 	w.Header().Set("Cache-Control", "no-store")
 
 	if strings.HasPrefix(p, "/_redeven_proxy/api/") {
+		// Local UI mode: disable Port Forward management entirely.
+		if localUI && strings.HasPrefix(p, "/_redeven_proxy/api/forwards") {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+
 		// Hardening: only allow management APIs from the Env App origin (env-<env_id>.<region>).
 		// Do not expose them to codespace origins (code-server is untrusted).
 		if originRole != originRoleEnv {
@@ -272,12 +311,55 @@ func (g *Gateway) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		g.handleCodeServerProxy(w, r)
 		return
 	case originRolePortForward:
+		// Local UI mode: port forwarding is disabled.
+		if localUI {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
 		g.handlePortForwardProxy(w, r)
 		return
 	default:
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
+}
+
+func (g *Gateway) isLocalUIRequest(r *http.Request) bool {
+	if g == nil || r == nil {
+		return false
+	}
+	if len(g.localUIAllowedOrigins) == 0 {
+		return false
+	}
+	// Fast path: browser requests include Origin for fetch/XHR/WebSocket; rely on the allow-list.
+	if ws.IsOriginAllowed(r, g.localUIAllowedOrigins, false) {
+		return true
+	}
+	// Fallback: top-level navigations commonly omit Origin; derive it from scheme+Host.
+	if strings.TrimSpace(r.Header.Get("Origin")) != "" {
+		return false
+	}
+	host := strings.TrimSpace(r.Host)
+	if host == "" {
+		return false
+	}
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	if raw := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); raw != "" {
+		// Support a single value or a comma-separated list (use the first).
+		first := strings.TrimSpace(strings.Split(raw, ",")[0])
+		if first != "" {
+			scheme = strings.ToLower(first)
+		}
+	}
+	derived := scheme + "://" + host
+
+	rr := r.Clone(r.Context())
+	rr.Header = r.Header.Clone()
+	rr.Header.Set("Origin", derived)
+	return ws.IsOriginAllowed(rr, g.localUIAllowedOrigins, false)
 }
 
 type apiResp struct {
@@ -419,12 +501,55 @@ const (
 	requiredPermissionWrite
 	requiredPermissionExecute
 	requiredPermissionAdmin
+	requiredPermissionFull
 )
 
 func (g *Gateway) requirePermission(w http.ResponseWriter, r *http.Request, perm requiredPermission) (*session.Meta, bool) {
 	if g == nil || w == nil || r == nil {
 		return nil, false
 	}
+
+	// Local UI mode: inject a fixed local session_meta so the Env App gateway APIs can work
+	// without the env-/ch- origin labels used in Standard Mode.
+	if g.isLocalUIRequest(r) {
+		meta := g.localSessionMeta()
+		if meta == nil {
+			writeJSON(w, http.StatusServiceUnavailable, apiResp{OK: false, Error: "gateway not ready"})
+			return nil, false
+		}
+		switch perm {
+		case requiredPermissionRead:
+			if !meta.CanRead {
+				writeJSON(w, http.StatusForbidden, apiResp{OK: false, Error: "read permission denied"})
+				return nil, false
+			}
+		case requiredPermissionWrite:
+			if !meta.CanWrite {
+				writeJSON(w, http.StatusForbidden, apiResp{OK: false, Error: "write permission denied"})
+				return nil, false
+			}
+		case requiredPermissionExecute:
+			if !meta.CanExecute {
+				writeJSON(w, http.StatusForbidden, apiResp{OK: false, Error: "execute permission denied"})
+				return nil, false
+			}
+		case requiredPermissionAdmin:
+			if !meta.CanAdmin {
+				writeJSON(w, http.StatusForbidden, apiResp{OK: false, Error: "admin permission denied"})
+				return nil, false
+			}
+		case requiredPermissionFull:
+			if !meta.CanRead || !meta.CanWrite || !meta.CanExecute {
+				writeJSON(w, http.StatusForbidden, apiResp{OK: false, Error: "read/write/execute permission denied"})
+				return nil, false
+			}
+		default:
+			writeJSON(w, http.StatusForbidden, apiResp{OK: false, Error: "permission denied"})
+			return nil, false
+		}
+		return meta, true
+	}
+
 	if g.resolveSessionMeta == nil {
 		writeJSON(w, http.StatusServiceUnavailable, apiResp{OK: false, Error: "gateway not ready"})
 		return nil, false
@@ -463,12 +588,51 @@ func (g *Gateway) requirePermission(w http.ResponseWriter, r *http.Request, perm
 			writeJSON(w, http.StatusForbidden, apiResp{OK: false, Error: "admin permission denied"})
 			return nil, false
 		}
+	case requiredPermissionFull:
+		if !meta.CanRead || !meta.CanWrite || !meta.CanExecute {
+			writeJSON(w, http.StatusForbidden, apiResp{OK: false, Error: "read/write/execute permission denied"})
+			return nil, false
+		}
 	default:
 		writeJSON(w, http.StatusForbidden, apiResp{OK: false, Error: "permission denied"})
 		return nil, false
 	}
 
 	return meta, true
+}
+
+const (
+	localEnvPublicID       = "env_local"
+	localNamespacePublicID = "ns_local"
+	localUserPublicID      = "user_local"
+	localUserEmail         = "local@redeven"
+	localFloeAppAgent      = "com.floegence.redeven.agent"
+)
+
+func (g *Gateway) localSessionMeta() *session.Meta {
+	// Best-effort: keep the Local UI usable even if the config is not readable.
+	cap := config.PermissionSet{Read: true, Write: false, Execute: true}
+	if g != nil {
+		if cfg, err := g.loadConfigLocked(); err == nil && cfg != nil && cfg.PermissionPolicy != nil {
+			cap = cfg.PermissionPolicy.ResolveCap(localUserPublicID, localFloeAppAgent)
+		}
+	}
+
+	return &session.Meta{
+		ChannelID:         "local-ui",
+		EndpointID:        localEnvPublicID,
+		FloeApp:           localFloeAppAgent,
+		CodeSpaceID:       "env-ui",
+		SessionKind:       "envapp_rpc",
+		UserPublicID:      localUserPublicID,
+		UserEmail:         localUserEmail,
+		NamespacePublicID: localNamespacePublicID,
+		CanRead:           cap.Read,
+		CanWrite:          cap.Write,
+		CanExecute:        cap.Execute,
+		CanAdmin:          true,
+		CreatedAtUnixMs:   time.Now().UnixMilli(),
+	}
 }
 
 func sanitizeAuditError(err error) string {
@@ -1579,7 +1743,8 @@ func (g *Gateway) handleAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if r.Method == http.MethodPost && action == "start" {
-			meta, ok := g.requirePermission(w, r, requiredPermissionExecute)
+			// code-server is a "full environment" capability; require read+write+execute.
+			meta, ok := g.requirePermission(w, r, requiredPermissionFull)
 			if !ok {
 				return
 			}
@@ -1598,7 +1763,7 @@ func (g *Gateway) handleAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if r.Method == http.MethodPost && action == "stop" {
-			meta, ok := g.requirePermission(w, r, requiredPermissionExecute)
+			meta, ok := g.requirePermission(w, r, requiredPermissionFull)
 			if !ok {
 				return
 			}
