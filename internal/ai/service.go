@@ -202,32 +202,63 @@ func (s *Service) ListModels() (*ModelsResponse, error) {
 		return nil, ErrNotConfigured
 	}
 
+	providerNameByID := make(map[string]string, len(cfg.Providers))
+	for _, p := range cfg.Providers {
+		id := strings.TrimSpace(p.ID)
+		if id == "" {
+			continue
+		}
+		name := strings.TrimSpace(p.Name)
+		if name == "" {
+			name = id
+		}
+		providerNameByID[id] = name
+	}
+
+	defaultProviderID := strings.TrimSpace(cfg.DefaultModel.ProviderID)
+	defaultModelName := strings.TrimSpace(cfg.DefaultModel.ModelName)
+	defaultModelID := strings.TrimSpace(defaultProviderID) + "/" + strings.TrimSpace(defaultModelName)
+
 	out := &ModelsResponse{
-		DefaultModel: strings.TrimSpace(cfg.DefaultModel),
+		DefaultModel: defaultModelID,
 	}
 	if out.DefaultModel == "" {
 		return nil, errors.New("invalid ai config: missing default_model")
 	}
 
 	if len(cfg.Models) == 0 {
-		out.Models = []Model{{ID: out.DefaultModel, Label: out.DefaultModel}}
+		label := out.DefaultModel
+		if pn := strings.TrimSpace(providerNameByID[defaultProviderID]); pn != "" {
+			label = pn + " / " + defaultModelName
+		}
+		out.Models = []Model{{ID: out.DefaultModel, Label: label}}
 		return out, nil
 	}
 
 	out.Models = make([]Model, 0, len(cfg.Models))
 	for _, m := range cfg.Models {
-		id := strings.TrimSpace(m.ID)
-		if id == "" {
+		providerID := strings.TrimSpace(m.ProviderID)
+		modelName := strings.TrimSpace(m.ModelName)
+		if providerID == "" || modelName == "" {
 			continue
 		}
+		id := providerID + "/" + modelName
 		label := strings.TrimSpace(m.Label)
 		if label == "" {
-			label = id
+			if pn := strings.TrimSpace(providerNameByID[providerID]); pn != "" {
+				label = pn + " / " + modelName
+			} else {
+				label = id
+			}
 		}
 		out.Models = append(out.Models, Model{ID: id, Label: label})
 	}
 	if len(out.Models) == 0 {
-		out.Models = []Model{{ID: out.DefaultModel, Label: out.DefaultModel}}
+		label := out.DefaultModel
+		if pn := strings.TrimSpace(providerNameByID[defaultProviderID]); pn != "" {
+			label = pn + " / " + defaultModelName
+		}
+		out.Models = []Model{{ID: out.DefaultModel, Label: label}}
 	}
 	return out, nil
 }
@@ -411,7 +442,7 @@ func (s *Service) StartRun(ctx context.Context, meta *session.Meta, runID string
 
 	model := strings.TrimSpace(req.Model)
 	if model == "" {
-		model = strings.TrimSpace(cfg.DefaultModel)
+		model = strings.TrimSpace(cfg.DefaultModel.ProviderID) + "/" + strings.TrimSpace(cfg.DefaultModel.ModelName)
 	}
 	if model == "" {
 		return errors.New("missing model")
