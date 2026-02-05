@@ -78,7 +78,7 @@ See also: [`PERMISSION_POLICY.md`](PERMISSION_POLICY.md).
 | Sys | Ping | `4001` | `none (session required)` | `internal/sys/service.go` |
 | Sys | Upgrade | `4002` | `admin` | `internal/sys/service.go` |
 | Sys | Restart | `4003` | `admin` | `internal/sys/service.go` |
-| Sessions | List active sessions | `5001` | `execute` | `internal/agent/sessions_rpc.go` |
+| Sessions | List active sessions | `5001` | `read` | `internal/agent/sessions_rpc.go` |
 
 Design notes:
 - Terminal "list/history" are classified as `execute` to avoid subtle privilege splits ("can observe but not control") under the current RWX model.
