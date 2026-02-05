@@ -1,4 +1,4 @@
-import type { ChannelInitGrant } from '@floegence/flowersec-core';
+import type { ChannelInitGrant, DirectConnectInfo } from '@floegence/flowersec-core';
 
 export interface Environment {
   public_id: string;
@@ -30,6 +30,12 @@ export type AgentLatestVersion = {
   fetched_at_ms?: number;
   cache_ttl_ms?: number;
   message?: string;
+};
+
+export type LocalRuntimeInfo = {
+  mode: 'local';
+  env_public_id: string;
+  direct_ws_url?: string;
 };
 
 const SESSION_STORAGE_KEYS = {
@@ -84,9 +90,42 @@ async function fetchJSON<T>(input: RequestInfo | URL, init: RequestInit & { bear
   return (data?.data ?? data) as T;
 }
 
+let cachedLocalRuntime: LocalRuntimeInfo | null | undefined = undefined;
+
+export async function getLocalRuntime(): Promise<LocalRuntimeInfo | null> {
+  if (cachedLocalRuntime !== undefined) return cachedLocalRuntime;
+
+  try {
+    const out = await fetchJSON<LocalRuntimeInfo>('/api/local/runtime', { method: 'GET' });
+    if (out && String((out as any).mode ?? '') === 'local') {
+      cachedLocalRuntime = out;
+      return out;
+    }
+  } catch {
+    // ignore
+  }
+
+  cachedLocalRuntime = null;
+  return null;
+}
+
+export async function mintLocalDirectConnectInfo(): Promise<DirectConnectInfo> {
+  const out = await fetchJSON<DirectConnectInfo>('/api/local/direct/connect_info', { method: 'POST' });
+  const wsURL = String((out as any)?.ws_url ?? '').trim();
+  const channelID = String((out as any)?.channel_id ?? '').trim();
+  if (!wsURL || !channelID) throw new Error('Invalid direct connect info');
+  return out;
+}
+
 export async function getEnvironment(envId: string): Promise<EnvironmentDetail | null> {
   const id = envId.trim();
   if (!id) return null;
+
+  const local = await getLocalRuntime();
+  if (local) {
+    const out = await fetchJSON<EnvironmentDetail>('/api/local/environment', { method: 'GET' });
+    return out ?? null;
+  }
 
   const brokerToken = getBrokerTokenFromSession();
   if (!brokerToken) {
@@ -103,6 +142,12 @@ export async function getEnvironment(envId: string): Promise<EnvironmentDetail |
 export async function getAgentLatestVersion(envId: string): Promise<AgentLatestVersion | null> {
   const id = envId.trim();
   if (!id) return null;
+
+  const local = await getLocalRuntime();
+  if (local) {
+    const out = await fetchJSON<AgentLatestVersion>('/api/local/agent/version/latest', { method: 'GET' });
+    return out ?? null;
+  }
 
   const brokerToken = getBrokerTokenFromSession();
   if (!brokerToken) {

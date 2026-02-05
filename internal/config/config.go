@@ -46,21 +46,13 @@ type Config struct {
 	CodeServerPortMax int `json:"code_server_port_max,omitempty"`
 }
 
-func (c *Config) Validate() error {
+// ValidateLocalMinimal validates config fields required to start the agent in local-only mode.
+//
+// Local-only mode is enabled by `redeven-agent run --local-ui` and must work even when the
+// controlplane credentials are missing (no bootstrap yet).
+func (c *Config) ValidateLocalMinimal() error {
 	if c == nil {
 		return errors.New("nil config")
-	}
-	if strings.TrimSpace(c.ControlplaneBaseURL) == "" {
-		return errors.New("missing controlplane_base_url")
-	}
-	if strings.TrimSpace(c.EnvironmentID) == "" {
-		return errors.New("missing environment_id")
-	}
-	if strings.TrimSpace(c.AgentInstanceID) == "" {
-		return errors.New("missing agent_instance_id")
-	}
-	if c.Direct == nil || strings.TrimSpace(c.Direct.WsUrl) == "" || strings.TrimSpace(c.Direct.ChannelId) == "" {
-		return errors.New("missing direct connect info")
 	}
 	if c.PermissionPolicy != nil {
 		if err := c.PermissionPolicy.Validate(); err != nil {
@@ -71,6 +63,35 @@ func (c *Config) Validate() error {
 		if err := c.AI.Validate(); err != nil {
 			return fmt.Errorf("invalid ai: %w", err)
 		}
+	}
+	return nil
+}
+
+// ValidateRemoteStrict validates the fields required to connect to a Region Center control channel.
+//
+// This is the standard mode requirements: the agent must be fully bootstrapped.
+func (c *Config) ValidateRemoteStrict() error {
+	if c == nil {
+		return errors.New("nil config")
+	}
+	if err := c.ValidateLocalMinimal(); err != nil {
+		return err
+	}
+	if strings.TrimSpace(c.ControlplaneBaseURL) == "" {
+		return errors.New("missing controlplane_base_url")
+	}
+	if strings.TrimSpace(c.EnvironmentID) == "" {
+		return errors.New("missing environment_id")
+	}
+	if strings.TrimSpace(c.AgentInstanceID) == "" {
+		return errors.New("missing agent_instance_id")
+	}
+	if c.Direct == nil ||
+		strings.TrimSpace(c.Direct.WsUrl) == "" ||
+		strings.TrimSpace(c.Direct.ChannelId) == "" ||
+		strings.TrimSpace(c.Direct.E2eePskB64u) == "" ||
+		c.Direct.ChannelInitExpireAtUnixS <= 0 {
+		return errors.New("missing direct connect info")
 	}
 	return nil
 }
@@ -95,7 +116,7 @@ func Load(path string) (*Config, error) {
 	if err := json.Unmarshal(b, &cfg); err != nil {
 		return nil, err
 	}
-	if err := cfg.Validate(); err != nil {
+	if err := cfg.ValidateLocalMinimal(); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
 	return &cfg, nil
@@ -105,7 +126,7 @@ func Save(path string, cfg *Config) error {
 	if cfg == nil {
 		return errors.New("nil config")
 	}
-	if err := cfg.Validate(); err != nil {
+	if err := cfg.ValidateLocalMinimal(); err != nil {
 		return err
 	}
 
