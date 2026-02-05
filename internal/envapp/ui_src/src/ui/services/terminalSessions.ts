@@ -36,12 +36,16 @@ export function getRedevenTerminalSessionsCoordinator(opts: {
   return coordinator;
 }
 
-
-
 export async function refreshRedevenTerminalSessionsCoordinator(): Promise<void> {
   try {
     await singleton?.coordinator.refresh();
   } catch {
     // Best-effort refresh; coordinator handles retry via polling.
   }
+}
+
+export function disposeRedevenTerminalSessionsCoordinator(): void {
+  if (!singleton) return;
+  singleton.coordinator.dispose();
+  singleton = null;
 }

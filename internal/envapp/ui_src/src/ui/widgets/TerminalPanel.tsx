@@ -22,13 +22,16 @@ import {
   createRedevenTerminalTransport,
   getOrCreateTerminalConnId,
 } from '../services/terminalTransport';
-import { getRedevenTerminalSessionsCoordinator } from '../services/terminalSessions';
+import { disposeRedevenTerminalSessionsCoordinator, getRedevenTerminalSessionsCoordinator } from '../services/terminalSessions';
 import {
   ensureTerminalPreferencesInitialized,
   TERMINAL_MAX_FONT_SIZE,
   TERMINAL_MIN_FONT_SIZE,
   useTerminalPreferences,
 } from '../services/terminalPreferences';
+import { useEnvContext } from '../pages/EnvContext';
+import { isPermissionDeniedError } from '../utils/permission';
+import { PermissionEmptyState } from './PermissionEmptyState';
 
 type session_loading_state = 'idle' | 'initializing' | 'attaching' | 'loading_history';
 
@@ -37,6 +40,10 @@ export type TerminalPanelVariant = 'panel' | 'deck';
 export interface TerminalPanelProps {
   variant?: TerminalPanelVariant;
 }
+
+type TerminalPanelInnerProps = TerminalPanelProps & {
+  onExecuteDenied?: () => void;
+};
 
 function buildActiveSessionStorageKey(panelId: string): string {
   return `redeven_terminal_active_session_id:${panelId}`;
@@ -583,7 +590,7 @@ function TerminalSessionView(props: terminal_session_view_props) {
   );
 }
 
-export function TerminalPanel(props: TerminalPanelProps = {}) {
+function TerminalPanelInner(props: TerminalPanelInnerProps = {}) {
   const variant: TerminalPanelVariant = props.variant ?? 'panel';
   const protocol = useProtocol();
   const rpc = useRedevenRpc();
@@ -671,6 +678,12 @@ export function TerminalPanel(props: TerminalPanelProps = {}) {
   const [mountedSessionIds, setMountedSessionIds] = createSignal<Set<string>>(new Set());
   const [error, setError] = createSignal<string | null>(null);
   const [creating, setCreating] = createSignal(false);
+
+  const handleExecuteDenied = (e: unknown): boolean => {
+    if (!isPermissionDeniedError(e, 'execute')) return false;
+    props.onExecuteDenied?.();
+    return true;
+  };
 
   const [historyBytes, setHistoryBytes] = createSignal<number | null>(null);
 
@@ -805,6 +818,7 @@ export function TerminalPanel(props: TerminalPanelProps = {}) {
     try {
       await sessionsCoordinator.refresh();
     } catch (e) {
+      if (handleExecuteDenied(e)) return;
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setSessionsLoading(false);
@@ -828,6 +842,7 @@ export function TerminalPanel(props: TerminalPanelProps = {}) {
         return next;
       });
     } catch (e) {
+      if (handleExecuteDenied(e)) return;
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setCreating(false);
@@ -844,6 +859,7 @@ export function TerminalPanel(props: TerminalPanelProps = {}) {
       await transport.clear(sid);
       await transport.sendInput(sid, '\r', connId);
     } catch (e) {
+      if (handleExecuteDenied(e)) return;
       setError(e instanceof Error ? e.message : String(e));
     }
   };
@@ -890,6 +906,7 @@ export function TerminalPanel(props: TerminalPanelProps = {}) {
         await refreshHistoryStats(sid);
       }
     } catch (e) {
+      if (handleExecuteDenied(e)) return;
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setRefreshing(false);
@@ -901,6 +918,7 @@ export function TerminalPanel(props: TerminalPanelProps = {}) {
       try {
         await sessionsCoordinator.deleteSession(id);
       } catch (e) {
+        if (handleExecuteDenied(e)) return;
         setError(e instanceof Error ? e.message : String(e));
       }
     })();
@@ -917,6 +935,7 @@ export function TerminalPanel(props: TerminalPanelProps = {}) {
         await sessionsCoordinator.refresh();
       } catch (e) {
         if (cancelled) return;
+        if (handleExecuteDenied(e)) return;
         setError(e instanceof Error ? e.message : String(e));
       } finally {
         if (!cancelled) setSessionsLoading(false);
@@ -1394,5 +1413,44 @@ export function TerminalPanel(props: TerminalPanelProps = {}) {
     <Panel class="border border-border rounded-md overflow-hidden h-full">
       <PanelContent class="p-0 h-full">{body}</PanelContent>
     </Panel>
+  );
+}
+
+export function TerminalPanel(props: TerminalPanelProps = {}) {
+  const protocol = useProtocol();
+  const ctx = useEnvContext();
+
+  const [executeDenied, setExecuteDenied] = createSignal(false);
+
+  const permissionReady = () => ctx.env.state === 'ready';
+  const canExecute = () => Boolean(ctx.env()?.permissions?.can_execute);
+  const noExecute = createMemo(() => executeDenied() || (permissionReady() && !canExecute()));
+
+  createEffect(() => {
+    // Reset when disconnected so users can reconnect after policy changes.
+    if (protocol.status() !== 'connected') {
+      setExecuteDenied(false);
+    }
+  });
+
+  createEffect(() => {
+    if (noExecute()) {
+      disposeRedevenTerminalSessionsCoordinator();
+    }
+  });
+
+  return (
+    <Show
+      when={!noExecute()}
+      fallback={
+        <PermissionEmptyState
+          variant={props.variant === 'deck' ? 'deck' : 'panel'}
+          title="Execute permission required"
+          description="Terminal is disabled because execute permission is not granted for this session."
+        />
+      }
+    >
+      <TerminalPanelInner {...props} onExecuteDenied={() => setExecuteDenied(true)} />
+    </Show>
   );
 }

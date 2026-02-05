@@ -50,8 +50,11 @@ func (a *Agent) registerSessionsRPC(r *rpc.Router, meta *session.Meta) {
 	}
 
 	rpctyped.Register[sessionsListActiveReq, sessionsListActiveResp](r, TypeID_SESSIONS_LIST_ACTIVE, func(_ctx context.Context, _ *sessionsListActiveReq) (*sessionsListActiveResp, error) {
-		if meta == nil {
-			return nil, &rpc.Error{Code: 403, Message: "permission denied"}
+		// This is a read-only observability endpoint that returns session metadata.
+		// Gate it by read permission to avoid leaking user identities / connection metadata
+		// when the session is clamped to no permissions.
+		if meta == nil || !meta.CanReadFiles {
+			return nil, &rpc.Error{Code: 403, Message: "read permission denied"}
 		}
 		return &sessionsListActiveResp{Sessions: a.listActiveSessionsSnapshot()}, nil
 	})
