@@ -30,6 +30,8 @@ import { EnvFileBrowserPage } from './pages/EnvFileBrowserPage';
 import { EnvCodespacesPage } from './pages/EnvCodespacesPage';
 import { EnvPortForwardsPage } from './pages/EnvPortForwardsPage';
 import { EnvAIPage } from './pages/EnvAIPage';
+import { AIChatContext, createAIChatContextValue } from './pages/AIChatContext';
+import { AIChatSidebar } from './pages/AIChatSidebar';
 import { EnvSettingsPage } from './pages/EnvSettingsPage';
 import { redevenDeckWidgets } from './deck/redevenDeckWidgets';
 import { useRedevenRpc } from './protocol/redeven_v1';
@@ -78,6 +80,12 @@ function persistActiveTab(tab: EnvNavTab): void {
   } catch {
     // ignore
   }
+}
+
+// Bridge: provides AIChatContext to Shell and its children (requires EnvContext above).
+function AIChatProviderBridge(props: { children: any }) {
+  const ctx = createAIChatContextValue();
+  return <AIChatContext.Provider value={ctx}>{props.children}</AIChatContext.Provider>;
 }
 
 export function EnvAppShell() {
@@ -307,7 +315,7 @@ export function EnvAppShell() {
       }
       return layout.isMobile() ? 'terminal' : 'deck';
     })();
-    layout.setSidebarActiveTab(initial, { openSidebar: false });
+    layout.setSidebarActiveTab(initial, { openSidebar: initial === 'ai' });
     void connect();
   });
 
@@ -390,7 +398,7 @@ export function EnvAppShell() {
     { id: 'files', name: 'File Browser', icon: Files, component: EnvFileBrowserPage, sidebar: { order: 4, fullScreen: true } },
     { id: 'codespaces', name: 'Codespaces', icon: Code, component: EnvCodespacesPage, sidebar: { order: 5, fullScreen: true } },
     { id: 'ports', name: 'Ports', icon: Globe, component: EnvPortForwardsPage, sidebar: { order: 6, fullScreen: true } },
-    { id: 'ai', name: 'AI', icon: Sparkles, component: EnvAIPage, sidebar: { order: 7, fullScreen: true } },
+    { id: 'ai', name: 'AI', icon: Sparkles, component: EnvAIPage, sidebar: { order: 7, fullScreen: false } },
     { id: 'settings', name: 'Settings', icon: Settings, component: EnvSettingsPage, sidebar: { order: 99, fullScreen: true } },
   ];
 
@@ -399,7 +407,7 @@ export function EnvAppShell() {
     persistActiveTab(tab);
     let next = tab;
     if (layout.isMobile() && next === 'deck') next = 'terminal';
-    layout.setSidebarActiveTab(next, { openSidebar: false });
+    layout.setSidebarActiveTab(next, { openSidebar: next === 'ai' });
   };
 
   const activityItems = (): ActivityBarItem[] => {
@@ -599,8 +607,10 @@ export function EnvAppShell() {
       }}
     >
       <FloeRegistryRuntime components={components}>
+        <AIChatProviderBridge>
         <Shell
-          sidebarMode="hidden"
+          sidebarMode="auto"
+          sidebarContent={(activeTab) => activeTab === 'ai' ? <AIChatSidebar /> : <></>}
           logo={
             <Tooltip content="Back to dashboard" placement="bottom" delay={0}>
               <button
@@ -698,6 +708,7 @@ export function EnvAppShell() {
 
           <AuditLogDialog open={auditOpen()} envId={envId()} onClose={() => setAuditOpen(false)} />
         </Shell>
+        </AIChatProviderBridge>
       </FloeRegistryRuntime>
     </EnvContext.Provider>
   );
