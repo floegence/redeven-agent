@@ -19,16 +19,16 @@ Enable the feature by adding an `ai` section to the agent config file (default: 
 
 Notes:
 
-- `default_model` format is `<provider_id>/<model_name>`.
+- `default_model` is a structured reference `{ provider_id, model_name }` (wire id remains `<provider_id>/<model_name>`).
 - `models` is an optional allow-list. If provided, `default_model` must be listed.
 - `providers[].base_url` is optional for `openai` / `anthropic`, and **required** for `openai_compatible`.
-- `providers[].api_key_env` is fixed to `REDEVEN_API_KEY`.
 
 API keys:
 
 - Keys are stored in `~/.redeven-agent/secrets.json` (chmod `0600`) and never returned in plaintext.
 - You can configure keys from the Env App UI: Settings → AI → Provider → API key.
 - Multiple provider keys can be stored at the same time (keyed by `providers[].id`).
+- Keys are injected into the sidecar process env as `REDEVEN_API_KEY` (fixed).
 
 Example:
 
@@ -46,23 +46,23 @@ Example:
     "local_max": { "read": true, "write": true, "execute": true }
   },
   "ai": {
-    "default_model": "openai/gpt-5-mini",
+    "default_model": { "provider_id": "openai", "model_name": "gpt-5-mini" },
     "models": [
-      { "id": "openai/gpt-5-mini", "label": "GPT-5 Mini" },
-      { "id": "anthropic/claude-3-5-sonnet-latest", "label": "Claude Sonnet" }
+      { "provider_id": "openai", "model_name": "gpt-5-mini", "label": "GPT-5 Mini" },
+      { "provider_id": "anthropic", "model_name": "claude-3-5-sonnet-latest", "label": "Claude Sonnet" }
     ],
     "providers": [
       {
         "id": "openai",
         "type": "openai",
-        "base_url": "https://api.openai.com/v1",
-        "api_key_env": "REDEVEN_API_KEY"
+        "name": "OpenAI",
+        "base_url": "https://api.openai.com/v1"
       },
       {
         "id": "anthropic",
         "type": "anthropic",
-        "base_url": "https://api.anthropic.com/v1",
-        "api_key_env": "REDEVEN_API_KEY"
+        "name": "Anthropic",
+        "base_url": "https://api.anthropic.com/v1"
       }
     ]
   }
