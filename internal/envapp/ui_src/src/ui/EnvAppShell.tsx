@@ -42,9 +42,12 @@ import {
   exchangeBrokerToEntryTicket,
   getBrokerTokenFromSession,
   getEnvPublicIDFromSession,
+  getLocalRuntime,
   getEnvironment,
+  mintLocalDirectConnectInfo,
   mintEnvEntryTicketForApp,
   type EnvironmentDetail,
+  type LocalRuntimeInfo,
 } from './services/controlplaneApi';
 
 const FLOE_APP_AGENT = 'com.floegence.redeven.agent';
@@ -101,7 +104,10 @@ export function EnvAppShell() {
 
   widgetRegistry.registerAll(redevenDeckWidgets);
 
-  const [envId] = createSignal(getEnvPublicIDFromSession());
+  const [localRuntime, setLocalRuntime] = createSignal<LocalRuntimeInfo | null>(null);
+  const isLocalMode = createMemo(() => localRuntime() !== null);
+
+  const [envId, setEnvId] = createSignal(getEnvPublicIDFromSession());
 
   const [env] = createResource<EnvironmentDetail | null, string | null>(
     () => envId() || null,
@@ -205,28 +211,42 @@ export function EnvAppShell() {
       return;
     }
 
-    const brokerToken = getBrokerTokenFromSession();
-    if (!brokerToken) {
-      setManualError('Missing broker token. Please reopen from the Redeven Portal.');
-      protocol.disconnect();
-      return;
+    if (!isLocalMode()) {
+      const brokerToken = getBrokerTokenFromSession();
+      if (!brokerToken) {
+        setManualError('Missing broker token. Please reopen from the Redeven Portal.');
+        protocol.disconnect();
+        return;
+      }
     }
 
     setManualError(null);
 
     try {
-      await fn({
-        mode: 'tunnel',
-        getGrant: createGetGrant(),
-        observer,
-        autoReconnect: {
-          enabled: true,
-          // Env App should be resilient to agent restarts and transient network issues.
-          maxAttempts: 1_000_000,
-          initialDelayMs: 500,
-          maxDelayMs: 30_000,
-        },
-      });
+      if (isLocalMode()) {
+        const directInfo = await mintLocalDirectConnectInfo();
+        await fn({
+          mode: 'direct',
+          directInfo,
+          observer,
+          // Direct mode requires a fresh connect_info (channel_id/psk) per attempt.
+          // Disable protocol-level autoReconnect (it reuses directInfo) and let the shell re-mint.
+          autoReconnect: { enabled: false },
+        });
+      } else {
+        await fn({
+          mode: 'tunnel',
+          getGrant: createGetGrant(),
+          observer,
+          autoReconnect: {
+            enabled: true,
+            // Env App should be resilient to agent restarts and transient network issues.
+            maxAttempts: 1_000_000,
+            initialDelayMs: 500,
+            maxDelayMs: 30_000,
+          },
+        });
+      }
     } catch {
       // protocol.error() will expose the last failure; avoid noisy rethrows here.
     }
@@ -305,21 +325,97 @@ export function EnvAppShell() {
     return ensureInFlight;
   };
 
+  // Local UI mode reconnect: directInfo cannot be reused across reconnects (agent restarts, consumed channel_id).
+  // Keep a small backoff loop that re-mints connect_info via the local HTTP API.
+  let localReconnectTimer: number | null = null;
+  let localReconnectBackoffMs = 500;
+
+  const scheduleLocalReconnect = (reason: string) => {
+    if (!isLocalMode()) return;
+    if (localReconnectTimer !== null) return;
+
+    const delay = Math.min(localReconnectBackoffMs, 30_000);
+    const jitter = Math.floor(Math.random() * Math.min(200, Math.max(1, Math.floor(delay / 5))));
+    localReconnectTimer = window.setTimeout(() => {
+      localReconnectTimer = null;
+      if (!isLocalMode()) return;
+      if (protocol.status() === 'connected' || protocol.status() === 'connecting') return;
+
+      void (async () => {
+        // If we never successfully connected, protocol.reconnect() might reject; fall back to connect().
+        if (!protocol.client()) {
+          await connect();
+        } else {
+          await reconnect();
+        }
+      })().finally(() => {
+        localReconnectBackoffMs = Math.min(localReconnectBackoffMs * 2, 30_000);
+        if (isLocalMode() && protocol.status() !== 'connected' && protocol.status() !== 'connecting') {
+          scheduleLocalReconnect('retry');
+        }
+      });
+    }, delay + jitter);
+
+    console.debug('[envapp] local reconnect scheduled', { reason, delayMs: delay + jitter });
+  };
+
+  createEffect(() => {
+    if (!isLocalMode()) return;
+
+    const st = protocol.status();
+    if (st === 'connected') {
+      localReconnectBackoffMs = 500;
+      if (localReconnectTimer !== null) {
+        window.clearTimeout(localReconnectTimer);
+        localReconnectTimer = null;
+      }
+      return;
+    }
+    if (st === 'error' || st === 'disconnected') {
+      scheduleLocalReconnect(st);
+    }
+  });
+
+  onCleanup(() => {
+    if (localReconnectTimer !== null) window.clearTimeout(localReconnectTimer);
+    localReconnectTimer = null;
+  });
+
   onMount(() => {
     layout.setSidebarCollapsed(true);
-    const preferred = readPersistedActiveTab();
-    const initial = (() => {
-      if (preferred) {
-        if (layout.isMobile() && preferred === 'deck') return 'terminal';
-        return preferred;
+    void (async () => {
+      const rt = await getLocalRuntime();
+      if (rt) {
+        setLocalRuntime(rt);
+        const localEnvID = String((rt as any).env_public_id ?? '').trim() || 'env_local';
+        try {
+          sessionStorage.setItem('redeven_env_public_id', localEnvID);
+        } catch {
+          // ignore
+        }
+        setEnvId(localEnvID);
+      } else {
+        setLocalRuntime(null);
+        setEnvId(getEnvPublicIDFromSession());
       }
-      return layout.isMobile() ? 'terminal' : 'deck';
+
+      let preferred = readPersistedActiveTab();
+      if (rt && preferred === 'ports') preferred = 'codespaces';
+
+      const initial = (() => {
+        if (preferred) {
+          if (layout.isMobile() && preferred === 'deck') return 'terminal';
+          return preferred;
+        }
+        return layout.isMobile() ? 'terminal' : 'deck';
+      })();
+      // Mobile downgrade: keep "deck" as the persisted preference while opening "terminal".
+      if (layout.isMobile() && preferred === 'deck' && initial === 'terminal') skipPersistOnce = true;
+      layout.setSidebarActiveTab(initial, { openSidebar: initial === 'ai' });
+      setPersistReady(true);
+
+      await connect();
     })();
-    // Mobile downgrade: keep "deck" as the persisted preference while opening "terminal".
-    if (layout.isMobile() && preferred === 'deck' && initial === 'terminal') skipPersistOnce = true;
-    layout.setSidebarActiveTab(initial, { openSidebar: initial === 'ai' });
-    setPersistReady(true);
-    void connect();
   });
 
   onCleanup(() => {
@@ -330,6 +426,8 @@ export function EnvAppShell() {
   // request a fresh entry_ticket after refresh, without leaking broker_token outside the Env App origin.
   onMount(() => {
     const onMessage = (ev: MessageEvent) => {
+      if (isLocalMode()) return;
+
       const data: any = ev.data;
       if (!data || typeof data !== 'object') return;
       if (String(data.type ?? '') !== 'redeven:boot_ready') return;
@@ -394,16 +492,24 @@ export function EnvAppShell() {
     });
   });
 
-  const components: FloeComponent[] = [
-    { id: 'deck', name: 'Deck', icon: LayoutDashboard, component: EnvDeckPage, sidebar: { order: 1, fullScreen: true } },
-    { id: 'terminal', name: 'Terminal', icon: Terminal, component: EnvTerminalPage, sidebar: { order: 2, fullScreen: true } },
-    { id: 'monitor', name: 'Monitoring', icon: Activity, component: EnvMonitorPage, sidebar: { order: 3, fullScreen: true } },
-    { id: 'files', name: 'File Browser', icon: Files, component: EnvFileBrowserPage, sidebar: { order: 4, fullScreen: true } },
-    { id: 'codespaces', name: 'Codespaces', icon: Code, component: EnvCodespacesPage, sidebar: { order: 5, fullScreen: true } },
-    { id: 'ports', name: 'Ports', icon: Globe, component: EnvPortForwardsPage, sidebar: { order: 6, fullScreen: true } },
-    { id: 'ai', name: 'AI', icon: Sparkles, component: EnvAIPage, sidebar: { order: 7, fullScreen: false, renderIn: 'main' } },
-    { id: 'settings', name: 'Settings', icon: Settings, component: EnvSettingsPage, sidebar: { order: 99, fullScreen: true } },
-  ];
+  const components = createMemo<FloeComponent[]>(() => {
+    const list: FloeComponent[] = [
+      { id: 'deck', name: 'Deck', icon: LayoutDashboard, component: EnvDeckPage, sidebar: { order: 1, fullScreen: true } },
+      { id: 'terminal', name: 'Terminal', icon: Terminal, component: EnvTerminalPage, sidebar: { order: 2, fullScreen: true } },
+      { id: 'monitor', name: 'Monitoring', icon: Activity, component: EnvMonitorPage, sidebar: { order: 3, fullScreen: true } },
+      { id: 'files', name: 'File Browser', icon: Files, component: EnvFileBrowserPage, sidebar: { order: 4, fullScreen: true } },
+      { id: 'codespaces', name: 'Codespaces', icon: Code, component: EnvCodespacesPage, sidebar: { order: 5, fullScreen: true } },
+    ];
+    // Local UI mode disables port forwarding entirely.
+    if (!isLocalMode()) {
+      list.push({ id: 'ports', name: 'Ports', icon: Globe, component: EnvPortForwardsPage, sidebar: { order: 6, fullScreen: true } });
+    }
+    list.push(
+      { id: 'ai', name: 'AI', icon: Sparkles, component: EnvAIPage, sidebar: { order: 7, fullScreen: false, renderIn: 'main' } },
+      { id: 'settings', name: 'Settings', icon: Settings, component: EnvSettingsPage, sidebar: { order: 99, fullScreen: true } },
+    );
+    return list;
+  });
 
   const [persistReady, setPersistReady] = createSignal(false);
   let skipPersistOnce = false;
@@ -423,17 +529,16 @@ export function EnvAppShell() {
   createEffect(() => {
     if (!persistReady()) return;
     const id = layout.sidebarActiveTab();
-    if (
-      id !== 'deck' &&
-      id !== 'terminal' &&
-      id !== 'monitor' &&
-      id !== 'files' &&
-      id !== 'codespaces' &&
-      id !== 'ports' &&
-      id !== 'ai'
-    ) {
-      return;
-    }
+    const allowPorts = !isLocalMode();
+    const isKnown =
+      id === 'deck' ||
+      id === 'terminal' ||
+      id === 'monitor' ||
+      id === 'files' ||
+      id === 'codespaces' ||
+      id === 'ai' ||
+      (allowPorts && id === 'ports');
+    if (!isKnown) return;
     if (skipPersistOnce) {
       skipPersistOnce = false;
       return;
@@ -452,9 +557,11 @@ export function EnvAppShell() {
       { id: 'monitor', icon: Activity, label: 'Monitoring', collapseBehavior: 'preserve' },
       { id: 'files', icon: Files, label: 'File Browser', collapseBehavior: 'preserve' },
       { id: 'codespaces', icon: Code, label: 'Codespaces', collapseBehavior: 'preserve' },
-      { id: 'ports', icon: Globe, label: 'Ports', collapseBehavior: 'preserve' },
-      { id: 'ai', icon: Sparkles, label: 'AI', collapseBehavior: 'toggle' },
     );
+    if (!isLocalMode()) {
+      items.push({ id: 'ports', icon: Globe, label: 'Ports', collapseBehavior: 'preserve' });
+    }
+    items.push({ id: 'ai', icon: Sparkles, label: 'AI', collapseBehavior: 'toggle' });
     return items;
   };
 
@@ -493,8 +600,10 @@ export function EnvAppShell() {
 
   // Env App command palette commands (navigation + common actions).
   // Note: register commands once per Shell lifecycle to avoid duplicates during HMR/remount.
-  onMount(() => {
-    const unregister = cmd.registerAll([
+  createEffect(() => {
+    const local = isLocalMode();
+
+    const list: any[] = [
       {
         id: 'redeven.env.goToDeck',
         title: 'Go to Deck',
@@ -540,7 +649,11 @@ export function EnvAppShell() {
         icon: Code,
         execute: () => goTab('codespaces'),
       },
-      {
+    ];
+
+    // Local UI mode disables port forwarding entirely.
+    if (!local) {
+      list.push({
         id: 'redeven.env.goToPorts',
         title: 'Go to Ports',
         description: 'Open port forwards',
@@ -548,7 +661,10 @@ export function EnvAppShell() {
         keybind: 'mod+shift+o',
         icon: Globe,
         execute: () => goTab('ports'),
-      },
+      });
+    }
+
+    list.push(
       {
         id: 'redeven.env.backToDashboard',
         title: 'Back to Dashboard',
@@ -612,8 +728,9 @@ export function EnvAppShell() {
         icon: Search,
         execute: () => cmd.open(),
       },
-    ]);
+    );
 
+    const unregister = cmd.registerAll(list as any);
     onCleanup(() => unregister());
   });
 
@@ -636,7 +753,7 @@ export function EnvAppShell() {
         injectAiMarkdown,
       }}
     >
-      <FloeRegistryRuntime components={components}>
+      <FloeRegistryRuntime components={components()}>
         <AIChatProviderBridge>
         <Shell
           sidebarMode="auto"

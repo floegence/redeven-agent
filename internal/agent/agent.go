@@ -60,6 +60,14 @@ type Options struct {
 	Config *config.Config
 	// ConfigPath is the path used to load the config file (used to derive state_dir).
 	ConfigPath string
+	// LocalUIEnabled indicates `redeven-agent run --local-ui` is enabled.
+	//
+	// When enabled, the agent is allowed to start even without a full bootstrap config.
+	LocalUIEnabled bool
+	// LocalUIAllowedOrigins is the browser origin allow-list for loopback Local UI mode.
+	// It is forwarded to internal gateways (e.g. /_redeven_proxy/* hardening) so the Local UI works
+	// without affecting Standard Mode origin checks.
+	LocalUIAllowedOrigins []string
 
 	Version   string
 	Commit    string
@@ -97,6 +105,9 @@ type Agent struct {
 
 	controlConnectedOnce sync.Once
 	onControlConnected   func()
+
+	localUIEnabled       bool
+	localUIAllowedOrigin []string
 }
 
 // activeSession represents a server-side Flowersec channel session handled by the agent.
@@ -113,7 +124,7 @@ func New(opts Options) (*Agent, error) {
 	if opts.Config == nil {
 		return nil, errors.New("missing config")
 	}
-	if err := opts.Config.Validate(); err != nil {
+	if err := opts.Config.ValidateLocalMinimal(); err != nil {
 		return nil, err
 	}
 
@@ -164,6 +175,18 @@ func New(opts Options) (*Agent, error) {
 		mon:                monitor.NewService(logger),
 		sessions:           make(map[string]*activeSession),
 		onControlConnected: opts.OnControlConnected,
+		localUIEnabled:     opts.LocalUIEnabled,
+		localUIAllowedOrigin: func() []string {
+			var out []string
+			for _, o := range opts.LocalUIAllowedOrigins {
+				v := strings.TrimSpace(o)
+				if v == "" {
+					continue
+				}
+				out = append(out, v)
+			}
+			return out
+		}(),
 	}
 
 	auditStore, err := auditlog.New(auditlog.Options{Logger: logger, StateDir: stateDir})
@@ -183,16 +206,17 @@ func New(opts Options) (*Agent, error) {
 	})
 
 	codeSvc, err := codeapp.New(context.Background(), codeapp.Options{
-		Logger:              logger,
-		StateDir:            stateDir,
-		ConfigPath:          cfgPathAbs,
-		ControlplaneBaseURL: strings.TrimSpace(opts.Config.ControlplaneBaseURL),
-		CodeServerPortMin:   opts.Config.CodeServerPortMin,
-		CodeServerPortMax:   opts.Config.CodeServerPortMax,
-		FSRoot:              rootAbs,
-		Shell:               shell,
-		AIConfig:            opts.Config.AI,
-		Audit:               auditStore,
+		Logger:                logger,
+		StateDir:              stateDir,
+		ConfigPath:            cfgPathAbs,
+		ControlplaneBaseURL:   strings.TrimSpace(opts.Config.ControlplaneBaseURL),
+		CodeServerPortMin:     opts.Config.CodeServerPortMin,
+		CodeServerPortMax:     opts.Config.CodeServerPortMax,
+		FSRoot:                rootAbs,
+		Shell:                 shell,
+		AIConfig:              opts.Config.AI,
+		Audit:                 auditStore,
+		LocalUIAllowedOrigins: a.localUIAllowedOrigin,
 		ResolveSessionMeta: func(channelID string) (*session.Meta, bool) {
 			if a == nil {
 				return nil, false
@@ -259,6 +283,25 @@ func (a *Agent) Run(ctx context.Context) error {
 		"goos", runtime.GOOS,
 		"goarch", runtime.GOARCH,
 	)
+
+	remoteErr := error(nil)
+	if a.cfg == nil {
+		remoteErr = errors.New("missing config")
+	} else {
+		remoteErr = a.cfg.ValidateRemoteStrict()
+	}
+
+	// Local UI mode must be able to run without a bootstrap config. In that case, we keep the
+	// agent services alive (codeapp gateway, FS, terminal, AI sidecars) but skip the control channel.
+	if remoteErr != nil {
+		if !a.localUIEnabled {
+			return remoteErr
+		}
+		a.log.Info("control channel disabled (agent not bootstrapped); running in local-only mode", "error", remoteErr)
+		<-ctx.Done()
+		a.stopAllSessions()
+		return ctx.Err()
+	}
 
 	backoff := newBackoff()
 	for {
@@ -781,10 +824,16 @@ func (a *Agent) serveRedevenAgentSession(ctx context.Context, sess endpoint.Sess
 		fsSvc.ServeReadFileStream(ctx, stream, meta)
 	})
 
-	// Env App UI static assets are delivered over flowersec-proxy (runtime mode).
-	// Only enable the proxy handler for the reserved Env App codespace_id to avoid
-	// unintentionally exposing it to legacy region UIs.
-	if strings.TrimSpace(meta.CodeSpaceID) == "env-ui" {
+	// Env App UI static assets are delivered over flowersec-proxy (Standard Mode only).
+	// Only enable the proxy handler for the reserved Env App code_space_id, and only when the
+	// session targets the bootstrapped Region environment.
+	//
+	// Local UI uses a fixed env_public_id (env_local) and serves assets over the local HTTP server.
+	envID := ""
+	if a.cfg != nil {
+		envID = strings.TrimSpace(a.cfg.EnvironmentID)
+	}
+	if strings.TrimSpace(meta.CodeSpaceID) == "env-ui" && envID != "" && strings.TrimSpace(meta.EndpointID) == envID {
 		up := strings.TrimSpace(a.code.GatewayURL())
 		if up == "" {
 			return errors.New("codeapp gateway not ready")
