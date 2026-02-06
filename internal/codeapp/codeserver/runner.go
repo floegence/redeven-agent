@@ -217,6 +217,20 @@ func (r *Runner) start(codeSpaceID string, workspacePath string, port int) (*Ins
 		}
 	}
 
+	// code-server defaults the session socket to:
+	//   <user-data-dir>/code-server-ipc.sock
+	// That path can easily exceed the OS limit for Unix domain sockets (notably on macOS),
+	// causing EINVAL and making the extension host unstable. Keep it short and stable.
+	safeID := strings.TrimSpace(codeSpaceID)
+	safeID = strings.ReplaceAll(safeID, "/", "_")
+	safeID = strings.ReplaceAll(safeID, "\\", "_")
+	sessionSocketDir := filepath.Join(strings.TrimSpace(r.stateDir), "socks")
+	if err := os.MkdirAll(sessionSocketDir, 0o700); err != nil {
+		return nil, err
+	}
+	sessionSocketPath := filepath.Join(sessionSocketDir, fmt.Sprintf("cs-%s.sock", safeID))
+	_ = os.Remove(sessionSocketPath) // best-effort cleanup of a stale socket
+
 	stdoutPath := filepath.Join(spaceDir, "stdout.log")
 	stderrPath := filepath.Join(spaceDir, "stderr.log")
 	stdout, _ := os.OpenFile(stdoutPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
@@ -230,6 +244,7 @@ func (r *Runner) start(codeSpaceID string, workspacePath string, port int) (*Ins
 		"--disable-update-check",
 		"--user-data-dir", userDataDir,
 		"--extensions-dir", extensionsDir,
+		"--session-socket", sessionSocketPath,
 		workspacePath,
 	)
 	cmd := exec.Command(execPath, args...)
@@ -249,7 +264,7 @@ func (r *Runner) start(codeSpaceID string, workspacePath string, port int) (*Ins
 	)
 	cmd.Env = env
 
-	r.log.Info("starting code-server", "code_space_id", codeSpaceID, "port", port, "workspace", filepath.Base(workspacePath))
+	r.log.Info("starting code-server", "code_space_id", codeSpaceID, "port", port, "workspace", filepath.Base(workspacePath), "session_socket", sessionSocketPath)
 	// Put the child in its own process group so we can reliably stop code-server and its children.
 	setCmdProcessGroup(cmd)
 	if err := cmd.Start(); err != nil {
