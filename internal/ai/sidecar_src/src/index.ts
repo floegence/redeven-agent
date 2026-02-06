@@ -62,6 +62,34 @@ function notify(method: string, params: any) {
   send({ jsonrpc: '2.0', method, params });
 }
 
+function emitTextDelta(runId: string, delta: string) {
+  const d = String(delta ?? '');
+  if (!d) return;
+
+  // Keep frames well below the agent-side scanner limit (2MB) to avoid disconnects when
+  // a provider returns a large non-streaming completion.
+  const maxChunkChars = 4096;
+  if (d.length <= maxChunkChars) {
+    notify('run.delta', { run_id: runId, delta: d });
+    return;
+  }
+
+  let buf = '';
+  let n = 0;
+  for (const ch of d) {
+    buf += ch;
+    n++;
+    if (n >= maxChunkChars) {
+      notify('run.delta', { run_id: runId, delta: buf });
+      buf = '';
+      n = 0;
+    }
+  }
+  if (buf) {
+    notify('run.delta', { run_id: runId, delta: buf });
+  }
+}
+
 function parseModel(modelId: string): { providerId: string; modelName: string } {
   const raw = String(modelId ?? '').trim();
   const idx = raw.indexOf('/');
@@ -230,9 +258,27 @@ async function runAgent(params: RunStartParams): Promise<void> {
       abortSignal: abort.signal,
     } as any);
 
+    let emitted = '';
     for await (const delta of result.textStream) {
+      if (typeof delta !== 'string') {
+        log('unexpected textStream delta type', typeof delta);
+        continue;
+      }
       if (!delta) continue;
-      notify('run.delta', { run_id: runId, delta });
+      emitted += delta;
+      emitTextDelta(runId, delta);
+    }
+
+    // Some providers/models may not produce any streaming chunks but still return a final text.
+    const finalText = await result.text;
+    if (typeof finalText === 'string' && finalText) {
+      if (!emitted) {
+        emitTextDelta(runId, finalText);
+      } else if (finalText.length > emitted.length && finalText.startsWith(emitted)) {
+        emitTextDelta(runId, finalText.slice(emitted.length));
+      } else if (!finalText.startsWith(emitted)) {
+        log('stream mismatch: emitted text is not a prefix of final text; skipping fallback');
+      }
     }
 
     notify('run.end', { run_id: runId });
