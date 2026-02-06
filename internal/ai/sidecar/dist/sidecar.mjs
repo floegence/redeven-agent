@@ -29480,10 +29480,26 @@ rl.on("line", (line) => {
   }
 });
 process.on("uncaughtException", (e) => {
-  log("uncaughtException", e instanceof Error ? e.stack || e.message : String(e));
+  const msg = e instanceof Error ? e.stack || e.message : String(e);
+  log("uncaughtException", msg);
+  const runId = String(currentRun?.runId ?? "").trim();
+  if (runId) {
+    try {
+      notify("run.error", { run_id: runId, error: "AI sidecar crashed (uncaughtException)." });
+    } catch {
+    }
+  }
   process.exit(1);
 });
 process.on("unhandledRejection", (e) => {
-  log("unhandledRejection", e instanceof Error ? e.stack || e.message : String(e));
+  const msg = e instanceof Error ? e.stack || e.message : String(e);
+  log("unhandledRejection", msg);
+  const runId = String(currentRun?.runId ?? "").trim();
+  if (runId) {
+    try {
+      notify("run.error", { run_id: runId, error: "AI sidecar crashed (unhandledRejection)." });
+    } catch {
+    }
+  }
   process.exit(1);
 });
