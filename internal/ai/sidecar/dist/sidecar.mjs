@@ -29227,6 +29227,29 @@ function send(msg) {
 function notify(method, params) {
   send({ jsonrpc: "2.0", method, params });
 }
+function emitTextDelta(runId, delta) {
+  const d = String(delta ?? "");
+  if (!d) return;
+  const maxChunkChars = 4096;
+  if (d.length <= maxChunkChars) {
+    notify("run.delta", { run_id: runId, delta: d });
+    return;
+  }
+  let buf = "";
+  let n = 0;
+  for (const ch of d) {
+    buf += ch;
+    n++;
+    if (n >= maxChunkChars) {
+      notify("run.delta", { run_id: runId, delta: buf });
+      buf = "";
+      n = 0;
+    }
+  }
+  if (buf) {
+    notify("run.delta", { run_id: runId, delta: buf });
+  }
+}
 function parseModel(modelId) {
   const raw = String(modelId ?? "").trim();
   const idx = raw.indexOf("/");
@@ -29377,9 +29400,25 @@ async function runAgent(params) {
       maxSteps,
       abortSignal: abort.signal
     });
+    let emitted = "";
     for await (const delta of result.textStream) {
+      if (typeof delta !== "string") {
+        log("unexpected textStream delta type", typeof delta);
+        continue;
+      }
       if (!delta) continue;
-      notify("run.delta", { run_id: runId, delta });
+      emitted += delta;
+      emitTextDelta(runId, delta);
+    }
+    const finalText = await result.text;
+    if (typeof finalText === "string" && finalText) {
+      if (!emitted) {
+        emitTextDelta(runId, finalText);
+      } else if (finalText.length > emitted.length && finalText.startsWith(emitted)) {
+        emitTextDelta(runId, finalText.slice(emitted.length));
+      } else if (!finalText.startsWith(emitted)) {
+        log("stream mismatch: emitted text is not a prefix of final text; skipping fallback");
+      }
     }
     notify("run.end", { run_id: runId });
   } catch (e) {
