@@ -56,6 +56,13 @@ const (
 	maintenanceOpRestart int32 = 2
 )
 
+var (
+	// HTTP proxy (flowersec-proxy/http1) is used for streaming features (e.g. AI NDJSON runs).
+	// The default 30s timeout in flowersec-go is too aggressive and can cause upstream disconnects.
+	proxyDefaultTimeout = 10 * time.Minute
+	proxyMaxTimeout     = 30 * time.Minute
+)
+
 type Options struct {
 	Config *config.Config
 	// ConfigPath is the path used to load the config file (used to derive state_dir).
@@ -735,6 +742,8 @@ func (a *Agent) serveCodeAppSession(ctx context.Context, sess endpoint.Session, 
 		Upstream:        up,
 		UpstreamOrigin:  origin,
 		MaxWSFrameBytes: 10 * 1024 * 1024,
+		DefaultTimeout:  &proxyDefaultTimeout,
+		MaxTimeout:      &proxyMaxTimeout,
 	}); err != nil {
 		return err
 	}
@@ -787,6 +796,8 @@ func (a *Agent) servePortForwardSession(ctx context.Context, sess endpoint.Sessi
 		Upstream:        up,
 		UpstreamOrigin:  origin,
 		MaxWSFrameBytes: 10 * 1024 * 1024,
+		DefaultTimeout:  &proxyDefaultTimeout,
+		MaxTimeout:      &proxyMaxTimeout,
 	}); err != nil {
 		return err
 	}
@@ -852,6 +863,8 @@ func (a *Agent) serveRedevenAgentSession(ctx context.Context, sess endpoint.Sess
 			Upstream:        up,
 			UpstreamOrigin:  origin,
 			MaxWSFrameBytes: 10 * 1024 * 1024,
+			DefaultTimeout:  &proxyDefaultTimeout,
+			MaxTimeout:      &proxyMaxTimeout,
 		}); err != nil {
 			return err
 		}
