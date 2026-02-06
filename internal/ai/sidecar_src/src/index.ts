@@ -350,12 +350,35 @@ rl.on('line', (line) => {
 });
 
 process.on('uncaughtException', (e) => {
-  log('uncaughtException', e instanceof Error ? e.stack || e.message : String(e));
+  const msg = e instanceof Error ? e.stack || e.message : String(e);
+  log('uncaughtException', msg);
+
+  // Best-effort: report a terminal error to the Go agent so the UI does not hang on EOF.
+  const runId = String(currentRun?.runId ?? '').trim();
+  if (runId) {
+    try {
+      notify('run.error', { run_id: runId, error: 'AI sidecar crashed (uncaughtException).' });
+    } catch {
+      // ignore
+    }
+  }
+
   process.exit(1);
 });
 
 process.on('unhandledRejection', (e) => {
-  log('unhandledRejection', e instanceof Error ? e.stack || e.message : String(e));
+  const msg = e instanceof Error ? e.stack || e.message : String(e);
+  log('unhandledRejection', msg);
+
+  // Best-effort: report a terminal error to the Go agent so the UI does not hang on EOF.
+  const runId = String(currentRun?.runId ?? '').trim();
+  if (runId) {
+    try {
+      notify('run.error', { run_id: runId, error: 'AI sidecar crashed (unhandledRejection).' });
+    } catch {
+      // ignore
+    }
+  }
+
   process.exit(1);
 });
-
