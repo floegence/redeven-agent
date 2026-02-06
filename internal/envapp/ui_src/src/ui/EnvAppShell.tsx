@@ -766,7 +766,7 @@ export function EnvAppShell() {
                 onClick={() => window.location.assign(`${consoleOrigin()}/dashboard`)}
                 aria-label="Back to dashboard"
               >
-                <img src="/logo.png" alt="Redeven" class="w-6 h-6 object-contain" />
+                <img src={`${import.meta.env.BASE_URL}logo.png`} alt="Redeven" class="w-6 h-6 object-contain" />
               </button>
             </Tooltip>
           }
