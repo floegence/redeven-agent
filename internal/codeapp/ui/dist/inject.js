@@ -383,6 +383,7 @@
   var ERR_SW_REGISTER_DISABLED = "service worker register is disabled by flowersec-proxy runtime";
   var CODE_SERVER_WEBVIEW_SW_SUFFIX = "/out/vs/workbench/contrib/webview/browser/pre/service-worker.js";
   var CODE_SERVER_PWA_SW_SUFFIX = "/out/browser/serviceWorker.js";
+  var REDEVEN_PROXY_SW_SUFFIX = "/_redeven_sw.js";
   var WEBVIEW_PRE_PROXY_FETCH_MSG_TYPE = "redeven:webview_pre_proxy_fetch";
   var REDEVEN_PROXY_FETCH_MSG_TYPE = "redeven:proxy_fetch";
   async function forwardProxyFetchToRedevenSW(req, port) {
@@ -474,6 +475,51 @@
     } catch {
     }
   }
+  function isServiceWorkerScriptPathSuffix(raw, suffix) {
+    const v = String(raw ?? "").trim();
+    if (!v) return false;
+    try {
+      const u = new URL(v);
+      return u.pathname.endsWith(suffix);
+    } catch {
+      return v.endsWith(suffix);
+    }
+  }
+  async function uninstallConflictingServiceWorkersBestEffort() {
+    try {
+      const sw = globalThis.navigator?.serviceWorker;
+      if (!sw) return;
+      const controllerScriptURL = String(sw.controller?.scriptURL ?? "").trim();
+      const controllerIsCodeServerPwa = isServiceWorkerScriptPathSuffix(controllerScriptURL, CODE_SERVER_PWA_SW_SUFFIX);
+      const controllerIsRedevenProxy = isServiceWorkerScriptPathSuffix(controllerScriptURL, REDEVEN_PROXY_SW_SUFFIX);
+      if (!controllerIsCodeServerPwa || controllerIsRedevenProxy) {
+      }
+      const regs = typeof sw.getRegistrations === "function" ? await sw.getRegistrations() : [];
+      let uninstalled = false;
+      for (const reg of regs) {
+        const script = String(reg?.active?.scriptURL ?? reg?.waiting?.scriptURL ?? reg?.installing?.scriptURL ?? "").trim();
+        if (!isServiceWorkerScriptPathSuffix(script, CODE_SERVER_PWA_SW_SUFFIX)) continue;
+        try {
+          const ok = await reg.unregister();
+          uninstalled = uninstalled || ok;
+        } catch {
+        }
+      }
+      if (uninstalled && controllerIsCodeServerPwa && !controllerIsRedevenProxy) {
+        try {
+          const key = "redeven_sw_cleanup_ts";
+          const last = Number(sessionStorage.getItem(key) ?? "0");
+          const now = Date.now();
+          if (!Number.isFinite(last) || now - last > 1e4) {
+            sessionStorage.setItem(key, String(now));
+            window.top?.location.reload();
+          }
+        } catch {
+        }
+      }
+    } catch {
+    }
+  }
   function getProxyRuntime() {
     const top = window.top;
     if (!top) return null;
@@ -482,6 +528,7 @@
     return rt;
   }
   try {
+    void uninstallConflictingServiceWorkersBestEffort();
     const rt = getProxyRuntime();
     if (rt) {
       patchServiceWorkerRegisterForCodeServer();
