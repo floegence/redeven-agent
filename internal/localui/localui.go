@@ -152,6 +152,10 @@ func (s *Server) Start(ctx context.Context) error {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleRoot)
+	// Browsers may request these root-level assets regardless of the actual SPA base path.
+	// Keep them available to avoid noisy 404s in Local UI mode.
+	mux.HandleFunc("/favicon.ico", s.handleFavicon)
+	mux.HandleFunc("/logo.png", s.handleLogo)
 	mux.HandleFunc("/api/local/runtime", s.handleRuntime)
 	mux.HandleFunc("/api/local/direct/connect_info", s.handleConnectInfo)
 	mux.HandleFunc("/api/local/environment", s.handleEnvironment)
@@ -226,6 +230,30 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/_redeven_proxy/env/", http.StatusFound)
+}
+
+func (s *Server) handleFavicon(w http.ResponseWriter, r *http.Request) {
+	if s == nil || w == nil || r == nil {
+		return
+	}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	// The Env App ships its own favicon under the embedded gateway base path.
+	http.Redirect(w, r, "/_redeven_proxy/env/favicon.svg", http.StatusFound)
+}
+
+func (s *Server) handleLogo(w http.ResponseWriter, r *http.Request) {
+	if s == nil || w == nil || r == nil {
+		return
+	}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	// Keep the legacy root-level logo URL working so UI code doesn't need to special-case Local UI mode.
+	http.Redirect(w, r, "/_redeven_proxy/env/logo.png", http.StatusFound)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
