@@ -151,11 +151,13 @@ async function openCodespace(codeSpaceID: string, setStatus: (s: string) => void
   const win = window.open("about:blank", `redeven_codespace_${codeSpaceID}`);
   if (!win) throw new Error("Popup was blocked. Please allow popups and try again.");
 
-  registerSandboxWindow(win, { origin, floe_app: FLOE_APP_CODE, code_space_id: codeSpaceID, app_path: "/" });
-
   try {
     setStatus("Starting codespace...");
-    await fetchGatewayJSON<SpaceStatus>(`/_redeven_proxy/api/spaces/${encodeURIComponent(codeSpaceID)}/start`, { method: "POST" });
+    const sp = await fetchGatewayJSON<SpaceStatus>(`/_redeven_proxy/api/spaces/${encodeURIComponent(codeSpaceID)}/start`, { method: "POST" });
+
+    const folder = String(sp?.workspace_path ?? "").trim();
+    const appPath = folder ? `/?folder=${encodeURIComponent(folder)}` : "/";
+    registerSandboxWindow(win, { origin, floe_app: FLOE_APP_CODE, code_space_id: codeSpaceID, app_path: appPath });
 
     setStatus("Requesting entry ticket...");
     const entryTicket = await mintEnvEntryTicketForApp({ envId: envPublicID, floeApp: FLOE_APP_CODE, codeSpaceId: codeSpaceID });
@@ -165,7 +167,7 @@ async function openCodespace(codeSpaceID: string, setStatus: (s: string) => void
       env_public_id: envPublicID,
       floe_app: FLOE_APP_CODE,
       code_space_id: codeSpaceID,
-      app_path: "/",
+      app_path: appPath,
       entry_ticket: entryTicket,
     };
     const encoded = base64UrlEncode(JSON.stringify(init));
