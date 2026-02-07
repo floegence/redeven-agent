@@ -150,22 +150,38 @@ func (s *Server) Start(ctx context.Context) error {
 		return fmt.Errorf("listen %s: %w", addr6, err)
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", s.handleRoot)
+	baseMux := http.NewServeMux()
+	baseMux.HandleFunc("/", s.handleRoot)
 	// Browsers may request these root-level assets regardless of the actual SPA base path.
 	// Keep them available to avoid noisy 404s in Local UI mode.
-	mux.HandleFunc("/favicon.ico", s.handleFavicon)
-	mux.HandleFunc("/logo.png", s.handleLogo)
-	mux.HandleFunc("/api/local/runtime", s.handleRuntime)
-	mux.HandleFunc("/api/local/direct/connect_info", s.handleConnectInfo)
-	mux.HandleFunc("/api/local/environment", s.handleEnvironment)
-	mux.HandleFunc("/api/local/agent/version/latest", s.handleLatestVersion)
-	mux.HandleFunc("/_redeven_direct/ws", s.handleDirectWS)
+	baseMux.HandleFunc("/favicon.ico", s.handleFavicon)
+	baseMux.HandleFunc("/logo.png", s.handleLogo)
+	baseMux.HandleFunc("/api/local/runtime", s.handleRuntime)
+	baseMux.HandleFunc("/api/local/direct/connect_info", s.handleConnectInfo)
+	baseMux.HandleFunc("/api/local/environment", s.handleEnvironment)
+	baseMux.HandleFunc("/api/local/agent/version/latest", s.handleLatestVersion)
+	baseMux.HandleFunc("/_redeven_direct/ws", s.handleDirectWS)
 	// Reuse the existing gateway for Env App UI + management APIs.
-	mux.Handle("/_redeven_proxy/", s.gw)
+	baseMux.Handle("/_redeven_proxy/", s.gw)
+
+	// Local UI serves the Env App at:
+	//   http://localhost:<port>/_redeven_proxy/env/
+	//
+	// To keep codespace origin isolation (and reuse the gateway shims/hardening),
+	// we also allow sandbox-like loopback hosts:
+	//   http://cs-<code_space_id>.localhost:<port>/
+	//
+	// These requests should be handled by the codeapp gateway, not the local UI mux.
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isSandboxLoopbackHostBestEffort(r.Host) {
+			s.gw.ServeHTTP(w, r)
+			return
+		}
+		baseMux.ServeHTTP(w, r)
+	})
 
 	s.srv = &http.Server{
-		Handler:           mux,
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	s.ln4 = ln4
@@ -191,6 +207,19 @@ func (s *Server) Start(ctx context.Context) error {
 
 	s.log.Info("local ui listening", "port", s.port)
 	return nil
+}
+
+func isSandboxLoopbackHostBestEffort(host string) bool {
+	raw := strings.TrimSpace(host)
+	if raw == "" {
+		return false
+	}
+	hostNoPort := raw
+	if i := strings.IndexByte(hostNoPort, ':'); i >= 0 {
+		hostNoPort = hostNoPort[:i]
+	}
+	first := strings.ToLower(strings.TrimSpace(strings.Split(hostNoPort, ".")[0]))
+	return strings.HasPrefix(first, "cs-") || strings.HasPrefix(first, "pf-")
 }
 
 func (s *Server) Close() error {
