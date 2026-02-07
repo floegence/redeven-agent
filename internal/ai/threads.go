@@ -106,6 +106,7 @@ func (s *Service) GetThread(ctx context.Context, meta *session.Meta, threadID st
 	return &ThreadView{
 		ThreadID:            strings.TrimSpace(th.ThreadID),
 		Title:               strings.TrimSpace(th.Title),
+		ModelID:             strings.TrimSpace(th.ModelID),
 		RunStatus:           runStatus,
 		RunUpdatedAtUnixMs:  th.RunUpdatedAtUnixMs,
 		RunError:            runError,
@@ -150,6 +151,7 @@ func (s *Service) ListThreads(ctx context.Context, meta *session.Meta, limit int
 		out.Threads = append(out.Threads, ThreadView{
 			ThreadID:            strings.TrimSpace(t.ThreadID),
 			Title:               strings.TrimSpace(t.Title),
+			ModelID:             strings.TrimSpace(t.ModelID),
 			RunStatus:           runStatus,
 			RunUpdatedAtUnixMs:  t.RunUpdatedAtUnixMs,
 			RunError:            runError,
@@ -162,7 +164,7 @@ func (s *Service) ListThreads(ctx context.Context, meta *session.Meta, limit int
 	return out, nil
 }
 
-func (s *Service) CreateThread(ctx context.Context, meta *session.Meta, title string) (*ThreadView, error) {
+func (s *Service) CreateThread(ctx context.Context, meta *session.Meta, title string, modelID string) (*ThreadView, error) {
 	if s == nil {
 		return nil, errors.New("nil service")
 	}
@@ -171,6 +173,7 @@ func (s *Service) CreateThread(ctx context.Context, meta *session.Meta, title st
 	}
 	s.mu.Lock()
 	db := s.threadsDB
+	cfg := s.cfg
 	s.mu.Unlock()
 	if db == nil {
 		return nil, errors.New("threads store not ready")
@@ -181,11 +184,27 @@ func (s *Service) CreateThread(ctx context.Context, meta *session.Meta, title st
 		return nil, err
 	}
 
+	modelID = strings.TrimSpace(modelID)
+	if modelID != "" {
+		if _, _, ok := strings.Cut(modelID, "/"); !ok {
+			return nil, errors.New("invalid model")
+		}
+		if cfg != nil && !cfg.IsAllowedModelID(modelID) {
+			return nil, fmt.Errorf("model not allowed: %s", modelID)
+		}
+	}
+	if modelID == "" && cfg != nil {
+		if id, ok := cfg.DefaultModelID(); ok {
+			modelID = id
+		}
+	}
+
 	now := time.Now().UnixMilli()
 	t := threadstore.Thread{
 		ThreadID:              id,
 		EndpointID:            strings.TrimSpace(meta.EndpointID),
 		NamespacePublicID:     strings.TrimSpace(meta.NamespacePublicID),
+		ModelID:               modelID,
 		Title:                 strings.TrimSpace(title),
 		RunStatus:             "idle",
 		RunUpdatedAtUnixMs:    0,
@@ -206,6 +225,7 @@ func (s *Service) CreateThread(ctx context.Context, meta *session.Meta, title st
 	return &ThreadView{
 		ThreadID:            id,
 		Title:               strings.TrimSpace(t.Title),
+		ModelID:             modelID,
 		RunStatus:           "idle",
 		RunUpdatedAtUnixMs:  0,
 		RunError:            "",
@@ -233,6 +253,47 @@ func (s *Service) RenameThread(ctx context.Context, meta *session.Meta, threadID
 		return errors.New("missing thread_id")
 	}
 	return db.RenameThread(ctx, meta.EndpointID, threadID, title, meta.UserPublicID, meta.UserEmail)
+}
+
+func (s *Service) SetThreadModel(ctx context.Context, meta *session.Meta, threadID string, modelID string) error {
+	if s == nil {
+		return errors.New("nil service")
+	}
+	if meta == nil {
+		return errors.New("missing session metadata")
+	}
+	threadID = strings.TrimSpace(threadID)
+	if threadID == "" {
+		return errors.New("missing thread_id")
+	}
+	endpointID := strings.TrimSpace(meta.EndpointID)
+	if endpointID == "" {
+		return errors.New("invalid request")
+	}
+
+	modelID = strings.TrimSpace(modelID)
+	if modelID == "" {
+		return errors.New("missing model_id")
+	}
+	if _, _, ok := strings.Cut(modelID, "/"); !ok {
+		return errors.New("invalid model")
+	}
+
+	s.mu.Lock()
+	db := s.threadsDB
+	cfg := s.cfg
+	s.mu.Unlock()
+	if db == nil {
+		return errors.New("threads store not ready")
+	}
+	if cfg == nil {
+		return ErrNotConfigured
+	}
+	if !cfg.IsAllowedModelID(modelID) {
+		return fmt.Errorf("model not allowed: %s", modelID)
+	}
+
+	return db.UpdateThreadModelID(ctx, endpointID, threadID, modelID)
 }
 
 func (s *Service) CancelThread(meta *session.Meta, threadID string) error {

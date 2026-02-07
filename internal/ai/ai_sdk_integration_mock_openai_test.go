@@ -270,9 +270,14 @@ func TestIntegration_AISDK_OpenAI_ChatCompletionsStream_GPT5_Succeeds(t *testing
 
 	baseURL := strings.TrimSuffix(srv.URL, "/") + "/v1"
 	cfg := &config.AIConfig{
-		DefaultModel: config.AIModelRef{ProviderID: "openai", ModelName: "gpt-5-mini"},
 		Providers: []config.AIProvider{
-			{ID: "openai", Name: "OpenAI", Type: "openai", BaseURL: baseURL},
+			{
+				ID:      "openai",
+				Name:    "OpenAI",
+				Type:    "openai",
+				BaseURL: baseURL,
+				Models:  []config.AIProviderModel{{ModelName: "gpt-5-mini", IsDefault: true}},
+			},
 		},
 	}
 
@@ -321,7 +326,7 @@ func TestIntegration_AISDK_OpenAI_ChatCompletionsStream_GPT5_Succeeds(t *testing
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	th, err := svc.CreateThread(ctx, &meta, "hello")
+	th, err := svc.CreateThread(ctx, &meta, "hello", "")
 	if err != nil {
 		t.Fatalf("CreateThread: %v", err)
 	}
@@ -379,9 +384,14 @@ func TestIntegration_AISDK_OpenAI_ChatCompletionsStream_GPT4o_Succeeds(t *testin
 
 	baseURL := strings.TrimSuffix(srv.URL, "/") + "/v1"
 	cfg := &config.AIConfig{
-		DefaultModel: config.AIModelRef{ProviderID: "openai", ModelName: "gpt-4o-mini"},
 		Providers: []config.AIProvider{
-			{ID: "openai", Name: "OpenAI", Type: "openai", BaseURL: baseURL},
+			{
+				ID:      "openai",
+				Name:    "OpenAI",
+				Type:    "openai",
+				BaseURL: baseURL,
+				Models:  []config.AIProviderModel{{ModelName: "gpt-4o-mini", IsDefault: true}},
+			},
 		},
 	}
 
@@ -430,7 +440,7 @@ func TestIntegration_AISDK_OpenAI_ChatCompletionsStream_GPT4o_Succeeds(t *testin
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	th, err := svc.CreateThread(ctx, &meta, "hello")
+	th, err := svc.CreateThread(ctx, &meta, "hello", "")
 	if err != nil {
 		t.Fatalf("CreateThread: %v", err)
 	}

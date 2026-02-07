@@ -59,6 +59,7 @@ type Thread struct {
 	ThreadID           string `json:"thread_id"`
 	EndpointID         string `json:"endpoint_id"`
 	NamespacePublicID  string `json:"namespace_public_id"`
+	ModelID            string `json:"model_id"`
 	Title              string `json:"title"`
 	RunStatus          string `json:"run_status"`
 	RunUpdatedAtUnixMs int64  `json:"run_updated_at_unix_ms"`
@@ -169,7 +170,7 @@ func (s *Store) ListThreads(ctx context.Context, endpointID string, limit int, c
 
 	q := fmt.Sprintf(`
 SELECT
-  thread_id, endpoint_id, namespace_public_id, title,
+  thread_id, endpoint_id, namespace_public_id, model_id, title,
   run_status, run_updated_at_unix_ms, run_error,
   created_by_user_public_id, created_by_user_email,
   updated_by_user_public_id, updated_by_user_email,
@@ -194,6 +195,7 @@ LIMIT ?
 			&t.ThreadID,
 			&t.EndpointID,
 			&t.NamespacePublicID,
+			&t.ModelID,
 			&t.Title,
 			&t.RunStatus,
 			&t.RunUpdatedAtUnixMs,
@@ -238,7 +240,7 @@ func (s *Store) GetThread(ctx context.Context, endpointID string, threadID strin
 	var t Thread
 	err := s.db.QueryRowContext(ctx, `
 SELECT
-  thread_id, endpoint_id, namespace_public_id, title,
+  thread_id, endpoint_id, namespace_public_id, model_id, title,
   run_status, run_updated_at_unix_ms, run_error,
   created_by_user_public_id, created_by_user_email,
   updated_by_user_public_id, updated_by_user_email,
@@ -249,6 +251,7 @@ WHERE endpoint_id = ? AND thread_id = ?
 		&t.ThreadID,
 		&t.EndpointID,
 		&t.NamespacePublicID,
+		&t.ModelID,
 		&t.Title,
 		&t.RunStatus,
 		&t.RunUpdatedAtUnixMs,
@@ -282,6 +285,7 @@ func (s *Store) CreateThread(ctx context.Context, t Thread) error {
 	t.ThreadID = strings.TrimSpace(t.ThreadID)
 	t.EndpointID = strings.TrimSpace(t.EndpointID)
 	t.NamespacePublicID = strings.TrimSpace(t.NamespacePublicID)
+	t.ModelID = strings.TrimSpace(t.ModelID)
 	t.Title = strings.TrimSpace(t.Title)
 	t.RunStatus = normalizeRunStatus(t.RunStatus)
 	t.RunError = strings.TrimSpace(t.RunError)
@@ -307,17 +311,18 @@ func (s *Store) CreateThread(ctx context.Context, t Thread) error {
 
 	_, err := s.db.ExecContext(ctx, `
 INSERT INTO ai_threads(
-  thread_id, endpoint_id, namespace_public_id, title,
+  thread_id, endpoint_id, namespace_public_id, model_id, title,
   run_status, run_updated_at_unix_ms, run_error,
   created_by_user_public_id, created_by_user_email,
   updated_by_user_public_id, updated_by_user_email,
   created_at_unix_ms, updated_at_unix_ms,
   last_message_at_unix_ms, last_message_preview
-) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `,
 		t.ThreadID,
 		t.EndpointID,
 		t.NamespacePublicID,
+		t.ModelID,
 		t.Title,
 		t.RunStatus,
 		t.RunUpdatedAtUnixMs,
@@ -332,6 +337,38 @@ INSERT INTO ai_threads(
 		t.LastMessagePreview,
 	)
 	return err
+}
+
+func (s *Store) UpdateThreadModelID(ctx context.Context, endpointID string, threadID string, modelID string) error {
+	if s == nil || s.db == nil {
+		return errors.New("store not initialized")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	endpointID = strings.TrimSpace(endpointID)
+	threadID = strings.TrimSpace(threadID)
+	modelID = strings.TrimSpace(modelID)
+	if endpointID == "" || threadID == "" {
+		return errors.New("invalid request")
+	}
+	if modelID == "" {
+		return errors.New("missing model_id")
+	}
+
+	res, err := s.db.ExecContext(ctx, `
+UPDATE ai_threads
+SET model_id = ?
+WHERE endpoint_id = ? AND thread_id = ?
+`, modelID, endpointID, threadID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 func (s *Store) RenameThread(ctx context.Context, endpointID string, threadID string, title string, updatedByID string, updatedByEmail string) error {
@@ -737,7 +774,7 @@ func migrateSchema(db *sql.DB) error {
 	if db == nil {
 		return errors.New("nil db")
 	}
-	const targetVersion = 2
+	const targetVersion = 3
 
 	var v int
 	if err := db.QueryRow(`PRAGMA user_version;`).Scan(&v); err != nil {
@@ -768,6 +805,7 @@ CREATE TABLE IF NOT EXISTS ai_threads (
   thread_id TEXT PRIMARY KEY,
   endpoint_id TEXT NOT NULL,
   namespace_public_id TEXT NOT NULL DEFAULT '',
+  model_id TEXT NOT NULL DEFAULT '',
   title TEXT NOT NULL DEFAULT '',
   run_status TEXT NOT NULL DEFAULT 'idle',
   run_updated_at_unix_ms INTEGER NOT NULL DEFAULT 0,
@@ -783,6 +821,14 @@ CREATE TABLE IF NOT EXISTS ai_threads (
 );
 CREATE INDEX IF NOT EXISTS idx_ai_threads_endpoint_updated ON ai_threads(endpoint_id, updated_at_unix_ms DESC, thread_id DESC);
 `); err != nil {
+			return err
+		}
+	}
+
+	if has, err := columnExists(tx, "ai_threads", "model_id"); err != nil {
+		return err
+	} else if !has {
+		if _, err := tx.Exec(`ALTER TABLE ai_threads ADD COLUMN model_id TEXT NOT NULL DEFAULT ''`); err != nil {
 			return err
 		}
 	}
