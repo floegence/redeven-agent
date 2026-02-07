@@ -70,34 +70,40 @@ Notes:
 
 ---
 
-## 3. Model Registry (Structured in Config, Stable on Wire)
+## 3. Model Registry (Provider-Owned, Stable on Wire)
 
-The wire format for running a model remains:
+The wire model id remains:
 
 ```
 <provider_id>/<model_name>
 ```
 
-But the config storage uses structured fields to avoid stringly-typed mistakes and to make the UI better:
+But the config stores models under each provider (provider + model are always configured together):
 
 ```json
 {
-  "provider_id": "openai",
-  "model_name": "gpt-5-mini"
+  "id": "openai",
+  "type": "openai",
+  "name": "OpenAI",
+  "models": [
+    { "model_name": "gpt-5-mini", "label": "GPT-5 Mini", "is_default": true },
+    { "model_name": "gpt-5", "label": "GPT-5" }
+  ]
 }
 ```
 
-Allow-list items extend that with an optional `label`:
+Rules:
 
-```json
-{
-  "provider_id": "openai",
-  "model_name": "gpt-5-mini",
-  "label": "GPT-5 Mini"
-}
-```
+- `providers[].models[]` is the allow-list shown in the Chat UI.
+- Exactly one `providers[].models[].is_default` must be true across all providers (default for new chats).
+- `model_name` must not contain `/` (wire id uses `/` as a delimiter).
+- The agent derives the wire id as `provider.id + "/" + model_name` when talking to the sidecar and when returning `/api/ai/models`.
 
-The agent derives the wire id as `provider_id + "/" + model_name` when talking to the sidecar and when returning `/api/ai/models`.
+Thread-level selection:
+
+- Each chat thread stores its selected `model_id` (wire id).
+- New chats start with the config default.
+- Switching threads automatically follows the thread's `model_id`.
 
 ---
 
@@ -126,8 +132,9 @@ This achieves both an intuitive UX and stable runtime behavior.
   - Stored locally in `secrets.json`, never shown again.
   - UI shows `Key set / Key not set`, with `Save key` and `Clear`.
 - Models:
-  - Default model uses provider dropdown + model name input.
-  - Optional allow-list uses the same structured inputs.
+  - Configured inside each provider as `models[]` (`model_name` + optional `label`).
+  - One model across all providers is marked **Default** (used for new chats).
+  - Chat header shows a single **Model** selector (no separate provider dropdown).
 
 ---
 
