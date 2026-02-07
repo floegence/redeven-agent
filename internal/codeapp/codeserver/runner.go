@@ -22,13 +22,18 @@ type RunnerOptions struct {
 
 	PortMin int
 	PortMax int
+
+	// ReconnectionGrace controls VSCODE_RECONNECTION_GRACE_TIME for code-server.
+	// When <= 0, code-server keeps its upstream default.
+	ReconnectionGrace time.Duration
 }
 
 type Runner struct {
-	log      *slog.Logger
-	stateDir string
-	portMin  int
-	portMax  int
+	log               *slog.Logger
+	stateDir          string
+	portMin           int
+	portMax           int
+	reconnectionGrace time.Duration
 
 	mu        sync.Mutex
 	instances map[string]*Instance // code_space_id -> instance
@@ -54,12 +59,13 @@ func NewRunner(opts RunnerOptions) *Runner {
 		logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	}
 	return &Runner{
-		log:        logger,
-		stateDir:   strings.TrimSpace(opts.StateDir),
-		portMin:    opts.PortMin,
-		portMax:    opts.PortMax,
-		instances:  make(map[string]*Instance),
-		startLocks: make(map[string]*sync.Mutex),
+		log:               logger,
+		stateDir:          strings.TrimSpace(opts.StateDir),
+		portMin:           opts.PortMin,
+		portMax:           opts.PortMax,
+		reconnectionGrace: normalizePositiveDuration(opts.ReconnectionGrace),
+		instances:         make(map[string]*Instance),
+		startLocks:        make(map[string]*sync.Mutex),
 	}
 }
 
@@ -218,6 +224,7 @@ func (r *Runner) start(codeSpaceID string, workspacePath string, port int) (*Ins
 			startupTimeout = d
 		}
 	}
+	reconnectionGrace := r.resolveReconnectionGrace()
 
 	spaceDir := filepath.Join(strings.TrimSpace(r.stateDir), "apps", "code", "spaces", codeSpaceID, "codeserver")
 	userDataDir := filepath.Join(spaceDir, "user-data")
@@ -281,9 +288,21 @@ func (r *Runner) start(codeSpaceID string, workspacePath string, port int) (*Ins
 		"XDG_CACHE_HOME="+xdgCacheDir,
 		"XDG_DATA_HOME="+xdgDataDir,
 	)
+	if reconnectionGrace > 0 {
+		env = append(env, "VSCODE_RECONNECTION_GRACE_TIME="+formatReconnectionGrace(reconnectionGrace))
+	}
 	cmd.Env = env
 
-	r.log.Info("starting code-server", "code_space_id", codeSpaceID, "port", port, "workspace", filepath.Base(workspacePath), "session_socket", sessionSocketPath)
+	attrs := []any{
+		"code_space_id", codeSpaceID,
+		"port", port,
+		"workspace", filepath.Base(workspacePath),
+		"session_socket", sessionSocketPath,
+	}
+	if reconnectionGrace > 0 {
+		attrs = append(attrs, "reconnection_grace", formatReconnectionGrace(reconnectionGrace))
+	}
+	r.log.Info("starting code-server", attrs...)
 	// Put the child in its own process group so we can reliably stop code-server and its children.
 	setCmdProcessGroup(cmd)
 	if err := cmd.Start(); err != nil {
@@ -311,6 +330,49 @@ func (r *Runner) start(codeSpaceID string, workspacePath string, port int) (*Ins
 		StartedAt:     time.Now(),
 		cmd:           cmd,
 	}, nil
+}
+
+func normalizePositiveDuration(v time.Duration) time.Duration {
+	if v <= 0 {
+		return 0
+	}
+	return v
+}
+
+func formatReconnectionGrace(v time.Duration) string {
+	d := normalizePositiveDuration(v)
+	if d <= 0 {
+		return ""
+	}
+	ms := d.Milliseconds()
+	if ms <= 0 {
+		ms = 1
+	}
+	return fmt.Sprintf("%dms", ms)
+}
+
+func (r *Runner) resolveReconnectionGrace() time.Duration {
+	grace := normalizePositiveDuration(r.reconnectionGrace)
+	raw := strings.TrimSpace(os.Getenv("REDEVEN_CODE_SERVER_RECONNECTION_GRACE_TIME"))
+	if raw == "" {
+		return grace
+	}
+
+	v, err := time.ParseDuration(raw)
+	if err != nil {
+		if r != nil && r.log != nil {
+			r.log.Warn("invalid REDEVEN_CODE_SERVER_RECONNECTION_GRACE_TIME; using default", "value", raw, "err", err)
+		}
+		return grace
+	}
+	v = normalizePositiveDuration(v)
+	if v <= 0 {
+		if r != nil && r.log != nil {
+			r.log.Warn("invalid REDEVEN_CODE_SERVER_RECONNECTION_GRACE_TIME; using default", "value", raw)
+		}
+		return grace
+	}
+	return v
 }
 
 func validateWorkspacePath(p string) error {
