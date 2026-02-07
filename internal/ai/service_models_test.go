@@ -14,15 +14,21 @@ func TestService_ListModels_DefaultFirstAndDedup(t *testing.T) {
 
 	svc := &Service{
 		cfg: &config.AIConfig{
-			DefaultModel: config.AIModelRef{ProviderID: "openai", ModelName: "gpt-5-mini"},
-			Models: []config.AIModel{
-				{ProviderID: "openai", ModelName: "gpt-5-mini", Label: ""},
-				{ProviderID: "openai", ModelName: "gpt-4o-mini", Label: "Fast"},
-				{ProviderID: "anthropic", ModelName: "claude-sonnet-4-5", Label: ""},
-			},
 			Providers: []config.AIProvider{
-				{ID: "openai", Name: "OpenAI", Type: "openai", BaseURL: "https://api.openai.com/v1"},
-				{ID: "anthropic", Name: "Anthropic", Type: "anthropic", BaseURL: "https://api.anthropic.com"},
+				{
+					ID:      "openai",
+					Name:    "OpenAI",
+					Type:    "openai",
+					BaseURL: "https://api.openai.com/v1",
+					Models:  []config.AIProviderModel{{ModelName: "gpt-5-mini", Label: "", IsDefault: true}, {ModelName: "gpt-4o-mini", Label: "Fast"}},
+				},
+				{
+					ID:      "anthropic",
+					Name:    "Anthropic",
+					Type:    "anthropic",
+					BaseURL: "https://api.anthropic.com",
+					Models:  []config.AIProviderModel{{ModelName: "claude-sonnet-4-5", Label: ""}},
+				},
 			},
 		},
 	}
@@ -51,29 +57,11 @@ func TestService_ListModels_DefaultFirstAndDedup(t *testing.T) {
 	if out.Models[0].Label != "OpenAI / gpt-5-mini" {
 		t.Fatalf("default label=%q", out.Models[0].Label)
 	}
-	if out.Models[1].Label != "Fast" {
+	if out.Models[1].Label != "OpenAI / Fast" {
 		t.Fatalf("second label=%q", out.Models[1].Label)
 	}
 	if out.Models[2].Label != "Anthropic / claude-sonnet-4-5" {
 		t.Fatalf("third label=%q", out.Models[2].Label)
-	}
-}
-
-func TestService_ListModels_RequiresModels(t *testing.T) {
-	t.Parallel()
-
-	svc := &Service{
-		cfg: &config.AIConfig{
-			DefaultModel: config.AIModelRef{ProviderID: "openai", ModelName: "gpt-5-mini"},
-			Providers: []config.AIProvider{
-				{ID: "openai", Name: "OpenAI", Type: "openai", BaseURL: "https://api.openai.com/v1"},
-			},
-		},
-	}
-
-	_, err := svc.ListModels()
-	if err == nil {
-		t.Fatalf("expected error for missing models")
 	}
 }
 

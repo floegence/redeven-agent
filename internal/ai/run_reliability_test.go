@@ -34,12 +34,14 @@ func newTestService(t *testing.T, scriptPath string, metaByChannel map[string]se
 	fsRoot := t.TempDir()
 
 	cfg := &config.AIConfig{
-		DefaultModel: config.AIModelRef{ProviderID: "openai", ModelName: "gpt-5-mini"},
-		Models: []config.AIModel{
-			{ProviderID: "openai", ModelName: "gpt-5-mini", Label: "GPT-5 Mini"},
-		},
 		Providers: []config.AIProvider{
-			{ID: "openai", Name: "OpenAI", Type: "openai", BaseURL: "https://api.openai.com/v1"},
+			{
+				ID:      "openai",
+				Name:    "OpenAI",
+				Type:    "openai",
+				BaseURL: "https://api.openai.com/v1",
+				Models:  []config.AIProviderModel{{ModelName: "gpt-5-mini", Label: "GPT-5 Mini", IsDefault: true}},
+			},
 		},
 	}
 
@@ -116,7 +118,7 @@ setInterval(() => {}, 1000);
 	svc := newTestService(t, script, map[string]session.Meta{"ch_a": meta})
 
 	ctx := context.Background()
-	th, err := svc.CreateThread(ctx, &meta, "hello")
+	th, err := svc.CreateThread(ctx, &meta, "hello", "")
 	if err != nil {
 		t.Fatalf("CreateThread: %v", err)
 	}
@@ -188,7 +190,7 @@ setInterval(() => {}, 1000);
 	})
 
 	ctx := context.Background()
-	th, err := svc.CreateThread(ctx, &meta, "hello")
+	th, err := svc.CreateThread(ctx, &meta, "hello", "")
 	if err != nil {
 		t.Fatalf("CreateThread: %v", err)
 	}
@@ -248,7 +250,7 @@ setInterval(() => {}, 1000);
 	svc := newTestService(t, script, map[string]session.Meta{"ch_a": metaA, "ch_b": metaB})
 
 	ctx := context.Background()
-	th, err := svc.CreateThread(ctx, &metaA, "hello")
+	th, err := svc.CreateThread(ctx, &metaA, "hello", "")
 	if err != nil {
 		t.Fatalf("CreateThread: %v", err)
 	}
@@ -333,7 +335,7 @@ setInterval(() => {}, 1000);
 	svc := newTestService(t, script, map[string]session.Meta{"ch_a": meta})
 
 	ctx := context.Background()
-	th, err := svc.CreateThread(ctx, &meta, "hello")
+	th, err := svc.CreateThread(ctx, &meta, "hello", "")
 	if err != nil {
 		t.Fatalf("CreateThread: %v", err)
 	}
@@ -439,7 +441,7 @@ setInterval(() => {}, 1000);
 	})
 
 	ctx := context.Background()
-	th, err := svc.CreateThread(ctx, &meta, "hello")
+	th, err := svc.CreateThread(ctx, &meta, "hello", "")
 	if err != nil {
 		t.Fatalf("CreateThread: %v", err)
 	}

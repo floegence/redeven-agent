@@ -24,6 +24,7 @@ type ModelsResponse struct {
 type ThreadView struct {
 	ThreadID            string `json:"thread_id"`
 	Title               string `json:"title"`
+	ModelID             string `json:"model_id"`
 	RunStatus           string `json:"run_status"`
 	RunUpdatedAtUnixMs  int64  `json:"run_updated_at_unix_ms"`
 	RunError            string `json:"run_error,omitempty"`
@@ -39,7 +40,8 @@ type ListThreadsResponse struct {
 }
 
 type CreateThreadRequest struct {
-	Title string `json:"title"`
+	Title   string `json:"title"`
+	ModelID string `json:"model_id,omitempty"`
 }
 
 type CreateThreadResponse struct {
@@ -47,7 +49,8 @@ type CreateThreadResponse struct {
 }
 
 type PatchThreadRequest struct {
-	Title *string `json:"title,omitempty"`
+	Title   *string `json:"title,omitempty"`
+	ModelID *string `json:"model_id,omitempty"`
 }
 
 type ListThreadMessagesResponse struct {

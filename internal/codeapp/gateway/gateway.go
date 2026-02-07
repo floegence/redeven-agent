@@ -1108,7 +1108,7 @@ func (g *Gateway) handleAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		th, err := g.ai.CreateThread(r.Context(), meta, body.Title)
+		th, err := g.ai.CreateThread(r.Context(), meta, body.Title, body.ModelID)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, apiResp{OK: false, Error: err.Error()})
 			return
@@ -1178,17 +1178,29 @@ func (g *Gateway) handleAPI(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			if body.Title == nil {
+			if body.Title == nil && body.ModelID == nil {
 				writeJSON(w, http.StatusBadRequest, apiResp{OK: false, Error: "missing fields"})
 				return
 			}
-			if err := g.ai.RenameThread(r.Context(), meta, threadID, *body.Title); err != nil {
-				status := http.StatusBadRequest
-				if errors.Is(err, sql.ErrNoRows) {
-					status = http.StatusNotFound
+			if body.Title != nil {
+				if err := g.ai.RenameThread(r.Context(), meta, threadID, *body.Title); err != nil {
+					status := http.StatusBadRequest
+					if errors.Is(err, sql.ErrNoRows) {
+						status = http.StatusNotFound
+					}
+					writeJSON(w, status, apiResp{OK: false, Error: err.Error()})
+					return
 				}
-				writeJSON(w, status, apiResp{OK: false, Error: err.Error()})
-				return
+			}
+			if body.ModelID != nil {
+				if err := g.ai.SetThreadModel(r.Context(), meta, threadID, *body.ModelID); err != nil {
+					status := http.StatusBadRequest
+					if errors.Is(err, sql.ErrNoRows) {
+						status = http.StatusNotFound
+					}
+					writeJSON(w, status, apiResp{OK: false, Error: err.Error()})
+					return
+				}
 			}
 			th, err := g.ai.GetThread(r.Context(), meta, threadID)
 			if err != nil {
@@ -1362,12 +1374,16 @@ func (g *Gateway) handleAPI(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if strings.TrimSpace(req.Model) == "" {
-			models, err := g.ai.ListModels()
-			if err != nil {
-				writeJSON(w, http.StatusServiceUnavailable, apiResp{OK: false, Error: err.Error()})
-				return
+			if m := strings.TrimSpace(th.ModelID); m != "" {
+				req.Model = m
+			} else {
+				models, err := g.ai.ListModels()
+				if err != nil {
+					writeJSON(w, http.StatusServiceUnavailable, apiResp{OK: false, Error: err.Error()})
+					return
+				}
+				req.Model = models.DefaultModel
 			}
-			req.Model = models.DefaultModel
 		}
 
 		runID, err := ai.NewRunID()

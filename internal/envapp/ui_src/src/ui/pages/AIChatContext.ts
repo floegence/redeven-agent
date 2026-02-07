@@ -31,6 +31,7 @@ export type ThreadRunStatus = 'idle' | 'running' | 'success' | 'failed' | 'cance
 export type ThreadView = Readonly<{
   thread_id: string;
   title: string;
+  model_id?: string;
   run_status?: ThreadRunStatus;
   run_updated_at_unix_ms?: number;
   run_error?: string;
@@ -59,6 +60,7 @@ export type ListThreadMessagesResponse = Readonly<{
 // ---- Persistence helpers ----
 
 const ACTIVE_THREAD_STORAGE_KEY = 'redeven_ai_active_thread_id';
+const DRAFT_MODEL_STORAGE_KEY = 'redeven_ai_draft_model_id';
 
 function readPersistedActiveThreadId(): string | null {
   try {
@@ -85,6 +87,25 @@ function clearPersistedActiveThreadId(): void {
   }
 }
 
+function readPersistedDraftModelId(): string | null {
+  try {
+    const v = String(localStorage.getItem(DRAFT_MODEL_STORAGE_KEY) ?? '').trim();
+    return v || null;
+  } catch {
+    return null;
+  }
+}
+
+function persistDraftModelId(modelId: string): void {
+  try {
+    const v = String(modelId ?? '').trim();
+    if (!v) return;
+    localStorage.setItem(DRAFT_MODEL_STORAGE_KEY, v);
+  } catch {
+    // ignore
+  }
+}
+
 function normalizeThreadRunStatus(raw: string | null | undefined): ThreadRunStatus {
   const status = String(raw ?? '').trim().toLowerCase();
   if (status === 'running' || status === 'success' || status === 'failed' || status === 'canceled') {
@@ -104,7 +125,7 @@ export interface AIChatContextValue {
   models: Resource<ModelsResponse | null>;
   modelsReady: Accessor<boolean>;
   selectedModel: Accessor<string>;
-  setSelectedModel: Setter<string>;
+  selectModel: (modelID: string) => void;
   modelOptions: Accessor<Array<{ value: string; label: string }>>;
 
   // Threads
@@ -170,36 +191,47 @@ export function createAIChatContextValue(): AIChatContextValue {
 
   const modelsReady = createMemo(() => !!models() && !models.loading && !models.error);
 
-  const [selectedModel, setSelectedModel] = createSignal('');
-  let lastModelVersion: number | null = null;
+  const [draftModelId, setDraftModelId] = createSignal<string>(readPersistedDraftModelId() ?? '');
+  const [threadModelOverride, setThreadModelOverride] = createSignal<Record<string, string>>({});
 
-  createEffect(() => {
+  const allowedModelIDs = createMemo(() => {
     const m = models();
-    const version = modelsKey();
-    if (!m || version == null) return;
+    const set = new Set<string>();
+    if (!m) return set;
+    for (const it of m.models ?? []) {
+      const id = String(it?.id ?? '').trim();
+      if (id) set.add(id);
+    }
+    return set;
+  });
 
-    const modelIDs = new Set(m.models.map((it) => String(it.id ?? '').trim()).filter((it) => !!it));
-    const current = selectedModel().trim();
-    const defaultModel = String(m.default_model ?? '').trim();
-    const fallback = m.models[0]?.id ? String(m.models[0].id).trim() : '';
+  const fallbackModelId = createMemo(() => {
+    const m = models();
+    if (!m) return '';
+    const allowed = allowedModelIDs();
+    const def = String(m.default_model ?? '').trim();
+    if (def && allowed.has(def)) return def;
+    const first = m.models?.[0]?.id ? String(m.models[0].id).trim() : '';
+    if (first && allowed.has(first)) return first;
+    return '';
+  });
 
-    if (lastModelVersion !== version) {
-      lastModelVersion = version;
-      if (defaultModel && modelIDs.has(defaultModel)) {
-        setSelectedModel(defaultModel);
-        return;
-      }
-      setSelectedModel(fallback || '');
+  // Keep the persisted draft model valid; fall back to config default when needed.
+  createEffect(() => {
+    if (!modelsReady()) return;
+    const allowed = allowedModelIDs();
+    const current = String(draftModelId() ?? '').trim();
+    if (current && allowed.has(current)) return;
+    const persisted = readPersistedDraftModelId();
+    if (persisted && allowed.has(persisted)) {
+      setDraftModelId(persisted);
       return;
     }
-
-    if (current && modelIDs.has(current)) return;
-
-    if (defaultModel && modelIDs.has(defaultModel)) {
-      setSelectedModel(defaultModel);
-      return;
+    const next = fallbackModelId();
+    if (next) {
+      setDraftModelId(next);
+      persistDraftModelId(next);
     }
-    setSelectedModel(fallback || '');
   });
 
   const modelOptions = createMemo(() => {
@@ -320,6 +352,141 @@ export function createAIChatContextValue(): AIChatContextValue {
     return t?.title?.trim() || 'New chat';
   });
 
+  const selectedModel = createMemo(() => {
+    if (!modelsReady()) return '';
+
+    const allowed = allowedModelIDs();
+    const fallback = fallbackModelId();
+
+    const tid = String(activeThreadId() ?? '').trim();
+    if (!tid) {
+      const draft = String(draftModelId() ?? '').trim();
+      if (draft && allowed.has(draft)) return draft;
+      return fallback;
+    }
+
+    const overrides = threadModelOverride();
+    const overridden = String(overrides?.[tid] ?? '').trim();
+    if (overridden && allowed.has(overridden)) return overridden;
+
+    const th = activeThread();
+    const server = String(th?.model_id ?? '').trim();
+    if (server && allowed.has(server)) return server;
+
+    return fallback;
+  });
+
+  const patchThreadModel = async (threadId: string, nextModelId: string, prevModelId: string | null, silent?: boolean) => {
+    const tid = String(threadId ?? '').trim();
+    const mid = String(nextModelId ?? '').trim();
+    if (!tid || !mid) return;
+
+    try {
+      await fetchGatewayJSON<{ thread: ThreadView }>(`/_redeven_proxy/api/ai/threads/${encodeURIComponent(tid)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ model_id: mid }),
+      });
+      bumpThreadsSeq();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!silent) notify.error('Failed to update model', msg || 'Request failed.');
+      setThreadModelOverride((prev) => {
+        const next = { ...prev };
+        const pv = String(prevModelId ?? '').trim();
+        if (pv) next[tid] = pv;
+        else delete next[tid];
+        return next;
+      });
+    }
+  };
+
+  const selectModel = (modelID: string) => {
+    const id = String(modelID ?? '').trim();
+    if (!id) return;
+
+    if (!modelsReady()) {
+      notify.error('AI unavailable', 'Loading models...');
+      return;
+    }
+    const allowed = allowedModelIDs();
+    if (!allowed.has(id)) {
+      notify.error('Invalid model', 'This model is not allowed.');
+      return;
+    }
+
+    const tid = String(activeThreadId() ?? '').trim();
+    if (!tid) {
+      setDraftModelId(id);
+      persistDraftModelId(id);
+      return;
+    }
+
+    if (protocol.status() !== 'connected') {
+      notify.error('Not connected', 'Connecting to agent...');
+      return;
+    }
+
+    const prev = String(selectedModel() ?? '').trim();
+    if (prev === id) return;
+
+    setThreadModelOverride((prevMap) => ({ ...prevMap, [tid]: id }));
+    void patchThreadModel(tid, id, prev, false);
+  };
+
+  // Clear local overrides once the server state catches up.
+  createEffect(() => {
+    const overrides = threadModelOverride();
+    const keys = Object.keys(overrides);
+    if (keys.length === 0) return;
+
+    const list = threads()?.threads ?? [];
+    let changed = false;
+    const next = { ...overrides };
+    for (const tid of keys) {
+      const th = list.find((it) => String(it?.thread_id ?? '').trim() === tid);
+      if (!th) {
+        delete next[tid];
+        changed = true;
+        continue;
+      }
+      const server = String(th.model_id ?? '').trim();
+      if (server && server === String(overrides[tid] ?? '').trim()) {
+        delete next[tid];
+        changed = true;
+      }
+    }
+    if (changed) setThreadModelOverride(next);
+  });
+
+  // Auto-heal invalid/missing thread model_id by falling back to the current config default.
+  const healingLastAttempt = new Map<string, number>();
+  createEffect(() => {
+    if (protocol.status() !== 'connected') return;
+    if (!aiEnabled() || !modelsReady()) return;
+
+    const tid = String(activeThreadId() ?? '').trim();
+    const th = activeThread();
+    if (!tid || !th) return;
+
+    const overrides = threadModelOverride();
+    if (String(overrides?.[tid] ?? '').trim()) return;
+
+    const allowed = allowedModelIDs();
+    const server = String(th.model_id ?? '').trim();
+    if (server && allowed.has(server)) return;
+
+    const desired = String(fallbackModelId() ?? '').trim();
+    if (!desired) return;
+
+    const now = Date.now();
+    const last = healingLastAttempt.get(tid) ?? 0;
+    if (now-last < 10_000) return;
+    healingLastAttempt.set(tid, now);
+
+    setThreadModelOverride((prev) => ({ ...prev, [tid]: desired }));
+    void patchThreadModel(tid, desired, '', true);
+  });
+
   // Persist activeThreadId to localStorage
   createEffect(() => {
     const id = activeThreadId();
@@ -331,9 +498,12 @@ export function createAIChatContextValue(): AIChatContextValue {
   const [creatingThread, setCreatingThread] = createSignal(false);
 
   const createThread = async (): Promise<ThreadView> => {
+    const modelID = String(draftModelId() ?? '').trim();
+    const body: any = { title: '' };
+    if (modelID) body.model_id = modelID;
     const resp = await fetchGatewayJSON<CreateThreadResponse>('/_redeven_proxy/api/ai/threads', {
       method: 'POST',
-      body: JSON.stringify({ title: '' }),
+      body: JSON.stringify(body),
     });
     return resp.thread;
   };
@@ -408,7 +578,7 @@ export function createAIChatContextValue(): AIChatContextValue {
     models,
     modelsReady,
     selectedModel,
-    setSelectedModel,
+    selectModel,
     modelOptions,
     threads,
     bumpThreadsSeq,

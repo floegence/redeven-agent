@@ -14,27 +14,12 @@ import (
 //     and injected into the AI sidecar process env at run start.
 //   - Field names are snake_case to match the rest of the agent config surface.
 type AIConfig struct {
-	// DefaultModel is the default model reference used by the UI when starting a run.
-	DefaultModel AIModelRef `json:"default_model"`
-
-	// Models is the explicit selectable model list shown by the UI.
-	// It must contain default_model.
-	Models []AIModel `json:"models,omitempty"`
-
-	// Providers is the provider registry available to the sidecar.
+	// Providers is the provider registry available to the sidecar and UI.
+	//
+	// Notes:
+	// - Providers own their allowed model list (provider + model are always configured together).
+	// - Exactly one provider model must be marked as default via models[].is_default.
 	Providers []AIProvider `json:"providers,omitempty"`
-}
-
-// AIModelRef is a structured model reference (avoids stringly-typed "<provider>/<model>" editing mistakes).
-type AIModelRef struct {
-	ProviderID string `json:"provider_id"`
-	ModelName  string `json:"model_name"`
-}
-
-type AIModel struct {
-	ProviderID string `json:"provider_id"`
-	ModelName  string `json:"model_name"`
-	Label      string `json:"label,omitempty"`
 }
 
 type AIProvider struct {
@@ -50,6 +35,18 @@ type AIProvider struct {
 	// BaseURL overrides the provider endpoint (example: "https://api.openai.com/v1").
 	// When empty, provider defaults apply (except openai_compatible where base_url is required).
 	BaseURL string `json:"base_url,omitempty"`
+
+	// Models is the allowed model list for this provider (shown in the Chat UI).
+	Models []AIProviderModel `json:"models,omitempty"`
+}
+
+type AIProviderModel struct {
+	ModelName string `json:"model_name"`
+	Label     string `json:"label,omitempty"`
+
+	// IsDefault marks the single default model across all providers.
+	// Exactly one providers[].models[].is_default must be true.
+	IsDefault bool `json:"is_default,omitempty"`
 }
 
 // AIProviderAPIKeyEnvFixed is the fixed environment variable name injected into the AI sidecar process.
@@ -62,20 +59,12 @@ func (c *AIConfig) Validate() error {
 		return errors.New("nil config")
 	}
 
-	defaultProviderID := strings.TrimSpace(c.DefaultModel.ProviderID)
-	defaultModelName := strings.TrimSpace(c.DefaultModel.ModelName)
-	if defaultProviderID == "" || defaultModelName == "" {
-		return errors.New("missing default_model")
-	}
-	if strings.Contains(defaultProviderID, "/") || strings.Contains(defaultModelName, "/") {
-		return errors.New("invalid default_model (provider_id/model_name must not contain '/')")
-	}
-
 	// Validate providers.
 	if len(c.Providers) == 0 {
 		return errors.New("missing providers")
 	}
 	seen := make(map[string]struct{}, len(c.Providers))
+	defaultCount := 0
 	for i := range c.Providers {
 		p := c.Providers[i]
 		id := strings.TrimSpace(p.ID)
@@ -114,39 +103,89 @@ func (c *AIConfig) Validate() error {
 				return fmt.Errorf("providers[%d]: invalid base_url host", i)
 			}
 		}
+
+		// Validate models (provider-owned list).
+		if len(p.Models) == 0 {
+			return fmt.Errorf("providers[%d]: missing models", i)
+		}
+		modelNames := make(map[string]struct{}, len(p.Models))
+		for j := range p.Models {
+			m := p.Models[j]
+			name := strings.TrimSpace(m.ModelName)
+			if name == "" {
+				return fmt.Errorf("providers[%d].models[%d]: missing model_name", i, j)
+			}
+			if strings.Contains(name, "/") {
+				return fmt.Errorf("providers[%d].models[%d]: invalid model_name %q (must not contain '/')", i, j, name)
+			}
+			if _, ok := modelNames[name]; ok {
+				return fmt.Errorf("providers[%d].models[%d]: duplicate model_name %q", i, j, name)
+			}
+			modelNames[name] = struct{}{}
+			if m.IsDefault {
+				defaultCount++
+			}
+		}
 	}
 
-	// Validate models list.
-	if len(c.Models) == 0 {
-		return errors.New("missing models")
+	if defaultCount == 0 {
+		return errors.New("missing default model (providers[].models[].is_default)")
 	}
-	modelIDs := make(map[string]struct{}, len(c.Models))
-	for i := range c.Models {
-		m := c.Models[i]
-		providerID := strings.TrimSpace(m.ProviderID)
-		modelName := strings.TrimSpace(m.ModelName)
-		if providerID == "" || modelName == "" {
-			return fmt.Errorf("models[%d]: missing provider_id/model_name", i)
-		}
-		if strings.Contains(providerID, "/") || strings.Contains(modelName, "/") {
-			return fmt.Errorf("models[%d]: invalid provider_id/model_name (must not contain '/')", i)
-		}
-
-		if _, ok := seen[providerID]; !ok {
-			return fmt.Errorf("models[%d]: unknown provider %q", i, providerID)
-		}
-
-		id := providerID + "/" + modelName
-		if _, ok := modelIDs[id]; ok {
-			return fmt.Errorf("models[%d]: duplicate model %q", i, id)
-		}
-		modelIDs[id] = struct{}{}
-	}
-
-	defaultID := defaultProviderID + "/" + defaultModelName
-	if _, ok := modelIDs[defaultID]; !ok {
-		return fmt.Errorf("default_model %q must be listed in models", defaultID)
+	if defaultCount > 1 {
+		return errors.New("multiple default models (providers[].models[].is_default)")
 	}
 
 	return nil
+}
+
+// DefaultModelID returns the default model wire id (<provider_id>/<model_name>).
+//
+// It assumes Validate() has passed. When config is invalid/incomplete, it returns ("", false).
+func (c *AIConfig) DefaultModelID() (string, bool) {
+	if c == nil {
+		return "", false
+	}
+	for _, p := range c.Providers {
+		pid := strings.TrimSpace(p.ID)
+		if pid == "" {
+			continue
+		}
+		for _, m := range p.Models {
+			if !m.IsDefault {
+				continue
+			}
+			mn := strings.TrimSpace(m.ModelName)
+			if mn == "" {
+				continue
+			}
+			return pid + "/" + mn, true
+		}
+	}
+	return "", false
+}
+
+// IsAllowedModelID reports whether the given model wire id (<provider_id>/<model_name>) exists in the config allow-list.
+func (c *AIConfig) IsAllowedModelID(modelID string) bool {
+	if c == nil {
+		return false
+	}
+	raw := strings.TrimSpace(modelID)
+	pid, mn, ok := strings.Cut(raw, "/")
+	pid = strings.TrimSpace(pid)
+	mn = strings.TrimSpace(mn)
+	if !ok || pid == "" || mn == "" {
+		return false
+	}
+	for _, p := range c.Providers {
+		if strings.TrimSpace(p.ID) != pid {
+			continue
+		}
+		for _, m := range p.Models {
+			if strings.TrimSpace(m.ModelName) == mn {
+				return true
+			}
+		}
+		return false
+	}
+	return false
 }
