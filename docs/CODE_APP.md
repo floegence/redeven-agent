@@ -89,6 +89,18 @@ You can override this with:
 
 - `REDEVEN_CODE_SERVER_STARTUP_TIMEOUT=30s` (any Go `time.ParseDuration` value)
 
+## Extension host reconnection grace
+
+code-server keeps disconnected extension-host sessions alive for a grace period before cleanup.
+
+- In Local UI mode, Redeven sets a shorter default: **30s**.
+  - Rationale: localhost links are stable, and multi-hour grace windows mainly accumulate stale extension-host locks after refresh/reopen.
+- In non-Local-UI mode, Redeven keeps code-server upstream defaults.
+
+You can override the grace window with:
+
+- `REDEVEN_CODE_SERVER_RECONNECTION_GRACE_TIME=45s` (any positive Go `time.ParseDuration` value)
+
 ## Permissions
 
 For MVP, the agent requires **all three** permissions before serving Code App sessions:
@@ -117,6 +129,8 @@ This is conservative: code-server is not designed to enforce a partial permissio
 
 - Frequent "Extension Host reconnect" loops:
   - Redeven now cleans up stale code-server processes for the same codespace session socket before start/stop.
+  - In Local UI mode, Redeven also shortens extension-host reconnection grace to 30s by default to reduce long-lived stale locks.
+  - You can tune this per machine via `REDEVEN_CODE_SERVER_RECONNECTION_GRACE_TIME`.
   - If reconnect loops persist, inspect `remoteagent.log` and `exthost*/remoteexthost.log` under:
     - `~/.redeven/apps/code/spaces/<code_space_id>/codeserver/user-data/logs/<timestamp>/`
 
