@@ -158,7 +158,7 @@ PRAGMA user_version=1;
 		t.Fatalf("rows err: %v", err)
 	}
 
-	for _, col := range []string{"run_status", "run_updated_at_unix_ms", "run_error"} {
+	for _, col := range []string{"model_id", "run_status", "run_updated_at_unix_ms", "run_error"} {
 		if !cols[col] {
 			t.Fatalf("missing migrated column %q", col)
 		}
@@ -168,7 +168,52 @@ PRAGMA user_version=1;
 	if err := s.db.QueryRowContext(ctx, `PRAGMA user_version;`).Scan(&version); err != nil {
 		t.Fatalf("read user_version: %v", err)
 	}
-	if version != 2 {
-		t.Fatalf("user_version=%d, want 2", version)
+	if version != 3 {
+		t.Fatalf("user_version=%d, want 3", version)
+	}
+}
+
+func TestStore_UpdateThreadModelID_DoesNotTouchUpdatedAt(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "threads.sqlite")
+	s, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = s.Close() }()
+
+	ctx := context.Background()
+	if err := s.CreateThread(ctx, Thread{ThreadID: "th_1", EndpointID: "env_1", Title: "chat"}); err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+	th, err := s.GetThread(ctx, "env_1", "th_1")
+	if err != nil {
+		t.Fatalf("GetThread: %v", err)
+	}
+	if th == nil {
+		t.Fatalf("thread missing")
+	}
+	updatedAt := th.UpdatedAtUnixMs
+	if updatedAt <= 0 {
+		t.Fatalf("UpdatedAtUnixMs=%d, want > 0", updatedAt)
+	}
+
+	if err := s.UpdateThreadModelID(ctx, "env_1", "th_1", "openai/gpt-5-mini"); err != nil {
+		t.Fatalf("UpdateThreadModelID: %v", err)
+	}
+
+	th, err = s.GetThread(ctx, "env_1", "th_1")
+	if err != nil {
+		t.Fatalf("GetThread after update: %v", err)
+	}
+	if th == nil {
+		t.Fatalf("thread missing after update")
+	}
+	if th.ModelID != "openai/gpt-5-mini" {
+		t.Fatalf("ModelID=%q, want %q", th.ModelID, "openai/gpt-5-mini")
+	}
+	if th.UpdatedAtUnixMs != updatedAt {
+		t.Fatalf("UpdatedAtUnixMs changed: got=%d want=%d", th.UpdatedAtUnixMs, updatedAt)
 	}
 }

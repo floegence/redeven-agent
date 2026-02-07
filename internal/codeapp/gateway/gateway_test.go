@@ -118,12 +118,16 @@ func writeTestConfigWithAI(t *testing.T) string {
     "default_suite": 1
   },
   "ai": {
-    "default_model": { "provider_id": "openai", "model_name": "gpt-5-mini" },
-    "models": [
-      { "provider_id": "openai", "model_name": "gpt-5-mini", "label": "GPT-5 Mini" }
-    ],
     "providers": [
-      { "id": "openai", "name": "OpenAI", "type": "openai", "base_url": "https://api.openai.com/v1" }
+      {
+        "id": "openai",
+        "name": "OpenAI",
+        "type": "openai",
+        "base_url": "https://api.openai.com/v1",
+        "models": [
+          { "model_name": "gpt-5-mini", "label": "GPT-5 Mini", "is_default": true }
+        ]
+      }
     ]
   }
 }

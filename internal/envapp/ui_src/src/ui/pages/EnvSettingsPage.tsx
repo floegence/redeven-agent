@@ -38,10 +38,9 @@ type PermissionPolicy = Readonly<{
 }>;
 
 type AIProviderType = 'openai' | 'anthropic' | 'openai_compatible';
-type AIProvider = Readonly<{ id: string; name?: string; type: AIProviderType; base_url?: string }>;
-type AIModelRef = Readonly<{ provider_id: string; model_name: string }>;
-type AIModel = Readonly<{ provider_id: string; model_name: string; label?: string }>;
-type AIConfig = Readonly<{ default_model: AIModelRef; models: AIModel[]; providers: AIProvider[] }>;
+type AIProviderModel = Readonly<{ model_name: string; label?: string; is_default?: boolean }>;
+type AIProvider = Readonly<{ id: string; name?: string; type: AIProviderType; base_url?: string; models: AIProviderModel[] }>;
+type AIConfig = Readonly<{ providers: AIProvider[] }>;
 type AISecretsView = Readonly<{ provider_api_key_set: Record<string, boolean> }>;
 
 type SettingsResponse = Readonly<{
@@ -67,8 +66,8 @@ type SettingsResponse = Readonly<{
 }>;
 
 type PermissionRow = { key: string; read: boolean; write: boolean; execute: boolean };
-type AIProviderRow = { id: string; name: string; type: AIProviderType; base_url: string };
-type AIModelRow = { provider_id: string; model_name: string; label: string };
+type AIProviderModelRow = { model_name: string; label: string; is_default: boolean };
+type AIProviderRow = { id: string; name: string; type: AIProviderType; base_url: string; models: AIProviderModelRow[] };
 
 // ============================================================================
 // Constants & Helpers
@@ -92,9 +91,9 @@ function newProviderID(): string {
   return `prov_${Date.now().toString(16)}_${rnd}`;
 }
 
-function modelID(ref: { provider_id: string; model_name: string }): string {
-  const pid = String(ref?.provider_id ?? '').trim();
-  const mn = String(ref?.model_name ?? '').trim();
+function modelID(providerID: string, modelName: string): string {
+  const pid = String(providerID ?? '').trim();
+  const mn = String(modelName ?? '').trim();
   if (!pid || !mn) return '';
   return `${pid}/${mn}`;
 }
@@ -105,9 +104,15 @@ function defaultPermissionPolicy(): PermissionPolicy {
 
 function defaultAIConfig(): AIConfig {
   return {
-    default_model: { provider_id: 'openai', model_name: 'gpt-5-mini' },
-    models: [{ provider_id: 'openai', model_name: 'gpt-5-mini', label: 'GPT-5 Mini' }],
-    providers: [{ id: 'openai', name: 'OpenAI', type: 'openai', base_url: 'https://api.openai.com/v1' }],
+    providers: [
+      {
+        id: 'openai',
+        name: 'OpenAI',
+        type: 'openai',
+        base_url: 'https://api.openai.com/v1',
+        models: [{ model_name: 'gpt-5-mini', label: 'GPT-5 Mini', is_default: true }],
+      },
+    ],
   };
 }
 
@@ -551,12 +556,15 @@ export function EnvSettingsPage() {
   const [policyByApp, setPolicyByApp] = createSignal<PermissionRow[]>([]);
 
   // AI fields
-  const [aiDefaultProviderID, setAiDefaultProviderID] = createSignal('openai');
-  const [aiDefaultModelName, setAiDefaultModelName] = createSignal('gpt-5-mini');
   const [aiProviders, setAiProviders] = createSignal<AIProviderRow[]>([
-    { id: 'openai', name: 'OpenAI', type: 'openai', base_url: 'https://api.openai.com/v1' },
+    {
+      id: 'openai',
+      name: 'OpenAI',
+      type: 'openai',
+      base_url: 'https://api.openai.com/v1',
+      models: [{ model_name: 'gpt-5-mini', label: 'GPT-5 Mini', is_default: true }],
+    },
   ]);
-  const [aiModels, setAiModels] = createSignal<AIModelRow[]>([]);
 
   // AI provider keys (stored locally in secrets.json; never returned in plaintext).
   const [aiProviderKeySet, setAiProviderKeySet] = createSignal<Record<string, boolean>>({});
@@ -641,63 +649,45 @@ export function EnvSettingsPage() {
   };
 
   const buildAIValue = (): AIConfig => {
-    const defaultModel: AIModelRef = {
-      provider_id: String(aiDefaultProviderID() ?? '').trim(),
-      model_name: String(aiDefaultModelName() ?? '').trim(),
-    };
-
     const providers = aiProviders().map((p) => {
       const out: any = {
         id: String(p.id ?? '').trim(),
         type: p.type,
+        models: [] as AIProviderModel[],
       };
       const name = String(p.name ?? '').trim();
       if (name) out.name = name;
       const baseURL = String(p.base_url ?? '').trim();
       if (baseURL) out.base_url = baseURL;
+      out.models = (p.models ?? []).map((m) => {
+        const mm: any = { model_name: String(m.model_name ?? '').trim() };
+        const label = String(m.label ?? '').trim();
+        if (label) mm.label = label;
+        if (m.is_default) mm.is_default = true;
+        return mm as AIProviderModel;
+      });
+
       return out as AIProvider;
     });
 
-    const models: AIModel[] = aiModels().map((m) => {
-      const out: any = {
-        provider_id: String(m.provider_id ?? '').trim(),
-        model_name: String(m.model_name ?? '').trim(),
-      };
-      const label = String(m.label ?? '').trim();
-      if (label) out.label = label;
-      return out as AIModel;
-    });
-
-    // Keep default_model always selectable in UI, even if the user forgot to add it manually.
-    if (defaultModel.provider_id && defaultModel.model_name) {
-      const defaultID = modelID(defaultModel);
-      const listed = models.some((m) => modelID(m) === defaultID);
-      if (!listed) {
-        models.unshift({ provider_id: defaultModel.provider_id, model_name: defaultModel.model_name });
-      }
-    }
-
-    return { default_model: defaultModel, providers, models };
+    return { providers };
   };
 
   const validateAIValue = (cfg: AIConfig) => {
-    const dm = cfg.default_model as any;
-    const defaultProviderID = String(dm?.provider_id ?? '').trim();
-    const defaultModelName = String(dm?.model_name ?? '').trim();
-    if (!defaultProviderID || !defaultModelName) throw new Error('Missing default_model.');
-    if (defaultProviderID.includes('/') || defaultModelName.includes('/')) throw new Error('default_model must not contain "/".');
-
-    const providers = Array.isArray(cfg.providers) ? cfg.providers : [];
+    const providers = Array.isArray((cfg as any).providers) ? (cfg as any).providers : [];
     if (providers.length === 0) throw new Error('Missing providers.');
 
     const providerIDs = new Set<string>();
+    let defaultCount = 0;
     for (const p of providers) {
       const id = String((p as any).id ?? '').trim();
       const name = String((p as any).name ?? '').trim();
       const typ = String((p as any).type ?? '').trim();
       const baseURL = String((p as any).base_url ?? '').trim();
+      const models = Array.isArray((p as any).models) ? (p as any).models : [];
 
       if (!id) throw new Error('Provider id is required.');
+      if (id.includes('/')) throw new Error(`Provider "${id}" id must not contain "/".`);
       if (providerIDs.has(id)) throw new Error(`Duplicate provider id: ${id}`);
       providerIDs.add(id);
       if (name && name.length > 80) throw new Error(`Provider "${id}" name is too long.`);
@@ -716,27 +706,58 @@ export function EnvSettingsPage() {
         if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new Error(`Provider "${id}" base_url must be http/https.`);
         if (!u.hostname) throw new Error(`Provider "${id}" base_url host is missing.`);
       }
+
+      if (models.length === 0) throw new Error(`Provider "${id}" is missing models.`);
+
+      const modelNames = new Set<string>();
+      for (const m of models) {
+        const mn = String((m as any).model_name ?? '').trim();
+        const isDefault = !!(m as any).is_default;
+        if (!mn) throw new Error(`Provider "${id}" has a model with missing model_name.`);
+        if (mn.includes('/')) throw new Error(`Provider "${id}" model_name must not contain "/".`);
+        if (modelNames.has(mn)) throw new Error(`Provider "${id}" has duplicate model_name: ${mn}`);
+        modelNames.add(mn);
+        if (isDefault) defaultCount++;
+      }
     }
 
-    if (!providerIDs.has(defaultProviderID)) throw new Error(`default_model references unknown provider "${defaultProviderID}".`);
+    if (defaultCount === 0) throw new Error('Missing default model (providers[].models[].is_default).');
+    if (defaultCount > 1) throw new Error('Multiple default models (providers[].models[].is_default).');
+  };
 
-    const models = Array.isArray(cfg.models) ? cfg.models : [];
-    if (models.length === 0) throw new Error('At least one model is required.');
+  const normalizeAIProviders = (rows: AIProviderRow[]): AIProviderRow[] => {
+    const list: AIProviderRow[] = (Array.isArray(rows) ? rows : []).map((p) => ({
+      id: String((p as any).id ?? ''),
+      name: String((p as any).name ?? ''),
+      type: (p as any).type as AIProviderType,
+      base_url: String((p as any).base_url ?? ''),
+      models: (Array.isArray((p as any).models) ? ((p as any).models as any[]) : []).map((m) => ({
+        model_name: String(m?.model_name ?? ''),
+        label: String(m?.label ?? ''),
+        is_default: !!m?.is_default,
+      })),
+    }));
 
-    const modelIDs = new Set<string>();
-    for (const m of models) {
-      const pid = String((m as any).provider_id ?? '').trim();
-      const mn = String((m as any).model_name ?? '').trim();
-      if (!pid || !mn) throw new Error('Model provider_id and model_name are required.');
-      if (pid.includes('/') || mn.includes('/')) throw new Error('Model provider_id/model_name must not contain "/".');
-      const id = `${pid}/${mn}`;
-      if (modelIDs.has(id)) throw new Error(`Duplicate model: ${id}`);
-      modelIDs.add(id);
-      if (!providerIDs.has(pid)) throw new Error(`Model "${id}" references unknown provider "${pid}".`);
+    let defaultFound = false;
+    for (let i = 0; i < list.length; i++) {
+      const p = list[i];
+      const models = Array.isArray(p.models) ? p.models : [];
+      if (models.length === 0) {
+        p.models = [{ model_name: '', label: '', is_default: false }];
+        continue;
+      }
+      p.models = models.map((m) => {
+        if (!m.is_default) return { ...m, is_default: false };
+        if (defaultFound) return { ...m, is_default: false };
+        defaultFound = true;
+        return { ...m, is_default: true };
+      });
     }
 
-    const defaultID = `${defaultProviderID}/${defaultModelName}`;
-    if (!modelIDs.has(defaultID)) throw new Error('default_model must be listed in models.');
+    if (!defaultFound && list.length > 0 && list[0].models.length > 0) {
+      list[0] = { ...list[0], models: [{ ...list[0].models[0], is_default: true }, ...list[0].models.slice(1)] };
+    }
+    return list;
   };
 
   const refreshAIProviderKeyStatus = async (providerIDs: string[]) => {
@@ -861,29 +882,30 @@ export function EnvSettingsPage() {
 
     if (!aiDirty()) {
       const a = s.ai ?? defaultAIConfig();
-      setAiDefaultProviderID(String(a.default_model?.provider_id ?? ''));
-      setAiDefaultModelName(String(a.default_model?.model_name ?? ''));
-      setAiProviders(
-        (a.providers ?? []).map((p) => ({
-          id: String(p.id ?? ''),
-          name: String(p.name ?? ''),
-          type: p.type,
-          base_url: String(p.base_url ?? ''),
+      const rows: AIProviderRow[] = (a.providers ?? []).map((p) => ({
+        id: String(p.id ?? ''),
+        name: String(p.name ?? ''),
+        type: p.type,
+        base_url: String(p.base_url ?? ''),
+        models: (p.models ?? []).map((m) => ({
+          model_name: String(m.model_name ?? ''),
+          label: String(m.label ?? ''),
+          is_default: !!m.is_default,
         })),
-      );
-
-      const models = Array.isArray(a.models) ? a.models : [];
-      const rows = models.map((m) => ({
-        provider_id: String(m.provider_id ?? ''),
-        model_name: String(m.model_name ?? ''),
-        label: String(m.label ?? ''),
       }));
-      if (rows.length === 0) {
-        const pid = String(a.default_model?.provider_id ?? '').trim();
-        const mn = String(a.default_model?.model_name ?? '').trim();
-        if (pid && mn) rows.push({ provider_id: pid, model_name: mn, label: '' });
-      }
-      setAiModels(rows);
+      const fallback = defaultAIConfig();
+      const fallbackRows: AIProviderRow[] = (fallback.providers ?? []).map((p) => ({
+        id: String(p.id ?? ''),
+        name: String(p.name ?? ''),
+        type: p.type,
+        base_url: String(p.base_url ?? ''),
+        models: (p.models ?? []).map((m) => ({
+          model_name: String(m.model_name ?? ''),
+          label: String(m.label ?? ''),
+          is_default: !!m.is_default,
+        })),
+      }));
+      setAiProviders(normalizeAIProviders(rows.length > 0 ? rows : fallbackRows));
 
       setAiJSON(JSON.stringify(a, null, 2));
 
@@ -1036,37 +1058,27 @@ export function EnvSettingsPage() {
       const v = parseJSONOrThrow(aiJSON());
       if (!isJSONObject(v)) throw new Error('AI JSON must be an object.');
 
-      const dmRaw = (v as any).default_model;
       const providersRaw = (v as any).providers;
-      const modelsRaw = (v as any).models;
-
-      if (!isJSONObject(dmRaw)) throw new Error('AI JSON is missing default_model.');
       if (!Array.isArray(providersRaw)) throw new Error('AI JSON is missing providers[].');
 
-      setAiDefaultProviderID(String((dmRaw as any).provider_id ?? ''));
-      setAiDefaultModelName(String((dmRaw as any).model_name ?? ''));
       setAiProviders(
-        providersRaw.map((p) => ({
+        normalizeAIProviders(
+          providersRaw.map((p) => ({
           id: String(p?.id ?? ''),
           name: String(p?.name ?? ''),
           type: String(p?.type ?? '') as AIProviderType,
           base_url: String(p?.base_url ?? ''),
+          models: Array.isArray(p?.models)
+            ? (p.models as any[]).map((m) => ({
+                model_name: String(m?.model_name ?? ''),
+                label: String(m?.label ?? ''),
+                is_default: !!m?.is_default,
+              }))
+            : [],
         })),
+        ),
       );
       void refreshAIProviderKeyStatus(providersRaw.map((p) => String(p?.id ?? '')));
-
-      const models = Array.isArray(modelsRaw) ? modelsRaw : [];
-      const rows = models.map((m) => ({
-        provider_id: String(m?.provider_id ?? ''),
-        model_name: String(m?.model_name ?? ''),
-        label: String(m?.label ?? ''),
-      }));
-      if (rows.length === 0) {
-        const pid = String((dmRaw as any).provider_id ?? '').trim();
-        const mn = String((dmRaw as any).model_name ?? '').trim();
-        if (pid && mn) rows.push({ provider_id: pid, model_name: mn, label: '' });
-      }
-      setAiModels(rows);
       setAiView('ui');
     } catch (e) {
       setAiError(e instanceof Error ? e.message : String(e));
@@ -1251,16 +1263,18 @@ export function EnvSettingsPage() {
   const resetAI = () => {
     setAiError(null);
     const d = defaultAIConfig();
-    setAiDefaultProviderID(String(d.default_model?.provider_id ?? ''));
-    setAiDefaultModelName(String(d.default_model?.model_name ?? ''));
-    setAiProviders(d.providers.map((p) => ({ id: p.id, name: String(p.name ?? ''), type: p.type, base_url: String(p.base_url ?? '') })));
-    setAiModels(
-      d.models.map((m) => ({
-        provider_id: String(m.provider_id ?? ''),
+    const rows: AIProviderRow[] = (d.providers ?? []).map((p) => ({
+      id: String(p.id ?? ''),
+      name: String(p.name ?? ''),
+      type: p.type,
+      base_url: String(p.base_url ?? ''),
+      models: (p.models ?? []).map((m) => ({
         model_name: String(m.model_name ?? ''),
         label: String(m.label ?? ''),
+        is_default: !!m.is_default,
       })),
-    );
+    }));
+    setAiProviders(normalizeAIProviders(rows));
     setAiDirty(true);
     void refreshAIProviderKeyStatus(d.providers.map((p) => String(p.id ?? '')));
     if (aiView() === 'json') setAiJSON(JSON.stringify(d, null, 2));
@@ -1898,7 +1912,7 @@ export function EnvSettingsPage() {
           <SettingsCard
             icon={Bot}
             title="AI"
-            description="Configure AI providers and models. API keys are stored locally and never sent to the control-plane."
+            description="Configure AI providers, models, and API keys. Keys are stored locally and never sent to the control-plane. Model selection is stored per chat thread."
             badge={aiEnabled() ? 'Enabled' : 'Disabled'}
             badgeVariant={aiEnabled() ? 'success' : 'default'}
             error={aiError()}
@@ -1943,75 +1957,41 @@ export function EnvSettingsPage() {
               }
             >
               <div class="space-y-6">
-                {/* Default model */}
-                <div class="space-y-2">
-                  <FieldLabel>default_model</FieldLabel>
-                  <div class="grid grid-cols-1 md:grid-cols-2 gap-4 w-full max-w-2xl">
-                    <div>
-                      <FieldLabel hint="required">provider_id</FieldLabel>
-                      <Select
-                        value={String(aiDefaultProviderID() ?? '').trim()}
-                        onChange={(v) => {
-                          setAiDefaultProviderID(String(v ?? '').trim());
-                          setAiDirty(true);
-                        }}
-                        disabled={!canInteract()}
-                        options={aiProviders()
-                          .map((p) => {
-                            const id = String(p.id ?? '').trim();
-                            const name = String(p.name ?? '').trim();
-                            if (!id) return null;
-                            return { value: id, label: name || id };
-                          })
-                          .filter((x) => !!x) as any}
-                        class="w-full"
-                      />
-                    </div>
-                    <div>
-                      <FieldLabel hint="required">model_name</FieldLabel>
-                      <Input
-                        value={String(aiDefaultModelName() ?? '')}
-                        onInput={(e) => {
-                          setAiDefaultModelName(e.currentTarget.value);
-                          setAiDirty(true);
-                        }}
-                        placeholder="gpt-5-mini"
-                        size="sm"
-                        class="w-full"
-                        disabled={!canInteract()}
-                      />
-                    </div>
-                  </div>
-                  <div class="text-xs text-muted-foreground">
-                    Wire id: <span class="font-mono">{modelID({ provider_id: aiDefaultProviderID(), model_name: aiDefaultModelName() })}</span>
-                  </div>
-                </div>
-
                 {/* Providers */}
                 <div class="space-y-3">
                   <div class="flex items-center justify-between">
-                    <div class="text-sm font-medium text-foreground">Providers</div>
+                    <div>
+                      <div class="text-sm font-medium text-foreground">Providers</div>
+                      <p class="text-xs text-muted-foreground mt-0.5">
+                        Models are configured per provider. Exactly one model across all providers must be default (used for new chats). Each chat thread stores its selected model.
+                      </p>
+                    </div>
                     <Button
                       size="sm"
                       variant="outline"
                       onClick={() => {
                         const id = newProviderID();
-                        setAiProviders((prev) => [
-                          ...prev,
-                          { id, name: '', type: 'openai', base_url: 'https://api.openai.com/v1' },
-                        ]);
-                        if (!String(aiDefaultProviderID() ?? '').trim()) {
-                          setAiDefaultProviderID(id);
-                        }
+                        setAiProviders((prev) =>
+                          normalizeAIProviders([
+                            ...prev,
+                            {
+                              id,
+                              name: '',
+                              type: 'openai',
+                              base_url: 'https://api.openai.com/v1',
+                              models: [{ model_name: '', label: '', is_default: false }],
+                            },
+                          ]),
+                        );
                         setAiDirty(true);
                       }}
                       disabled={!canInteract()}
                     >
                       Add Provider
                     </Button>
-	                  </div>
+                  </div>
 
-	                  <div class="space-y-3">
+                  <div class="space-y-3">
                     <Index each={aiProviders()}>
                       {(p, idx) => (
                         <div class="p-4 rounded-lg border border-border bg-muted/20 space-y-4">
@@ -2025,25 +2005,14 @@ export function EnvSettingsPage() {
                               variant="ghost"
                               class="text-muted-foreground hover:text-destructive"
                               onClick={() => {
-                                const removedID = String(p().id ?? '').trim();
-                                setAiProviders((prev) => {
-                                  const next = prev.filter((_, i) => i !== idx);
-                                  if (removedID && String(aiDefaultProviderID() ?? '').trim() === removedID) {
-                                    const nextID = String(next?.[0]?.id ?? '').trim();
-                                    setAiDefaultProviderID(nextID);
-                                  }
-                                  return next;
-                                });
-	                                if (removedID) {
-	                                  setAiModels((prev) => prev.filter((m) => String(m.provider_id ?? '').trim() !== removedID));
-	                                }
-	                                setAiDirty(true);
-	                              }}
-	                              disabled={!canInteract()}
-	                            >
-	                              Remove
-	                            </Button>
-	                          </div>
+                                setAiProviders((prev) => normalizeAIProviders(prev.filter((_, i) => i !== idx)));
+                                setAiDirty(true);
+                              }}
+                              disabled={!canInteract() || aiProviders().length <= 1}
+                            >
+                              Remove
+                            </Button>
+                          </div>
 
 	                          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
 	                            <div>
@@ -2144,125 +2113,173 @@ export function EnvSettingsPage() {
 	                                  Clear
 	                                </Button>
 	                              </div>
-	                              <p class="text-xs text-muted-foreground">
-	                                Keys are saved in a separate local secrets file and are never written to config.json. They are injected into the sidecar as{' '}
-	                                <span class="font-mono">{AI_API_KEY_ENV}</span>.
-	                              </p>
-	                            </div>
-	                          </div>
-	                        </div>
-	                      )}
-	                    </Index>
-	                  </div>
-	                </div>
+		                              <p class="text-xs text-muted-foreground">
+		                                Keys are saved in a separate local secrets file and are never written to config.json. They are injected into the sidecar as{' '}
+		                                <span class="font-mono">{AI_API_KEY_ENV}</span>.
+		                              </p>
+		                            </div>
 
-                {/* Models */}
-                <div class="space-y-3">
-                  <div class="flex items-center justify-between">
-                    <div>
-                      <div class="text-sm font-medium text-foreground">Models</div>
-                      <p class="text-xs text-muted-foreground mt-0.5">
-                        Configure the model options shown in AI Chat. default_model is automatically kept in this list.
-                      </p>
-                    </div>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => {
-                        const pid = String(aiDefaultProviderID() ?? '').trim() || String(aiProviders()?.[0]?.id ?? '').trim();
-                        setAiModels((prev) => [...prev, { provider_id: pid, model_name: '', label: '' }]);
-                        setAiDirty(true);
-                      }}
-                      disabled={!canInteract()}
-                    >
-                      Add Model
-                    </Button>
-                  </div>
+                                {/* Models */}
+                                <div class="md:col-span-2 space-y-3">
+                                  <div class="flex items-center justify-between">
+                                    <div>
+                                      <div class="text-sm font-medium text-foreground">Models</div>
+                                      <p class="text-xs text-muted-foreground mt-0.5">
+                                        Shown in AI Chat. Mark one model as default to start new chats with it.
+                                      </p>
+                                    </div>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => {
+                                        setAiProviders((prev) =>
+                                          normalizeAIProviders(
+                                            prev.map((it, i) => {
+                                              if (i !== idx) return it;
+                                              const models = Array.isArray(it.models) ? it.models : [];
+                                              return { ...it, models: [...models, { model_name: '', label: '', is_default: false }] };
+                                            }),
+                                          ),
+                                        );
+                                        setAiDirty(true);
+                                      }}
+                                      disabled={!canInteract()}
+                                    >
+                                      Add Model
+                                    </Button>
+                                  </div>
 
-                  <Show when={aiModels().length > 0} fallback={<p class="text-xs text-muted-foreground">No models configured.</p>}>
-                    <div class="space-y-3">
-                      <Index each={aiModels()}>
-                        {(m, idx) => (
-                          <div class="p-4 rounded-lg border border-border bg-muted/20 space-y-3">
-                            <div class="flex items-center justify-between">
-                              <span class="text-sm font-medium">Model {idx + 1}</span>
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                class="text-muted-foreground hover:text-destructive"
-                                onClick={() => {
-                                  setAiModels((prev) => prev.filter((_, i) => i !== idx));
-                                  setAiDirty(true);
-                                }}
-                                disabled={!canInteract() || aiModels().length <= 1}
-                              >
-                                Remove
-                              </Button>
-                            </div>
-                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                              <div>
-                                <FieldLabel hint="required">provider_id</FieldLabel>
-                                <Select
-                                  value={String(m().provider_id ?? '').trim()}
-                                  onChange={(v) => {
-                                    const pid = String(v ?? '').trim();
-                                    setAiModels((prev) => prev.map((it, i) => (i === idx ? { ...it, provider_id: pid } : it)));
-                                    setAiDirty(true);
-                                  }}
-                                  disabled={!canInteract()}
-                                  options={aiProviders()
-                                    .map((p) => {
-                                      const id = String(p.id ?? '').trim();
-                                      const name = String(p.name ?? '').trim();
-                                      if (!id) return null;
-                                      return { value: id, label: name || id };
-                                    })
-                                    .filter((x) => !!x) as any}
-                                  class="w-full"
-                                />
-                              </div>
-                              <div>
-                                <FieldLabel hint="required">model_name</FieldLabel>
-                                <Input
-                                  value={m().model_name}
-                                  onInput={(e) => {
-                                    const v = e.currentTarget.value;
-                                    setAiModels((prev) => prev.map((it, i) => (i === idx ? { ...it, model_name: v } : it)));
-                                    setAiDirty(true);
-                                  }}
-                                  placeholder="gpt-5-mini"
-                                  size="sm"
-                                  class="w-full"
-                                  disabled={!canInteract()}
-                                />
-                              </div>
-                              <div class="md:col-span-2">
-                                <FieldLabel hint="optional">label</FieldLabel>
-                                <Input
-                                  value={m().label}
-                                  onInput={(e) => {
-                                    const v = e.currentTarget.value;
-                                    setAiModels((prev) => prev.map((it, i) => (i === idx ? { ...it, label: v } : it)));
-                                    setAiDirty(true);
-                                  }}
-                                  placeholder="GPT-5 Mini"
-                                  size="sm"
-                                  class="w-full"
-                                  disabled={!canInteract()}
-                                />
-                                <div class="text-xs text-muted-foreground mt-1">
-                                  Wire id:{' '}
-                                  <span class="font-mono">{modelID({ provider_id: m().provider_id, model_name: m().model_name })}</span>
+                                  <div class="space-y-3">
+                                    <Index each={p().models}>
+                                      {(m, midx) => (
+                                        <div class="p-4 rounded-lg border border-border bg-background/40 space-y-3">
+                                          <div class="flex items-center justify-between gap-3">
+                                            <div class="flex items-center gap-2">
+                                              <span class="text-sm font-medium">Model {midx + 1}</span>
+                                              <Show
+                                                when={m().is_default}
+                                                fallback={
+                                                  <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    class="h-6 px-2 text-[11px]"
+                                                    onClick={() => {
+                                                      setAiProviders((prev) =>
+                                                        normalizeAIProviders(
+                                                          prev.map((it, i) => ({
+                                                            ...it,
+                                                            models: (Array.isArray(it.models) ? it.models : []).map((mm, j) => ({
+                                                              ...mm,
+                                                              is_default: i === idx && j === midx,
+                                                            })),
+                                                          })),
+                                                        ),
+                                                      );
+                                                      setAiDirty(true);
+                                                    }}
+                                                    disabled={!canInteract()}
+                                                  >
+                                                    Set default
+                                                  </Button>
+                                                }
+                                              >
+                                                <span class="text-[10px] font-medium px-2 py-0.5 rounded-full bg-primary/10 text-primary">
+                                                  Default
+                                                </span>
+                                              </Show>
+                                            </div>
+                                            <Button
+                                              size="sm"
+                                              variant="ghost"
+                                              class="text-muted-foreground hover:text-destructive"
+                                              onClick={() => {
+                                                setAiProviders((prev) =>
+                                                  normalizeAIProviders(
+                                                    prev.map((it, i) => {
+                                                      if (i !== idx) return it;
+                                                      const models = (Array.isArray(it.models) ? it.models : []).filter((_, j) => j !== midx);
+                                                      return { ...it, models: models.length > 0 ? models : [{ model_name: '', label: '', is_default: false }] };
+                                                    }),
+                                                  ),
+                                                );
+                                                setAiDirty(true);
+                                              }}
+                                              disabled={!canInteract() || (p().models?.length ?? 0) <= 1}
+                                            >
+                                              Remove
+                                            </Button>
+                                          </div>
+
+                                          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div>
+                                              <FieldLabel hint="required">model_name</FieldLabel>
+                                              <Input
+                                                value={m().model_name}
+                                                onInput={(e) => {
+                                                  const v = e.currentTarget.value;
+                                                  setAiProviders((prev) =>
+                                                    prev.map((it, i) =>
+                                                      i !== idx
+                                                        ? it
+                                                        : {
+                                                            ...it,
+                                                            models: (Array.isArray(it.models) ? it.models : []).map((mm, j) =>
+                                                              j === midx ? { ...mm, model_name: v } : mm,
+                                                            ),
+                                                          },
+                                                    ),
+                                                  );
+                                                  setAiDirty(true);
+                                                }}
+                                                placeholder="gpt-5-mini"
+                                                size="sm"
+                                                class="w-full"
+                                                disabled={!canInteract()}
+                                              />
+                                            </div>
+                                            <div>
+                                              <FieldLabel hint="optional">label</FieldLabel>
+                                              <Input
+                                                value={m().label}
+                                                onInput={(e) => {
+                                                  const v = e.currentTarget.value;
+                                                  setAiProviders((prev) =>
+                                                    prev.map((it, i) =>
+                                                      i !== idx
+                                                        ? it
+                                                        : {
+                                                            ...it,
+                                                            models: (Array.isArray(it.models) ? it.models : []).map((mm, j) =>
+                                                              j === midx ? { ...mm, label: v } : mm,
+                                                            ),
+                                                          },
+                                                    ),
+                                                  );
+                                                  setAiDirty(true);
+                                                }}
+                                                placeholder="GPT-5 Mini"
+                                                size="sm"
+                                                class="w-full"
+                                                disabled={!canInteract()}
+                                              />
+                                            </div>
+                                            <div class="md:col-span-2 text-xs text-muted-foreground">
+                                              Wire id: <span class="font-mono">{modelID(p().id, m().model_name)}</span>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      )}
+                                    </Index>
+                                  </div>
                                 </div>
-                              </div>
-                            </div>
-                          </div>
-                        )}
-                      </Index>
-                    </div>
-                  </Show>
-                </div>
-              </div>
+		                          </div>
+		                        </div>
+		                      )}
+		                    </Index>
+		                  </div>
+		                </div>
+
+	              </div>
             </Show>
           </SettingsCard>
         </div>

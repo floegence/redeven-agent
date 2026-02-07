@@ -794,10 +794,10 @@ export function EnvAIPage() {
                 <Show when={ai.aiEnabled() && ai.modelOptions().length > 0}>
                   <Select
                     value={ai.selectedModel()}
-                    onChange={ai.setSelectedModel}
+                    onChange={(v) => ai.selectModel(String(v ?? '').trim())}
                     options={ai.modelOptions()}
                     placeholder="Select model..."
-                    disabled={ai.models.loading || !!ai.models.error || ai.running() || activeThreadRunning()}
+                    disabled={ai.models.loading || !!ai.models.error || activeThreadRunning()}
                     class="min-w-[140px] max-w-[200px] h-7 text-[11px]"
                   />
                 </Show>

@@ -19,8 +19,9 @@ Enable the feature by adding an `ai` section to the agent config file (default: 
 
 Notes:
 
-- `default_model` is a structured reference `{ provider_id, model_name }` (wire id remains `<provider_id>/<model_name>`).
-- `models` is an optional allow-list. If provided, `default_model` must be listed.
+- Providers own their model list: `ai.providers[].models[]` is the allow-list shown in the Chat UI.
+- Exactly one `providers[].models[].is_default` must be true (default for new chats).
+- The wire model id remains `<provider_id>/<model_name>` (used by the sidecar and stored on each chat thread).
 - `providers[].base_url` is optional for `openai` / `anthropic`, and **required** for `openai_compatible`.
 
 API keys:
@@ -46,23 +47,25 @@ Example:
     "local_max": { "read": true, "write": true, "execute": true }
   },
   "ai": {
-    "default_model": { "provider_id": "openai", "model_name": "gpt-5-mini" },
-    "models": [
-      { "provider_id": "openai", "model_name": "gpt-5-mini", "label": "GPT-5 Mini" },
-      { "provider_id": "anthropic", "model_name": "claude-3-5-sonnet-latest", "label": "Claude Sonnet" }
-    ],
     "providers": [
       {
         "id": "openai",
         "type": "openai",
         "name": "OpenAI",
-        "base_url": "https://api.openai.com/v1"
+        "base_url": "https://api.openai.com/v1",
+        "models": [
+          { "model_name": "gpt-5-mini", "label": "GPT-5 Mini", "is_default": true },
+          { "model_name": "gpt-5", "label": "GPT-5" }
+        ]
       },
       {
         "id": "anthropic",
         "type": "anthropic",
         "name": "Anthropic",
-        "base_url": "https://api.anthropic.com/v1"
+        "base_url": "https://api.anthropic.com/v1",
+        "models": [
+          { "model_name": "claude-3-5-sonnet-latest", "label": "Claude Sonnet" }
+        ]
       }
     ]
   }

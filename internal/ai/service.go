@@ -318,20 +318,44 @@ func (s *Service) ListModels() (*ModelsResponse, error) {
 		providerNameByID[id] = name
 	}
 
-	defaultProviderID := strings.TrimSpace(cfg.DefaultModel.ProviderID)
-	defaultModelName := strings.TrimSpace(cfg.DefaultModel.ModelName)
+	defaultProviderID := ""
+	defaultModelName := ""
+	defaultModelDisplayName := ""
+	for _, p := range cfg.Providers {
+		pid := strings.TrimSpace(p.ID)
+		pn := strings.TrimSpace(providerNameByID[pid])
+		if pn == "" {
+			pn = pid
+		}
+		for _, m := range p.Models {
+			if !m.IsDefault {
+				continue
+			}
+			mn := strings.TrimSpace(m.ModelName)
+			if pid == "" || mn == "" {
+				continue
+			}
+			defaultProviderID = pid
+			defaultModelName = mn
+			display := strings.TrimSpace(m.Label)
+			if display == "" {
+				display = mn
+			}
+			defaultModelDisplayName = pn + " / " + display
+		}
+	}
 	defaultModelID := strings.TrimSpace(defaultProviderID) + "/" + strings.TrimSpace(defaultModelName)
 
 	out := &ModelsResponse{
 		DefaultModel: defaultModelID,
 	}
 	if out.DefaultModel == "" {
-		return nil, errors.New("invalid ai config: missing default_model")
+		return nil, errors.New("invalid ai config: missing default model")
 	}
 
-	defaultLabel := out.DefaultModel
-	if pn := strings.TrimSpace(providerNameByID[defaultProviderID]); pn != "" {
-		defaultLabel = pn + " / " + defaultModelName
+	defaultLabel := strings.TrimSpace(defaultModelDisplayName)
+	if defaultLabel == "" {
+		defaultLabel = out.DefaultModel
 	}
 
 	seen := make(map[string]struct{})
@@ -353,24 +377,29 @@ func (s *Service) ListModels() (*ModelsResponse, error) {
 
 	appendModel(out.DefaultModel, defaultLabel)
 
-	if len(cfg.Models) == 0 {
-		return nil, errors.New("invalid ai config: missing models")
-	}
-
-	for _, m := range cfg.Models {
-		providerID := strings.TrimSpace(m.ProviderID)
-		modelName := strings.TrimSpace(m.ModelName)
-		if providerID == "" || modelName == "" {
+	for _, p := range cfg.Providers {
+		providerID := strings.TrimSpace(p.ID)
+		if providerID == "" {
 			continue
 		}
-		id := providerID + "/" + modelName
-		label := strings.TrimSpace(m.Label)
-		if label == "" {
-			if pn := strings.TrimSpace(providerNameByID[providerID]); pn != "" {
-				label = pn + " / " + modelName
-			}
+		pn := strings.TrimSpace(providerNameByID[providerID])
+		if pn == "" {
+			pn = providerID
 		}
-		appendModel(id, label)
+
+		for _, m := range p.Models {
+			modelName := strings.TrimSpace(m.ModelName)
+			if modelName == "" {
+				continue
+			}
+			id := providerID + "/" + modelName
+			display := strings.TrimSpace(m.Label)
+			if display == "" {
+				display = modelName
+			}
+			label := pn + " / " + display
+			appendModel(id, label)
+		}
 	}
 
 	return out, nil
@@ -594,10 +623,29 @@ func (s *Service) StartRun(ctx context.Context, meta *session.Meta, runID string
 
 	model := strings.TrimSpace(req.Model)
 	if model == "" {
-		model = strings.TrimSpace(cfg.DefaultModel.ProviderID) + "/" + strings.TrimSpace(cfg.DefaultModel.ModelName)
+		model = strings.TrimSpace(th.ModelID)
+	}
+	if model == "" {
+		if id, ok := cfg.DefaultModelID(); ok {
+			model = id
+		}
 	}
 	if model == "" {
 		return errors.New("missing model")
+	}
+	if _, _, ok := strings.Cut(model, "/"); !ok {
+		return errors.New("invalid model")
+	}
+	// Enforce allow-list: model must exist in providers[].models[].
+	if !cfg.IsAllowedModelID(model) {
+		return fmt.Errorf("model not allowed: %s", model)
+	}
+
+	// Persist thread model selection without touching updated_at (avoid reordering sidebar).
+	{
+		pctx, cancel := context.WithTimeout(context.Background(), persistTO)
+		_ = db.UpdateThreadModelID(pctx, endpointID, threadID, model)
+		cancel()
 	}
 
 	runReq := RunRequest{
