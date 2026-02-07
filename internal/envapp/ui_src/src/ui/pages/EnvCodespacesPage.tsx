@@ -126,17 +126,11 @@ async function openCodespace(codeSpaceID: string, setStatus: (s: string) => void
       const codePort = Number(sp?.code_port ?? 0);
       if (!Number.isFinite(codePort) || codePort <= 0) throw new Error("Invalid code server port");
 
+      const origin = `http://127.0.0.1:${codePort}`;
+      registerSandboxWindow(win, { origin, floe_app: FLOE_APP_CODE, code_space_id: codeSpaceID, app_path: "/" });
+
       const folder = String(sp?.workspace_path ?? "").trim();
-      const appPath = folder ? `/?folder=${encodeURIComponent(folder)}` : "/";
-
-      // Local UI mode: keep the same port, but use a sandbox-like host so the agent gateway
-      // can apply codespace-specific shims/hardening (and keep origins isolated per codespace).
-      const scheme = window.location.protocol;
-      const port = window.location.port ? `:${window.location.port}` : "";
-      const origin = `${scheme}//cs-${codeSpaceID}.localhost${port}`;
-      registerSandboxWindow(win, { origin, floe_app: FLOE_APP_CODE, code_space_id: codeSpaceID, app_path: appPath });
-
-      const url = `${origin}${appPath}`;
+      const url = folder ? `${origin}/?folder=${encodeURIComponent(folder)}` : `${origin}/`;
       setStatus("Opening...");
       win.location.assign(url);
       return;
