@@ -9,6 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -159,14 +161,17 @@ func (r *Runner) Stop(codeSpaceID string) error {
 	ins := r.instances[id]
 	delete(r.instances, id)
 	r.mu.Unlock()
+	sessionSocketPath := r.sessionSocketPathForCodeSpace(id)
 
 	if ins == nil || ins.cmd == nil || ins.cmd.Process == nil {
+		_, _ = r.killStaleCodeServerProcessesBySessionSocket(sessionSocketPath)
 		return nil
 	}
 
 	// Hard stop: code-server is behind E2EE, so we can keep process management simple for MVP.
 	_ = killCmdProcessGroup(ins.cmd)
 	_, _ = ins.cmd.Process.Wait()
+	_, _ = r.killStaleCodeServerProcessesBySessionSocket(sessionSocketPath)
 	return nil
 }
 
@@ -231,15 +236,18 @@ func (r *Runner) start(codeSpaceID string, workspacePath string, port int) (*Ins
 	//   <user-data-dir>/code-server-ipc.sock
 	// That path can easily exceed the OS limit for Unix domain sockets (notably on macOS),
 	// causing EINVAL and making the extension host unstable. Keep it short and stable.
-	safeID := strings.TrimSpace(codeSpaceID)
-	safeID = strings.ReplaceAll(safeID, "/", "_")
-	safeID = strings.ReplaceAll(safeID, "\\", "_")
-	sessionSocketDir := filepath.Join(strings.TrimSpace(r.stateDir), "socks")
+	sessionSocketPath := r.sessionSocketPathForCodeSpace(codeSpaceID)
+	sessionSocketDir := filepath.Dir(sessionSocketPath)
 	if err := os.MkdirAll(sessionSocketDir, 0o700); err != nil {
 		return nil, err
 	}
-	sessionSocketPath := filepath.Join(sessionSocketDir, fmt.Sprintf("cs-%s.sock", safeID))
 	_ = os.Remove(sessionSocketPath) // best-effort cleanup of a stale socket
+
+	if killed, err := r.killStaleCodeServerProcessesBySessionSocket(sessionSocketPath); err != nil {
+		r.log.Warn("failed to cleanup stale code-server processes", "code_space_id", codeSpaceID, "session_socket", sessionSocketPath, "error", err)
+	} else if killed > 0 {
+		r.log.Warn("killed stale code-server process(es)", "code_space_id", codeSpaceID, "session_socket", sessionSocketPath, "count", killed)
+	}
 
 	stdoutPath := filepath.Join(spaceDir, "stdout.log")
 	stderrPath := filepath.Join(spaceDir, "stderr.log")
@@ -488,4 +496,90 @@ func tailFile(path string, maxBytes int64) (string, error) {
 		}
 	}
 	return strings.TrimSpace(s), nil
+}
+
+func (r *Runner) sessionSocketPathForCodeSpace(codeSpaceID string) string {
+	id := strings.TrimSpace(codeSpaceID)
+	id = strings.ReplaceAll(id, "/", "_")
+	id = strings.ReplaceAll(id, "\\", "_")
+	sessionSocketDir := filepath.Join(strings.TrimSpace(r.stateDir), "socks")
+	return filepath.Join(sessionSocketDir, fmt.Sprintf("cs-%s.sock", id))
+}
+
+func (r *Runner) killStaleCodeServerProcessesBySessionSocket(sessionSocketPath string) (int, error) {
+	path := strings.TrimSpace(sessionSocketPath)
+	if path == "" {
+		return 0, nil
+	}
+	pids, err := listCodeServerPIDsBySessionSocket(path)
+	if err != nil {
+		return 0, err
+	}
+
+	killed := 0
+	var firstErr error
+	for _, pid := range pids {
+		if err := killProcessGroupByPID(pid); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		killed++
+	}
+	return killed, firstErr
+}
+
+func listCodeServerPIDsBySessionSocket(sessionSocketPath string) ([]int, error) {
+	path := strings.TrimSpace(sessionSocketPath)
+	if path == "" {
+		return nil, nil
+	}
+	out, err := exec.Command("ps", "-ax", "-o", "pid=,command=").Output()
+	if err != nil {
+		return nil, err
+	}
+	return parseCodeServerPIDsFromPSOutput(string(out), path), nil
+}
+
+func parseCodeServerPIDsFromPSOutput(raw string, sessionSocketPath string) []int {
+	path := strings.TrimSpace(sessionSocketPath)
+	if strings.TrimSpace(raw) == "" || path == "" {
+		return nil
+	}
+
+	seen := make(map[int]struct{})
+	lines := strings.Split(raw, "\n")
+	for _, line := range lines {
+		v := strings.TrimSpace(line)
+		if v == "" {
+			continue
+		}
+		fields := strings.Fields(v)
+		if len(fields) < 2 {
+			continue
+		}
+		pid, err := strconv.Atoi(strings.TrimSpace(fields[0]))
+		if err != nil || pid <= 0 {
+			continue
+		}
+		cmd := strings.TrimSpace(strings.TrimPrefix(v, fields[0]))
+		if cmd == "" {
+			continue
+		}
+		if !strings.Contains(strings.ToLower(cmd), "code-server") {
+			continue
+		}
+		if !strings.Contains(cmd, path) {
+			continue
+		}
+		seen[pid] = struct{}{}
+	}
+
+	out := make([]int, 0, len(seen))
+	for pid := range seen {
+		out = append(out, pid)
+	}
+	sort.Ints(out)
+	return out
 }
