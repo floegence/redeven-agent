@@ -19,7 +19,10 @@ func killCmdProcessGroup(cmd *exec.Cmd) error {
 	if cmd == nil || cmd.Process == nil {
 		return nil
 	}
-	pid := cmd.Process.Pid
+	return killProcessGroupByPID(cmd.Process.Pid)
+}
+
+func killProcessGroupByPID(pid int) error {
 	if pid <= 0 {
 		return nil
 	}
