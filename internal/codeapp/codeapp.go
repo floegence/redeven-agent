@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/floegence/redeven-agent/internal/ai"
 	"github.com/floegence/redeven-agent/internal/auditlog"
@@ -129,11 +130,18 @@ func New(ctx context.Context, opts Options) (*Service, error) {
 	}
 
 	portMin, portMax := normalizePortRange(opts.CodeServerPortMin, opts.CodeServerPortMax)
+	reconnectionGrace := time.Duration(0)
+	if len(opts.LocalUIAllowedOrigins) > 0 {
+		// Local UI runs on stable loopback links, so keeping extension-host reconnect
+		// grace in hours only accumulates stale hosts and lock contention after refreshes.
+		reconnectionGrace = 30 * time.Second
+	}
 	runner := codeserver.NewRunner(codeserver.RunnerOptions{
-		Logger:   logger,
-		StateDir: stateAbs,
-		PortMin:  portMin,
-		PortMax:  portMax,
+		Logger:            logger,
+		StateDir:          stateAbs,
+		PortMin:           portMin,
+		PortMax:           portMax,
+		ReconnectionGrace: reconnectionGrace,
 	})
 
 	svc := &Service{
