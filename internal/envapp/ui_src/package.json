@@ -10,8 +10,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@floegence/floe-webapp-core": "^0.26.6",
-    "@floegence/floe-webapp-protocol": "^0.26.6",
+    "@floegence/floe-webapp-core": "^0.26.7",
+    "@floegence/floe-webapp-protocol": "^0.26.7",
     "@floegence/floeterm-terminal-web": "^0.4.1",
     "@floegence/flowersec-core": "^0.10.2",
     "@fontsource/iosevka": "^5.2.5",
