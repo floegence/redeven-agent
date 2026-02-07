@@ -1979,6 +1979,22 @@ func (g *Gateway) handleCodeServerProxy(w http.ResponseWriter, r *http.Request) 
 			pr.Out.Header.Del("X-Forwarded-For")
 			pr.Out.Header.Del("X-Forwarded-Port")
 		},
+		ModifyResponse: func(resp *http.Response) error {
+			// Local UI / direct-debug hardening:
+			// Some code-server builds ship a PWA Service Worker (`.../serviceWorker.js`) and set:
+			//   Service-Worker-Allowed: /
+			//
+			// This allows the SW to claim a very broad scope and can cause subtle issues during
+			// startup/reconnect loops. In Redeven we do not rely on the PWA SW; strip the header
+			// so the browser cannot register it for a higher scope than its own path.
+			if resp != nil && resp.Request != nil {
+				p := strings.ToLower(strings.TrimSpace(resp.Request.URL.Path))
+				if strings.Contains(p, "/_static/") && strings.HasSuffix(p, "/serviceworker.js") {
+					resp.Header.Del("Service-Worker-Allowed")
+				}
+			}
+			return nil
+		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, e error) {
 			http.Error(w, "upstream unavailable", http.StatusBadGateway)
 		},
@@ -2465,7 +2481,32 @@ func externalOriginFromRequest(r *http.Request) (scheme string, host string, err
 	}
 	origin := strings.TrimSpace(r.Header.Get("Origin"))
 	if origin == "" {
-		return "", "", errors.New("missing origin")
+		// Top-level browser navigations commonly omit Origin.
+		//
+		// Standard Mode requests (via Flowersec proxy handlers) always carry a validated Origin header,
+		// but Local UI mode needs to support loopback navigations for sandbox-like hostnames such as:
+		//   cs-<code_space_id>.localhost[:port]
+		//
+		// Fail-closed: only allow deriving Origin for loopback hosts.
+		if !isLoopbackHostBestEffort(r.Host) {
+			return "", "", errors.New("missing origin")
+		}
+		scheme = "http"
+		if r.TLS != nil {
+			scheme = "https"
+		}
+		if raw := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); raw != "" {
+			// Support a single value or a comma-separated list (use the first).
+			first := strings.TrimSpace(strings.Split(raw, ",")[0])
+			if first != "" {
+				scheme = strings.ToLower(first)
+			}
+		}
+		host = strings.ToLower(strings.TrimSpace(r.Host))
+		if host == "" {
+			return "", "", errors.New("missing host")
+		}
+		origin = scheme + "://" + host
 	}
 	u, err := url.Parse(origin)
 	if err != nil || u == nil {
@@ -2477,6 +2518,33 @@ func externalOriginFromRequest(r *http.Request) (scheme string, host string, err
 		return "", "", errors.New("invalid origin")
 	}
 	return scheme, host, nil
+}
+
+func isLoopbackHostBestEffort(host string) bool {
+	raw := strings.TrimSpace(host)
+	if raw == "" {
+		return false
+	}
+
+	// Strip port. IPv6 literals are bracketed in Host headers.
+	hostNoPort := raw
+	if strings.HasPrefix(hostNoPort, "[") {
+		if i := strings.IndexByte(hostNoPort, ']'); i >= 0 {
+			hostNoPort = hostNoPort[1:i]
+		}
+	} else if i := strings.IndexByte(hostNoPort, ':'); i >= 0 {
+		hostNoPort = hostNoPort[:i]
+	}
+
+	h := strings.ToLower(strings.TrimSpace(hostNoPort))
+	if h == "localhost" || h == "127.0.0.1" || h == "::1" {
+		return true
+	}
+	// Support sandbox-like loopback hostnames: cs-<id>.localhost, pf-<id>.localhost, ...
+	if strings.HasSuffix(h, ".localhost") {
+		return true
+	}
+	return false
 }
 
 func channelIDFromRequest(r *http.Request) (string, error) {
