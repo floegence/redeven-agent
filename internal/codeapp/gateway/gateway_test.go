@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -207,6 +208,101 @@ func TestGateway_ManagementAPI_EnvOriginOnly(t *testing.T) {
 		if rr.Code != http.StatusNotFound {
 			t.Fatalf("cs origin status = %d, want %d", rr.Code, http.StatusNotFound)
 		}
+	}
+}
+
+func TestExternalOriginFromRequest_FallbackLoopback(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodGet, "http://cs-abc.localhost:23998/", nil)
+	req.Header.Del("Origin")
+
+	scheme, host, err := externalOriginFromRequest(req)
+	if err != nil {
+		t.Fatalf("externalOriginFromRequest error: %v", err)
+	}
+	if scheme != "http" {
+		t.Fatalf("scheme = %q, want %q", scheme, "http")
+	}
+	if host != "cs-abc.localhost:23998" {
+		t.Fatalf("host = %q, want %q", host, "cs-abc.localhost:23998")
+	}
+}
+
+func TestExternalOriginFromRequest_MissingOriginNonLoopbackRejected(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodGet, "http://cs-abc.example.com/", nil)
+	req.Header.Del("Origin")
+
+	_, _, err := externalOriginFromRequest(req)
+	if err == nil {
+		t.Fatalf("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "missing origin") {
+		t.Fatalf("error = %q, want contains %q", err.Error(), "missing origin")
+	}
+}
+
+func TestGateway_CodeServerProxy_StripsServiceWorkerAllowed(t *testing.T) {
+	t.Parallel()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Match code-server behavior: allow the SW to claim scope "/".
+		w.Header().Set("Service-Worker-Allowed", "/")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	t.Cleanup(upstream.Close)
+
+	u, err := url.Parse(upstream.URL)
+	if err != nil {
+		t.Fatalf("parse upstream url: %v", err)
+	}
+	_, portRaw, err := net.SplitHostPort(u.Host)
+	if err != nil {
+		t.Fatalf("split upstream host: %v", err)
+	}
+	port, err := strconv.Atoi(portRaw)
+	if err != nil {
+		t.Fatalf("parse upstream port: %v", err)
+	}
+
+	dist := fstest.MapFS{
+		"env/index.html": {Data: []byte("<html>env</html>")},
+		"inject.js":      {Data: []byte("console.log('inject');")},
+	}
+	b := &stubBackend{
+		resolveCodeServerPort: func(ctx context.Context, codeSpaceID string) (int, error) {
+			if strings.TrimSpace(codeSpaceID) != "abc" {
+				return 0, errors.New("unexpected codespace id")
+			}
+			return port, nil
+		},
+	}
+	channelID := "ch_test_1"
+
+	gw, err := New(Options{
+		Backend:            b,
+		DistFS:             dist,
+		ListenAddr:         "127.0.0.1:0",
+		ConfigPath:         writeTestConfig(t),
+		ResolveSessionMeta: resolveMetaForTest(channelID, session.Meta{CanRead: true}),
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/_static/out/browser/serviceWorker.js", nil)
+	req.Header.Set("Origin", "https://cs-abc.example.com")
+	rr := httptest.NewRecorder()
+	gw.serveHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+	if v := strings.TrimSpace(rr.Header().Get("Service-Worker-Allowed")); v != "" {
+		t.Fatalf("Service-Worker-Allowed = %q, want empty", v)
 	}
 }
 
