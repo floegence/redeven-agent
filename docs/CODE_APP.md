@@ -115,6 +115,11 @@ This is conservative: code-server is not designed to enforce a partial permissio
   - If Homebrew installs `code-server` as a Node.js script, ensure `node` works, or set `REDEVEN_CODE_SERVER_NODE_BIN`.
   - If startup is slow on your machine (first launch, heavy extensions, slow disk), increase `REDEVEN_CODE_SERVER_STARTUP_TIMEOUT`.
 
+- Frequent "Extension Host reconnect" loops:
+  - Redeven now cleans up stale code-server processes for the same codespace session socket before start/stop.
+  - If reconnect loops persist, inspect `remoteagent.log` and `exthost*/remoteexthost.log` under:
+    - `~/.redeven/apps/code/spaces/<code_space_id>/codeserver/user-data/logs/<timestamp>/`
+
 - "Handshake timed out":
   - Ensure the sandbox subdomain can load `/_redeven_boot/` and `/_redeven_sw.js`.
   - Ensure popups are allowed.
