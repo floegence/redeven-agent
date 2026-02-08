@@ -3,7 +3,7 @@ import { MessageSquare, Plus, Sparkles, X } from '@floegence/floe-webapp-core/ic
 import { useNotification } from '@floegence/floe-webapp-core';
 import { SnakeLoader } from '@floegence/floe-webapp-core/loading';
 import { SidebarContent, SidebarSection } from '@floegence/floe-webapp-core/layout';
-import { Button, ConfirmDialog } from '@floegence/floe-webapp-core/ui';
+import { Button, ConfirmDialog, ProcessingIndicator } from '@floegence/floe-webapp-core/ui';
 import { useProtocol } from '@floegence/floe-webapp-protocol';
 import { Motion } from 'solid-motionone';
 import { useAIChatContext, type ThreadRunStatus, type ThreadView } from './AIChatContext';
@@ -218,7 +218,7 @@ export function AIChatSidebar() {
           >
             {/* Conversations 标题 */}
             <SidebarSection title="Conversations">
-              <div class="flex flex-col">
+              <div class="flex flex-col gap-0.5">
                 <For each={groupedThreads()}>
                   {(group) => (
                     <>
@@ -309,10 +309,10 @@ function ThreadCard(props: {
   return (
     <button
       type="button"
-      class={`group relative flex items-start gap-2 w-full rounded-md px-2.5 py-2 text-left transition-colors duration-100 cursor-pointer ${
+      class={`group relative flex items-start gap-2 w-full rounded-lg px-2.5 py-2 text-left transition-all duration-150 cursor-pointer border ${
         props.active
-          ? 'bg-sidebar-accent text-sidebar-foreground'
-          : 'text-sidebar-foreground/80 hover:bg-sidebar-accent/60'
+          ? 'bg-sidebar-accent text-sidebar-foreground border-border/20 shadow-[0_1px_3px_rgba(0,0,0,0.06)]'
+          : 'text-sidebar-foreground/80 border-transparent hover:bg-sidebar-accent/60 hover:border-border/15 hover:shadow-[0_1px_2px_rgba(0,0,0,0.04)]'
       }`}
       onClick={props.onClick}
     >
@@ -329,7 +329,7 @@ function ThreadCard(props: {
         />
         {/* running 脉冲动画 */}
         <Show when={status() === 'running'}>
-          <div class="absolute inset-0 w-2 h-2 rounded-full bg-primary animate-ping opacity-75" />
+          <div class="absolute inset-0 w-2 h-2 rounded-full bg-primary/50 animate-pulse" />
         </Show>
       </div>
 
@@ -338,33 +338,39 @@ function ThreadCard(props: {
         {/* 标题行 */}
         <div class="flex items-center gap-1">
           <span class="text-xs font-medium truncate flex-1">{title()}</span>
-          {/* 时间戳 / hover 时变为删除按钮 */}
-          <span class="shrink-0 text-[10px] text-muted-foreground/60 group-hover:hidden">
-            {timeStr()}
-          </span>
-          <div
-            role="button"
-            tabIndex={0}
-            class="shrink-0 hidden group-hover:flex items-center justify-center w-5 h-5 rounded text-muted-foreground/60 hover:text-error hover:bg-error/10 transition-colors cursor-pointer"
-            onClick={(e) => {
-              e.stopPropagation();
-              if (props.connected) props.onDelete();
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
+          {/* 时间戳 / hover 时变为删除按钮（用 opacity 替代 display 切换，避免高度跳动） */}
+          <div class="shrink-0 w-5 h-5 flex items-center justify-center relative">
+            <span class="text-[10px] text-muted-foreground/60 transition-opacity duration-150 group-hover:opacity-0 pointer-events-none select-none">
+              {timeStr()}
+            </span>
+            <div
+              role="button"
+              tabIndex={0}
+              class="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 rounded text-muted-foreground/60 hover:text-error hover:bg-error/10 transition-all duration-150 cursor-pointer"
+              onClick={(e) => {
                 e.stopPropagation();
                 if (props.connected) props.onDelete();
-              }
-            }}
-            title="Delete chat"
-          >
-            <X class="w-3.5 h-3.5" />
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.stopPropagation();
+                  if (props.connected) props.onDelete();
+                }
+              }}
+              title="Delete chat"
+            >
+              <X class="w-3.5 h-3.5" />
+            </div>
           </div>
         </div>
 
-        {/* 预览文字 */}
-        <Show when={!!preview()}>
-          <p class="text-[11px] text-muted-foreground/50 truncate leading-tight">{preview()}</p>
+        {/* 预览文字 / running 状态 */}
+        <Show when={status() === 'running'} fallback={
+          <Show when={!!preview()}>
+            <p class="text-[11px] text-muted-foreground/50 truncate leading-tight">{preview()}</p>
+          </Show>
+        }>
+          <ProcessingIndicator variant="minimal" status="Working" class="h-3.5" />
         </Show>
       </div>
     </button>
