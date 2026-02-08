@@ -587,8 +587,12 @@ export function createAIChatContextValue(): AIChatContextValue {
     const list = threads();
     if (!list || threads.loading || threads.error) return;
 
-    const current = activeThreadId();
-    if (current && list.threads.some((t) => t.thread_id === current)) return;
+    const current = String(activeThreadId() ?? '').trim();
+    if (current) {
+      // Active thread is a UI selection state. Do not auto-switch it based on
+      // temporary list snapshots (new thread creation / polling lag).
+      return;
+    }
 
     if (draftMode()) {
       // User explicitly stays in draft chat; do not auto-select a thread.
