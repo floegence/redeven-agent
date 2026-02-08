@@ -186,6 +186,7 @@ const EmptyChat: Component<EmptyChatProps> = (props) => {
 // Message list with empty state overlay
 interface MessageListWithEmptyStateProps {
   hasMessages: boolean;
+  loading?: boolean;
   onSuggestionClick: (prompt: string) => void;
   disabled?: boolean;
   class?: string;
@@ -197,7 +198,7 @@ const MessageListWithEmptyState: Component<MessageListWithEmptyStateProps> = (pr
       <Show when={props.hasMessages}>
         <VirtualMessageList class="h-full" />
       </Show>
-      <Show when={!props.hasMessages}>
+      <Show when={!props.hasMessages && !props.loading}>
         <EmptyChat
           onSuggestionClick={props.onSuggestionClick}
           disabled={props.disabled}
@@ -416,7 +417,7 @@ export function EnvAIPage() {
     }
 
     const tid = ai.activeThreadId();
-    const runTid = String(currentRunThreadId ?? runningThreadId() ?? '').trim();
+    const runTid = String(currentRunThreadId ?? untrack(() => runningThreadId()) ?? '').trim();
 
     // Draft -> thread promotion: keep the optimistic user message rendered by ChatProvider.
     if (skipNextThreadLoad && tid) {
@@ -942,6 +943,7 @@ export function EnvAIPage() {
             {/* Message list with empty state */}
             <MessageListWithEmptyState
               hasMessages={hasMessages()}
+              loading={messagesLoading()}
               onSuggestionClick={handleSuggestionClick}
               disabled={!canInteract()}
               class="flex-1 min-h-0"
