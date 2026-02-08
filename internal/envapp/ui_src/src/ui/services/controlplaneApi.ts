@@ -42,9 +42,27 @@ export type LocalRuntimeInfo = {
   direct_ws_url?: string;
 };
 
+class APIError extends Error {
+  readonly status: number;
+  readonly code: string;
+
+  constructor(args: Readonly<{ status: number; code: string; message: string }>) {
+    super(args.message);
+    this.status = args.status;
+    this.code = args.code;
+  }
+}
+
+const ENV_APP_PATH_PREFIX = '/_redeven_proxy/env';
+const BROKER_RECOVER_REDIRECT_DEBOUNCE_MS = 5_000;
+const BROKER_RECOVER_RETRY_WINDOW_MS = 90_000;
+
+let brokerRecoverRedirecting = false;
+
 const SESSION_STORAGE_KEYS = {
   envPublicID: 'redeven_env_public_id',
   brokerToken: 'redeven_broker_token',
+  brokerRecoverAtMs: 'redeven_broker_recover_at_ms',
 } as const;
 
 function getSessionStorage(key: string): string {
@@ -55,12 +73,154 @@ function getSessionStorage(key: string): string {
   }
 }
 
+function setSessionStorage(key: string, v: string): void {
+  try {
+    sessionStorage.setItem(key, v);
+  } catch {
+    // ignore
+  }
+}
+
+function removeSessionStorage(key: string): void {
+  try {
+    sessionStorage.removeItem(key);
+  } catch {
+    // ignore
+  }
+}
+
 export function getEnvPublicIDFromSession(): string {
   return getSessionStorage(SESSION_STORAGE_KEYS.envPublicID);
 }
 
 export function getBrokerTokenFromSession(): string {
   return getSessionStorage(SESSION_STORAGE_KEYS.brokerToken);
+}
+
+function parseStatusCodeBestEffort(v: unknown): number {
+  const n = Number(v ?? 0);
+  if (!Number.isFinite(n)) return 0;
+  return Math.floor(n);
+}
+
+function asString(v: unknown): string {
+  return String(v ?? '').trim();
+}
+
+function isBrokerTokenUnauthorizedError(e: unknown): boolean {
+  if (!(e instanceof APIError)) return false;
+  if (e.status !== 401) return false;
+
+  const msg = asString(e.message).toLowerCase();
+  const code = asString(e.code).toUpperCase();
+  if (msg.includes('broker_token') || msg.includes('broker token')) return true;
+  return code === 'INVALID_BROKER_TOKEN';
+}
+
+function isEnvAppPath(pathname: string): boolean {
+  const p = asString(pathname);
+  return p === ENV_APP_PATH_PREFIX || p === `${ENV_APP_PATH_PREFIX}/` || p.startsWith(`${ENV_APP_PATH_PREFIX}/`);
+}
+
+function currentEnvAppReturnToBestEffort(): string {
+  try {
+    const pathname = asString(window.location.pathname);
+    if (!isEnvAppPath(pathname)) return '';
+    return `${pathname}${asString(window.location.search)}`;
+  } catch {
+    return '';
+  }
+}
+
+function portalOriginFromSandboxOriginBestEffort(): string {
+  const proto = window.location.protocol;
+  const portSuffix = window.location.port ? `:${window.location.port}` : '';
+  const host = window.location.hostname.toLowerCase();
+  // Map <sandbox-id>.<region>.<base-domain> to <region>.<base-domain>.
+  const rest = host.split('.').slice(1).join('.') || host;
+  return `${proto}//${rest}${portSuffix}`;
+}
+
+function buildPortalEnvRecoverURL(envPublicID: string): string {
+  const envID = asString(envPublicID);
+  const portalOrigin = portalOriginFromSandboxOriginBestEffort();
+  const url = new URL(`${portalOrigin}/env/${encodeURIComponent(envID)}`);
+
+  const returnTo = currentEnvAppReturnToBestEffort();
+  if (returnTo) {
+    url.searchParams.set('return_to', returnTo);
+  }
+  return url.toString();
+}
+
+function brokerRecoverAgeMsBestEffort(): number {
+  const raw = getSessionStorage(SESSION_STORAGE_KEYS.brokerRecoverAtMs);
+  const at = Number(raw || '0');
+  if (!Number.isFinite(at) || at <= 0) return -1;
+  return Date.now() - at;
+}
+
+function markBrokerRecoverNow(): void {
+  setSessionStorage(SESSION_STORAGE_KEYS.brokerRecoverAtMs, String(Date.now()));
+}
+
+function clearBrokerRecoverMarker(): void {
+  removeSessionStorage(SESSION_STORAGE_KEYS.brokerRecoverAtMs);
+}
+
+function redirectToPortalForBrokerRecovery(envPublicID: string): never {
+  const envID = asString(envPublicID);
+  if (!envID) {
+    throw new Error('Missing env context. Please reopen from the Redeven Portal.');
+  }
+
+  const age = brokerRecoverAgeMsBestEffort();
+  if (age >= 0 && age < BROKER_RECOVER_REDIRECT_DEBOUNCE_MS) {
+    throw new Error('Session expired. Redirecting to Redeven Portal...');
+  }
+  if (age >= 0 && age < BROKER_RECOVER_RETRY_WINDOW_MS) {
+    throw new Error('Failed to refresh session. Please reopen from the Redeven Portal.');
+  }
+
+  if (brokerRecoverRedirecting) {
+    throw new Error('Session expired. Redirecting to Redeven Portal...');
+  }
+  brokerRecoverRedirecting = true;
+  markBrokerRecoverNow();
+
+  const target = buildPortalEnvRecoverURL(envID);
+  try {
+    if (window.top && window.top.location) {
+      window.top.location.replace(target);
+    } else {
+      window.location.replace(target);
+    }
+  } catch {
+    window.location.replace(target);
+  }
+
+  throw new Error('Session expired. Redirecting to Redeven Portal...');
+}
+
+async function fetchJSONWithBrokerAutoRecover<T>(
+  input: RequestInfo | URL,
+  init: RequestInit & { bearerToken?: string },
+  opts?: Readonly<{ envPublicID?: string; brokerAutoRecover?: boolean }>,
+): Promise<T> {
+  try {
+    const out = await fetchJSON<T>(input, init);
+    if (opts?.brokerAutoRecover) {
+      clearBrokerRecoverMarker();
+      brokerRecoverRedirecting = false;
+    }
+    return out;
+  } catch (e) {
+    if (opts?.brokerAutoRecover && isBrokerTokenUnauthorizedError(e)) {
+      const envID = asString(opts.envPublicID) || getEnvPublicIDFromSession();
+      redirectToPortalForBrokerRecovery(envID);
+    }
+    throw e;
+  }
 }
 
 async function fetchJSON<T>(input: RequestInfo | URL, init: RequestInit & { bearerToken?: string }): Promise<T> {
@@ -83,12 +243,15 @@ async function fetchJSON<T>(input: RequestInfo | URL, init: RequestInit & { bear
   }
 
   if (!resp.ok) {
-    const msg = data?.error?.message ?? `HTTP ${resp.status}`;
-    throw new Error(msg);
+    const msg = asString(data?.error?.message) || `HTTP ${resp.status}`;
+    const code = asString(data?.error?.code) || 'HTTP_ERROR';
+    throw new APIError({ status: parseStatusCodeBestEffort(resp.status), code, message: msg });
   }
 
   if (data?.success === false) {
-    throw new Error(data?.error?.message ?? 'Request failed');
+    const msg = asString(data?.error?.message) || 'Request failed';
+    const code = asString(data?.error?.code) || 'REQUEST_FAILED';
+    throw new APIError({ status: parseStatusCodeBestEffort(resp.status) || 400, code, message: msg });
   }
 
   return (data?.data ?? data) as T;
@@ -151,10 +314,17 @@ export async function getEnvironment(envId: string): Promise<EnvironmentDetail |
     throw new Error('Missing broker token. Please reopen from the Redeven Portal.');
   }
 
-  const out = await fetchJSON<EnvironmentDetail>(`/api/srv/v1/floeproxy/environments/${encodeURIComponent(id)}`, {
-    method: 'GET',
-    bearerToken: brokerToken,
-  });
+  const out = await fetchJSONWithBrokerAutoRecover<EnvironmentDetail>(
+    `/api/srv/v1/floeproxy/environments/${encodeURIComponent(id)}`,
+    {
+      method: 'GET',
+      bearerToken: brokerToken,
+    },
+    {
+      envPublicID: id,
+      brokerAutoRecover: true,
+    },
+  );
   return out ?? null;
 }
 
@@ -173,10 +343,17 @@ export async function getAgentLatestVersion(envId: string): Promise<AgentLatestV
     throw new Error('Missing broker token. Please reopen from the Redeven Portal.');
   }
 
-  const out = await fetchJSON<AgentLatestVersion>(`/api/srv/v1/floeproxy/environments/${encodeURIComponent(id)}/agent/version/latest`, {
-    method: 'GET',
-    bearerToken: brokerToken,
-  });
+  const out = await fetchJSONWithBrokerAutoRecover<AgentLatestVersion>(
+    `/api/srv/v1/floeproxy/environments/${encodeURIComponent(id)}/agent/version/latest`,
+    {
+      method: 'GET',
+      bearerToken: brokerToken,
+    },
+    {
+      envPublicID: id,
+      brokerAutoRecover: true,
+    },
+  );
   return out ?? null;
 }
 
@@ -192,17 +369,24 @@ export async function exchangeBrokerToEntryTicket(args: {
   const codeSpaceId = args.codeSpaceId.trim();
   if (!endpointId || !floeApp || !brokerToken || !codeSpaceId) throw new Error('Invalid request');
 
-  const out = await fetchJSON<{ entry_ticket: string }>(`/api/srv/v1/floeproxy/entry`, {
-    method: 'POST',
-    bearerToken: brokerToken,
-    body: JSON.stringify({
-      endpoint_id: endpointId,
-      floe_app: floeApp,
-      code_space_id: codeSpaceId,
-      // Env App UI business session (RPC/streams).
-      session_kind: 'envapp_rpc',
-    }),
-  });
+  const out = await fetchJSONWithBrokerAutoRecover<{ entry_ticket: string }>(
+    `/api/srv/v1/floeproxy/entry`,
+    {
+      method: 'POST',
+      bearerToken: brokerToken,
+      body: JSON.stringify({
+        endpoint_id: endpointId,
+        floe_app: floeApp,
+        code_space_id: codeSpaceId,
+        // Env App UI business session (RPC/streams).
+        session_kind: 'envapp_rpc',
+      }),
+    },
+    {
+      envPublicID: endpointId,
+      brokerAutoRecover: true,
+    },
+  );
   const t = String(out?.entry_ticket ?? '').trim();
   if (!t) throw new Error('Invalid entry_ticket response');
   return t;
@@ -219,21 +403,28 @@ export async function mintEnvEntryTicketForApp(args: { envId: string; floeApp: s
     throw new Error('Missing broker token. Please reopen from the Redeven Portal.');
   }
 
-  const out = await fetchJSON<{ entry_ticket: string }>(`/api/srv/v1/floeproxy/environments/${encodeURIComponent(envId)}/entry`, {
-    method: 'POST',
-    bearerToken: brokerToken,
-    body: JSON.stringify({
-      floe_app: floeApp,
-      code_space_id: codeSpaceId,
-      // Codespaces (code-server) and other apps are single-channel sessions on the data plane; tag them as codeapp/app.
-      session_kind:
-        floeApp === 'com.floegence.redeven.code'
-          ? 'codeapp'
-          : floeApp === 'com.floegence.redeven.portforward'
-            ? 'portforward'
-            : 'app',
-    }),
-  });
+  const out = await fetchJSONWithBrokerAutoRecover<{ entry_ticket: string }>(
+    `/api/srv/v1/floeproxy/environments/${encodeURIComponent(envId)}/entry`,
+    {
+      method: 'POST',
+      bearerToken: brokerToken,
+      body: JSON.stringify({
+        floe_app: floeApp,
+        code_space_id: codeSpaceId,
+        // Codespaces (code-server) and other apps are single-channel sessions on the data plane; tag them as codeapp/app.
+        session_kind:
+          floeApp === 'com.floegence.redeven.code'
+            ? 'codeapp'
+            : floeApp === 'com.floegence.redeven.portforward'
+              ? 'portforward'
+              : 'app',
+      }),
+    },
+    {
+      envPublicID: envId,
+      brokerAutoRecover: true,
+    },
+  );
   const t = String(out?.entry_ticket ?? '').trim();
   if (!t) throw new Error('Invalid entry_ticket response');
   return t;
