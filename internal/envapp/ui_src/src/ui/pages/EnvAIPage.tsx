@@ -222,14 +222,19 @@ export function EnvAIPage() {
   let watchdogToken = 0;
   let watchdogTimer: number | null = null;
   let stopFallbackTimer: number | null = null;
+  let currentRunThreadId: string | null = null;
 
   const runningThreadId = createMemo(() => String(ai.runningThreadId() ?? '').trim() || null);
-  const viewingRunningThread = createMemo(() => {
-    const rid = runningThreadId();
-    const active = String(ai.activeThreadId() ?? '').trim() || null;
-    return !!rid && rid === active;
-  });
   const activeThreadRunning = createMemo(() => ai.isThreadRunning(ai.activeThreadId()));
+
+  const shouldRenderRunningThread = () => {
+    const runTid = String(currentRunThreadId ?? runningThreadId() ?? '').trim();
+    if (!runTid) return false;
+    const activeTid = String(ai.activeThreadId() ?? '').trim();
+    // Keep rendering while active thread is transiently empty.
+    if (!activeTid) return true;
+    return activeTid === runTid;
+  };
 
   const canInteract = createMemo(
     () => protocol.status() === 'connected' && !ai.running() && !activeThreadRunning() && ai.aiEnabled() && ai.modelsReady(),
@@ -315,17 +320,18 @@ export function EnvAIPage() {
   const abortLocalRun = (opts?: { cancelServer?: boolean }) => {
     stopWatchdog();
     if (opts?.cancelServer) {
-      requestServerCancel(runId(), runningThreadId());
+      requestServerCancel(runId(), currentRunThreadId || runningThreadId());
     }
     abortCtrl?.abort();
     abortCtrl = null;
 
-    const mid = viewingRunningThread() ? chat?.streamingMessageId?.() ?? null : null;
+    const mid = shouldRenderRunningThread() ? chat?.streamingMessageId?.() ?? null : null;
     if (mid) {
       chat?.handleStreamEvent({ type: 'message-end', messageId: mid } as any);
     }
 
     assistantText = '';
+    currentRunThreadId = null;
     ai.setRunningThreadId(null);
     ai.setRunning(false);
     setRunId(null);
@@ -335,12 +341,12 @@ export function EnvAIPage() {
   const forceEndRun = async (notice: string, opts?: { cancelServer?: boolean }) => {
     stopWatchdog();
     if (opts?.cancelServer) {
-      requestServerCancel(runId(), runningThreadId() || ai.activeThreadId());
+      requestServerCancel(runId(), currentRunThreadId || runningThreadId() || ai.activeThreadId());
     }
     abortCtrl?.abort();
     abortCtrl = null;
 
-    const shouldRender = !!viewingRunningThread();
+    const shouldRender = shouldRenderRunningThread();
     const mid = shouldRender ? chat?.streamingMessageId?.() ?? null : null;
     if (mid) {
       const prefix = assistantText.trim() ? '\n\n' : '';
@@ -362,6 +368,7 @@ export function EnvAIPage() {
     }
 
     assistantText = '';
+    currentRunThreadId = null;
     ai.setRunningThreadId(null);
     ai.setRunning(false);
     setRunId(null);
@@ -369,7 +376,7 @@ export function EnvAIPage() {
   };
 
   const stopRun = () => {
-    requestServerCancel(runId(), runningThreadId() || ai.activeThreadId());
+    requestServerCancel(runId(), currentRunThreadId || runningThreadId() || ai.activeThreadId());
     if (stopFallbackTimer != null) window.clearTimeout(stopFallbackTimer);
     stopFallbackTimer = window.setTimeout(() => {
       if (!untrack(ai.running)) return;
@@ -389,6 +396,7 @@ export function EnvAIPage() {
     }
 
     const tid = ai.activeThreadId();
+    const runTid = String(currentRunThreadId ?? runningThreadId() ?? '').trim();
 
     // Draft -> thread promotion: keep the optimistic user message rendered by ChatProvider.
     if (skipNextThreadLoad && tid) {
@@ -396,11 +404,19 @@ export function EnvAIPage() {
       return;
     }
 
+    if (!tid) {
+      // Keep current rendering when local run is alive and thread selection is
+      // still reconciling.
+      if (untrack(ai.running) && !!runTid) return;
+      assistantText = '';
+      chat?.clearMessages();
+      setHasMessages(false);
+      return;
+    }
 
     assistantText = '';
     chat?.clearMessages();
     setHasMessages(false);
-    if (!tid) return;
     void loadThreadMessages(tid);
   });
 
@@ -479,7 +495,7 @@ export function EnvAIPage() {
   const handleStreamEvent = (ev: StreamEvent) => {
     touchWatchdog();
 
-    const shouldRender = !!viewingRunningThread();
+    const shouldRender = shouldRenderRunningThread();
     if (shouldRender) {
       chat?.handleStreamEvent(ev);
     }
@@ -491,6 +507,7 @@ export function EnvAIPage() {
     if (ev.type === 'message-end') {
       stopWatchdog();
       assistantText = '';
+      currentRunThreadId = null;
       ai.setRunningThreadId(null);
       ai.setRunning(false);
       setRunId(null);
@@ -506,6 +523,7 @@ export function EnvAIPage() {
       const msg = String((ev as any).error ?? 'AI error');
       notify.error('AI failed', msg);
       assistantText = '';
+      currentRunThreadId = null;
       ai.setRunningThreadId(null);
       ai.setRunning(false);
       setRunId(null);
@@ -558,6 +576,7 @@ export function EnvAIPage() {
     }));
 
     assistantText = '';
+    currentRunThreadId = tid;
     ai.setRunningThreadId(tid);
     setRunId(null);
     ai.setRunning(true);
@@ -648,7 +667,7 @@ export function EnvAIPage() {
       // Abort is a normal control flow when the user clicks "Stop".
       if (e && typeof e === 'object' && (e as any).name === 'AbortError') {
         stopWatchdog();
-        const mid = viewingRunningThread() ? chat?.streamingMessageId?.() ?? null : null;
+        const mid = shouldRenderRunningThread() ? chat?.streamingMessageId?.() ?? null : null;
         if (mid) {
           chat?.handleStreamEvent({ type: 'message-end', messageId: mid } as any);
         }
@@ -656,6 +675,7 @@ export function EnvAIPage() {
         setRunId(null);
         abortCtrl = null;
         assistantText = '';
+        currentRunThreadId = null;
         ai.setRunningThreadId(null);
         ai.bumpThreadsSeq();
         return;
@@ -668,6 +688,7 @@ export function EnvAIPage() {
       setRunId(null);
       abortCtrl = null;
       assistantText = '';
+      currentRunThreadId = null;
       ai.setRunningThreadId(null);
       ai.bumpThreadsSeq();
     }
