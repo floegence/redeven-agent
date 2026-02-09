@@ -11,12 +11,12 @@ Usage:
 
 Examples:
   ./scripts/publish_install_worker_release_branch.sh v0.1.12
-  ./scripts/publish_install_worker_release_branch.sh v0.1.12 release/install-worker
+  ./scripts/publish_install_worker_release_branch.sh v0.1.12 release
 USAGE
 }
 
 TAG="${1:-}"
-TARGET_BRANCH="${2:-release/install-worker}"
+TARGET_BRANCH="${2:-release}"
 
 if [[ -z "$TAG" ]]; then
     usage
