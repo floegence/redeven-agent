@@ -307,8 +307,6 @@ export function EnvAIPage() {
   let watchdogTimer: number | null = null;
   let stopFallbackTimer: number | null = null;
   let currentRunThreadId: string | null = null;
-  // 标记 FileBrowser 注入上下文，防止 messages watcher 误触发 sendPending
-  let isInjectingContext = false;
 
   const runningThreadId = createMemo(() => String(ai.runningThreadId() ?? '').trim() || null);
   const activeThreadRunning = createMemo(() => ai.isThreadRunning(ai.activeThreadId()));
@@ -526,9 +524,7 @@ export function EnvAIPage() {
       }
       if (!tid) return;
 
-      isInjectingContext = true;
       chat?.addMessage(createUserMarkdownMessage(md));
-      isInjectingContext = false;
       setHasMessages(true);
 
       try {
@@ -791,6 +787,16 @@ export function EnvAIPage() {
   };
 
   const callbacks: ChatCallbacks = {
+    onWillSend: () => {
+      // 同步钩子：ChatProvider 渲染乐观消息后立即调用，在 deferNonBlocking 之前。
+      // 此处设置 sendPending 保证 Working 指示器在同一帧内出现。
+      setSendPending(true);
+      setHasMessages(true);
+      requestAnimationFrame(() => {
+        const el = document.querySelector('.chat-message-list');
+        if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+      });
+    },
     onSendMessage: async (content, attachments, _addMessage) => {
       if (protocol.status() !== 'connected') {
         notify.error('Not connected', 'Connecting to agent...');
@@ -886,36 +892,6 @@ export function EnvAIPage() {
     if (chat?.streamingMessageId?.()) return false;
     return true;
   };
-
-  // 响应式消息监听：当 ChatProvider 的 batch 同步添加乐观消息后，messages() 信号立即更新。
-  // 此 effect 在同一微任务中触发，远早于 deferNonBlocking（setTimeout 0）的 onSendMessage 回调，
-  // 从而在用户按下 Enter 的同一帧内展示 Working 指示器。
-  let prevMsgLen = 0;
-  let sendPendingSafetyTimer: number | null = null;
-  createEffect(() => {
-    if (!chatReady()) return;
-    const msgs = chat?.messages?.() ?? [];
-    const len = msgs.length;
-
-    if (len > prevMsgLen && len > 0 && !untrack(() => messagesLoading()) && !isInjectingContext) {
-      const last = msgs[len - 1];
-      if (last.role === 'user') {
-        setSendPending(true);
-        setHasMessages(true);
-        // 滚动到底部，确保 Working 指示器可见
-        requestAnimationFrame(() => {
-          const el = document.querySelector('.chat-message-list');
-          if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
-        });
-        // 安全兜底：如果 onSendMessage 回调因异常未触发，5 秒后自动清除
-        if (sendPendingSafetyTimer != null) window.clearTimeout(sendPendingSafetyTimer);
-        sendPendingSafetyTimer = window.setTimeout(() => {
-          if (sendPending() && !ai.running()) setSendPending(false);
-        }, 5000);
-      }
-    }
-    prevMsgLen = len;
-  });
 
   return (
     <div class="h-full min-h-0 overflow-hidden relative">
