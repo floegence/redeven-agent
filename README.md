@@ -34,14 +34,16 @@ Not implemented yet (planned):
 - Installer source: `scripts/install.sh` (this repo)
 - Worker source template: `deployment/cloudflare/workers/install-agent/generate-worker.js`
 - Worker config: `deployment/cloudflare/workers/install-agent/wrangler.toml`
-- Auto deploy workflow: `.github/workflows/deploy-install-worker.yml`
+- Cloudflare production branch: `release/install-worker`
 
-When `scripts/install.sh` (or worker files) changes on `main`, GitHub Actions deploys the Worker route `example.invalid/install.sh` automatically.
+Deployment model:
 
-Required GitHub repository secrets:
+- Cloudflare Workers Builds is connected directly to this GitHub repository.
+- GitHub Actions is **not** used for Cloudflare deployment.
+- Deployments are tag-driven via `./scripts/publish_install_worker_release_branch.sh <tag>`, which moves `release/install-worker` to the release tag commit.
+- `main` merges do not deploy the install worker.
 
-- `CLOUDFLARE_API_TOKEN`
-- `CLOUDFLARE_ACCOUNT_ID`
+See release operations: [`docs/RELEASE.md`](docs/RELEASE.md).
 
 ## Build
 
