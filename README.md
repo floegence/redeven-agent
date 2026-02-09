@@ -34,14 +34,15 @@ Not implemented yet (planned):
 - Installer source: `scripts/install.sh` (this repo)
 - Worker source template: `deployment/cloudflare/workers/install-agent/generate-worker.js`
 - Worker config: `deployment/cloudflare/workers/install-agent/wrangler.toml`
-- Cloudflare production branch: `release/install-worker`
+- Cloudflare production branch: `release`
 
 Deployment model:
 
 - Cloudflare Workers Builds is connected directly to this GitHub repository.
 - GitHub Actions is **not** used for Cloudflare deployment.
-- Deployments are tag-driven via `./scripts/publish_install_worker_release_branch.sh <tag>`, which moves `release/install-worker` to the release tag commit.
+- Deployments are tag-driven via `./scripts/publish_install_worker_release_branch.sh <tag>`, which moves `release` to the release tag commit.
 - `main` merges do not deploy the install worker.
+- Ensure `release` exists on origin before first Cloudflare rollout: `git push origin origin/main:refs/heads/release`.
 
 See release operations: [`docs/RELEASE.md`](docs/RELEASE.md).
 
