@@ -29,3 +29,8 @@
   white-space: nowrap;
   text-align: left;
 }
+
+/* Keep the assistant avatar as a clean icon without a border. */
+.chat-message-avatar-assistant {
+  border: none !important;
+}
