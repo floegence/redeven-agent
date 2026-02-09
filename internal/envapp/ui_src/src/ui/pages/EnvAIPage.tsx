@@ -56,11 +56,11 @@ function InlineButtonSnakeLoading() {
   );
 }
 
-// 自定义 Working 指示器 — Neural 网络动画 + Minimal 波形条
+// Custom working indicator — neural animation + minimal waveform bars
 function ChatWorkingIndicator() {
   const uid = `neural-${Math.random().toString(36).slice(2, 8)}`;
 
-  // 使用 innerHTML 注入 SVG，避免 TypeScript 对 SMIL 元素（animateMotion）的类型问题
+  // Inject SVG via innerHTML to avoid TypeScript SMIL typing friction (animateMotion).
   const svgContent = `
     <defs>
       <filter id="${uid}">
@@ -99,13 +99,13 @@ function ChatWorkingIndicator() {
   return (
     <div class="px-4 py-1.5 shrink-0">
       <div class="inline-flex items-center gap-2.5 px-3 py-2 rounded-xl bg-primary/[0.04] border border-primary/10">
-        {/* Neural 网络 SVG 动画 */}
+        {/* Neural SVG animation */}
         <svg class="w-7 h-7 shrink-0" viewBox="0 0 40 40" fill="none" innerHTML={svgContent} />
 
-        {/* 状态文字（shimmer 效果） */}
+        {/* Status text (shimmer) */}
         <span class="text-xs text-muted-foreground processing-text-shimmer">Working</span>
 
-        {/* 波形条（Minimal variant style） */}
+        {/* Waveform bars (minimal style) */}
         <div class="flex items-end gap-[2px] h-3.5">
           <div class="w-[3px] bg-primary/70 rounded-full processing-bar" style="animation-delay:0ms" />
           <div class="w-[3px] bg-primary/70 rounded-full processing-bar" style="animation-delay:100ms" />
@@ -593,8 +593,8 @@ export function EnvAIPage() {
 
   const callbacks: ChatCallbacks = {
     onWillSend: () => {
-      // 同步钩子：ChatProvider 渲染乐观消息后立即调用，在 deferNonBlocking 之前。
-      // 此处设置 sendPending 保证 Working 指示器在同一帧内出现。
+      // Synchronous hook: called right after ChatProvider renders the optimistic user message.
+      // Raising sendPending here makes the working indicator appear in the same frame.
       if (import.meta.env.DEV) console.debug('[AI Chat] onWillSend fired at', performance.now().toFixed(1), 'ms');
       setSendPending(true);
       setHasMessages(true);
@@ -686,11 +686,10 @@ export function EnvAIPage() {
     void startRun(prompt, []);
   };
 
-  // 自定义 Working 指示器显示条件：sendPending（即时）或 run 进行中，且尚未收到流式消息
+  // Keep the custom working indicator visible from send start until the run fully ends.
   const showWorkingIndicator = () => {
     if (!chatReady()) return false;
     if (!sendPending() && !activeThreadRunning()) return false;
-    if (chat?.streamingMessageId?.()) return false;
     return true;
   };
 
@@ -839,8 +838,7 @@ export function EnvAIPage() {
               class="flex-1 min-h-0"
             />
 
-            {/* 自定义 Working 指示器（Neural + Waveform）— 始终在 DOM 中，通过 display 切换可见性，
-                避免 <Show> 每次切换时重新创建 DOM 带来的延迟 */}
+            {/* Keep indicator mounted and toggle visibility via display to avoid mount/unmount jitter. */}
             <div style={{ display: showWorkingIndicator() ? '' : 'none' }}>
               <ChatWorkingIndicator />
             </div>
@@ -953,9 +951,9 @@ export function EnvAIPage() {
       <LoadingOverlay visible={protocol.status() !== 'connected'} message="Connecting to agent..." />
       <LoadingOverlay visible={ai.settings.loading && protocol.status() === 'connected'} message="Loading settings..." />
       <LoadingOverlay visible={ai.models.loading && ai.aiEnabled()} message="Loading models..." />
-      {/* 仅在初次加载（无缓存数据）时展示全局 loading，bumpThreadsSeq 触发的后台刷新不显示遮罩 */}
+      {/* Show global loading only on first load (no cached data); hide it for background refreshes. */}
       <LoadingOverlay visible={ai.threads.loading && ai.aiEnabled() && !ai.threads()} message="Loading chats..." />
-      {/* run 进行中不显示 messages loading 遮罩，避免 working 状态下闪现全局 loading */}
+      {/* Do not show message loading overlay while a run is active to avoid flicker. */}
       <LoadingOverlay visible={messagesLoading() && ai.aiEnabled() && !activeThreadRunning()} message="Loading chat..." />
     </div>
   );
