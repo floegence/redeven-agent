@@ -1,4 +1,4 @@
-import { For, Show, createSignal } from 'solid-js';
+import { For, Show, createMemo, createSignal } from 'solid-js';
 import { MessageSquare, Plus, Sparkles, X } from '@floegence/floe-webapp-core/icons';
 import { useNotification } from '@floegence/floe-webapp-core';
 import { SnakeLoader } from '@floegence/floe-webapp-core/loading';
@@ -165,16 +165,12 @@ export function AIChatSidebar() {
     }
   };
 
-  // 计算分组后的线程列表
-  const groupedThreads = () => {
-    const threads = ctx.threads()?.threads ?? [];
-    return groupThreadsByDate(threads);
-  };
-
-  const showGroupHeaders = () => {
-    const threads = ctx.threads()?.threads ?? [];
-    return threads.length >= 5;
-  };
+  const threadList = createMemo(() => ctx.threads()?.threads ?? []);
+  const groupedThreads = createMemo(() => groupThreadsByDate(threadList()));
+  const showGroupHeaders = createMemo(() => threadList().length >= 5);
+  const hasThreadSnapshot = createMemo(() => ctx.threads() != null);
+  const showInitialLoading = createMemo(() => ctx.threads.loading && !hasThreadSnapshot());
+  const showThreadsError = createMemo(() => !!ctx.threads.error && !hasThreadSnapshot());
 
   return (
     <SidebarContent>
@@ -192,9 +188,8 @@ export function AIChatSidebar() {
         </Button>
       </div>
 
-      {/* 加载态 */}
       <Show
-        when={!ctx.threads.loading}
+        when={!showInitialLoading()}
         fallback={
           <div class="px-2.5 py-2 text-xs text-muted-foreground flex items-center gap-2">
             <SnakeLoader size="sm" />
@@ -202,21 +197,18 @@ export function AIChatSidebar() {
           </div>
         }
       >
-        {/* 错误态 */}
         <Show
-          when={!ctx.threads.error}
+          when={!showThreadsError()}
           fallback={
             <div class="px-2.5 py-2 text-xs text-error">
               {ctx.threads.error instanceof Error ? ctx.threads.error.message : String(ctx.threads.error)}
             </div>
           }
         >
-          {/* 空态 */}
           <Show
-            when={(ctx.threads()?.threads?.length ?? 0) > 0}
+            when={threadList().length > 0}
             fallback={<EmptyState />}
           >
-            {/* Conversations 标题 */}
             <SidebarSection title="Conversations">
               <div class="flex flex-col gap-0.5">
                 <For each={groupedThreads()}>
