@@ -61,6 +61,67 @@ function InlineButtonSnakeLoading() {
   );
 }
 
+// 自定义 Working 指示器 — Neural 网络动画 + Minimal 波形条
+function ChatWorkingIndicator() {
+  const uid = `neural-${Math.random().toString(36).slice(2, 8)}`;
+
+  // 使用 innerHTML 注入 SVG，避免 TypeScript 对 SMIL 元素（animateMotion）的类型问题
+  const svgContent = `
+    <defs>
+      <filter id="${uid}">
+        <feGaussianBlur stdDeviation="1" result="blur"/>
+        <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+      </filter>
+    </defs>
+    <g stroke="var(--primary)" stroke-width="0.8" fill="none">
+      <line x1="20" y1="8" x2="20" y2="20" class="processing-neural-line"/>
+      <line x1="8" y1="20" x2="20" y2="20" class="processing-neural-line" style="animation-delay:150ms"/>
+      <line x1="32" y1="20" x2="20" y2="20" class="processing-neural-line" style="animation-delay:300ms"/>
+      <line x1="14" y1="32" x2="20" y2="20" class="processing-neural-line" style="animation-delay:450ms"/>
+      <line x1="26" y1="32" x2="20" y2="20" class="processing-neural-line" style="animation-delay:600ms"/>
+      <line x1="20" y1="8" x2="8" y2="20" class="processing-neural-line" style="animation-delay:200ms"/>
+      <line x1="20" y1="8" x2="32" y2="20" class="processing-neural-line" style="animation-delay:350ms"/>
+      <line x1="8" y1="20" x2="14" y2="32" class="processing-neural-line" style="animation-delay:500ms"/>
+      <line x1="32" y1="20" x2="26" y2="32" class="processing-neural-line" style="animation-delay:250ms"/>
+      <line x1="14" y1="32" x2="26" y2="32" class="processing-neural-line" style="animation-delay:400ms"/>
+    </g>
+    <g>
+      <circle r="1.2" fill="var(--primary)" opacity="0.8"><animateMotion dur="1.5s" repeatCount="indefinite" path="M20,8 L20,20"/></circle>
+      <circle r="1.2" fill="var(--primary)" opacity="0.8"><animateMotion dur="1.5s" repeatCount="indefinite" begin="0.3s" path="M8,20 L20,20"/></circle>
+      <circle r="1.2" fill="var(--primary)" opacity="0.8"><animateMotion dur="1.5s" repeatCount="indefinite" begin="0.6s" path="M32,20 L20,20"/></circle>
+      <circle r="1.2" fill="var(--primary)" opacity="0.8"><animateMotion dur="1.5s" repeatCount="indefinite" begin="0.9s" path="M14,32 L20,20"/></circle>
+      <circle r="1.2" fill="var(--primary)" opacity="0.8"><animateMotion dur="1.5s" repeatCount="indefinite" begin="1.2s" path="M26,32 L20,20"/></circle>
+    </g>
+    <g filter="url(#${uid})">
+      <circle cx="20" cy="8" r="2" fill="var(--primary)" class="processing-neural-node"/>
+      <circle cx="8" cy="20" r="2" fill="var(--primary)" class="processing-neural-node" style="animation-delay:200ms"/>
+      <circle cx="32" cy="20" r="2" fill="var(--primary)" class="processing-neural-node" style="animation-delay:400ms"/>
+      <circle cx="14" cy="32" r="2" fill="var(--primary)" class="processing-neural-node" style="animation-delay:600ms"/>
+      <circle cx="26" cy="32" r="2" fill="var(--primary)" class="processing-neural-node" style="animation-delay:800ms"/>
+      <circle cx="20" cy="20" r="2.5" fill="var(--primary)" class="processing-neural-node" style="animation-delay:100ms"/>
+    </g>`;
+
+  return (
+    <div class="px-4 py-1.5 shrink-0">
+      <div class="inline-flex items-center gap-2.5 px-3 py-2 rounded-xl bg-primary/[0.04] border border-primary/10">
+        {/* Neural 网络 SVG 动画 */}
+        <svg class="w-7 h-7 shrink-0" viewBox="0 0 40 40" fill="none" innerHTML={svgContent} />
+
+        {/* 状态文字（shimmer 效果） */}
+        <span class="text-xs text-muted-foreground processing-text-shimmer">Working</span>
+
+        {/* 波形条（Minimal variant style） */}
+        <div class="flex items-end gap-[2px] h-3.5">
+          <div class="w-[3px] bg-primary/70 rounded-full processing-bar" style="animation-delay:0ms" />
+          <div class="w-[3px] bg-primary/70 rounded-full processing-bar" style="animation-delay:100ms" />
+          <div class="w-[3px] bg-primary/70 rounded-full processing-bar" style="animation-delay:200ms" />
+          <div class="w-[3px] bg-primary/70 rounded-full processing-bar" style="animation-delay:300ms" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Suggestion item for empty chat state
 interface SuggestionItem {
   icon: Component<{ class?: string }>;
@@ -186,6 +247,7 @@ const EmptyChat: Component<EmptyChatProps> = (props) => {
 // Message list with empty state overlay
 interface MessageListWithEmptyStateProps {
   hasMessages: boolean;
+  loading?: boolean;
   onSuggestionClick: (prompt: string) => void;
   disabled?: boolean;
   class?: string;
@@ -197,7 +259,7 @@ const MessageListWithEmptyState: Component<MessageListWithEmptyStateProps> = (pr
       <Show when={props.hasMessages}>
         <VirtualMessageList class="h-full" />
       </Show>
-      <Show when={!props.hasMessages}>
+      <Show when={!props.hasMessages && !props.loading}>
         <EmptyChat
           onSuggestionClick={props.onSuggestionClick}
           disabled={props.disabled}
@@ -227,6 +289,8 @@ export function EnvAIPage() {
 
   const [messagesLoading, setMessagesLoading] = createSignal(false);
   const [hasMessages, setHasMessages] = createSignal(false);
+  // 发送消息后立即为 true，在 ai.setRunning(true) 接管前提供即时反馈
+  const [sendPending, setSendPending] = createSignal(false);
 
   const [runId, setRunId] = createSignal<string | null>(null);
 
@@ -416,7 +480,7 @@ export function EnvAIPage() {
     }
 
     const tid = ai.activeThreadId();
-    const runTid = String(currentRunThreadId ?? runningThreadId() ?? '').trim();
+    const runTid = String(currentRunThreadId ?? untrack(() => runningThreadId()) ?? '').trim();
 
     // Draft -> thread promotion: keep the optimistic user message rendered by ChatProvider.
     if (skipNextThreadLoad && tid) {
@@ -578,7 +642,9 @@ export function EnvAIPage() {
     }
 
     // ChatProvider already rendered the optimistic user message; ensure the message list is visible.
+    // sendPending 通常已由 capture-phase 监听器提前设置，这里作为兜底（如附件-only 发送等场景）。
     setHasMessages(true);
+    setSendPending(true);
 
     let tid = ai.activeThreadId();
     if (!tid) {
@@ -586,7 +652,10 @@ export function EnvAIPage() {
       tid = await ai.ensureThreadForSend();
       skipNextThreadLoad = false;
     }
-    if (!tid) return;
+    if (!tid) {
+      setSendPending(false);
+      return;
+    }
 
     const uploaded = attachments.filter((a) => a.status === 'uploaded' && !!String(a.url ?? '').trim());
     const attIn = uploaded.map((a) => ({
@@ -600,6 +669,7 @@ export function EnvAIPage() {
     ai.setRunningThreadId(tid);
     setRunId(null);
     ai.setRunning(true);
+    setSendPending(false);
     startWatchdog();
 
     const userText = String(content ?? '').trim();
@@ -692,6 +762,7 @@ export function EnvAIPage() {
           chat?.handleStreamEvent({ type: 'message-end', messageId: mid } as any);
         }
         ai.setRunning(false);
+        setSendPending(false);
         setRunId(null);
         abortCtrl = null;
         assistantText = '';
@@ -705,6 +776,7 @@ export function EnvAIPage() {
       notify.error('AI failed', msg || 'Request failed.');
       stopWatchdog();
       ai.setRunning(false);
+      setSendPending(false);
       setRunId(null);
       abortCtrl = null;
       assistantText = '';
@@ -715,6 +787,17 @@ export function EnvAIPage() {
   };
 
   const callbacks: ChatCallbacks = {
+    onWillSend: () => {
+      // 同步钩子：ChatProvider 渲染乐观消息后立即调用，在 deferNonBlocking 之前。
+      // 此处设置 sendPending 保证 Working 指示器在同一帧内出现。
+      if (import.meta.env.DEV) console.debug('[AI Chat] onWillSend fired at', performance.now().toFixed(1), 'ms');
+      setSendPending(true);
+      setHasMessages(true);
+      requestAnimationFrame(() => {
+        const el = document.querySelector('.chat-message-list');
+        if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+      });
+    },
     onSendMessage: async (content, attachments, _addMessage) => {
       if (protocol.status() !== 'connected') {
         notify.error('Not connected', 'Connecting to agent...');
@@ -801,6 +884,14 @@ export function EnvAIPage() {
   const handleSuggestionClick = (prompt: string) => {
     if (!canInteract()) return;
     void startRun(prompt, []);
+  };
+
+  // 自定义 Working 指示器显示条件：sendPending（即时）或 run 进行中，且尚未收到流式消息
+  const showWorkingIndicator = () => {
+    if (!chatReady()) return false;
+    if (!sendPending() && !ai.running() && !activeThreadRunning()) return false;
+    if (chat?.streamingMessageId?.()) return false;
+    return true;
   };
 
   return (
@@ -942,10 +1033,17 @@ export function EnvAIPage() {
             {/* Message list with empty state */}
             <MessageListWithEmptyState
               hasMessages={hasMessages()}
+              loading={messagesLoading()}
               onSuggestionClick={handleSuggestionClick}
               disabled={!canInteract()}
               class="flex-1 min-h-0"
             />
+
+            {/* 自定义 Working 指示器（Neural + Waveform）— 始终在 DOM 中，通过 display 切换可见性，
+                避免 <Show> 每次切换时重新创建 DOM 带来的延迟 */}
+            <div style={{ display: showWorkingIndicator() ? '' : 'none' }}>
+              <ChatWorkingIndicator />
+            </div>
 
             {/* Input area */}
             <ChatInput
@@ -1055,8 +1153,10 @@ export function EnvAIPage() {
       <LoadingOverlay visible={protocol.status() !== 'connected'} message="Connecting to agent..." />
       <LoadingOverlay visible={ai.settings.loading && protocol.status() === 'connected'} message="Loading settings..." />
       <LoadingOverlay visible={ai.models.loading && ai.aiEnabled()} message="Loading models..." />
-      <LoadingOverlay visible={ai.threads.loading && ai.aiEnabled()} message="Loading chats..." />
-      <LoadingOverlay visible={messagesLoading() && ai.aiEnabled()} message="Loading chat..." />
+      {/* 仅在初次加载（无缓存数据）时展示全局 loading，bumpThreadsSeq 触发的后台刷新不显示遮罩 */}
+      <LoadingOverlay visible={ai.threads.loading && ai.aiEnabled() && !ai.threads()} message="Loading chats..." />
+      {/* run 进行中不显示 messages loading 遮罩，避免 working 状态下闪现全局 loading */}
+      <LoadingOverlay visible={messagesLoading() && ai.aiEnabled() && !ai.running()} message="Loading chat..." />
     </div>
   );
 }
