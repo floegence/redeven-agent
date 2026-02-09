@@ -29,20 +29,22 @@ Not implemented yet (planned):
 
 - Release process and artifact verification: [`docs/RELEASE.md`](docs/RELEASE.md)
 
-## Install Script and Cloudflare Worker
+## Install Distribution and Cloudflare Delivery
 
 - Installer source: `scripts/install.sh` (this repo)
-- Worker source template: `deployment/cloudflare/workers/install-agent/generate-worker.js`
-- Worker config: `deployment/cloudflare/workers/install-agent/wrangler.toml`
-- Cloudflare production branch: `release`
+- Release mirror workflow: `.github/workflows/sync-release-assets-to-r2.yml`
+- Sync script: `scripts/sync_release_assets_to_r2.sh`
+- Install worker source template: `deployment/cloudflare/workers/install-agent/generate-worker.js`
+- Install worker config: `deployment/cloudflare/workers/install-agent/wrangler.toml`
+- Cloudflare production branch for install worker: `release`
 
-Deployment model:
+Delivery model:
 
-- Cloudflare Workers Builds is connected directly to this GitHub repository.
-- GitHub Actions is **not** used for Cloudflare deployment.
-- Deployments are tag-driven via `./scripts/publish_install_worker_release_branch.sh <tag>`, which moves `release` to the release tag commit.
-- `main` merges do not deploy the install worker.
-- Ensure `release` exists on origin before first Cloudflare rollout: `git push origin origin/main:refs/heads/release`.
+- GitHub Release is the single source of truth for binaries and checksum files.
+- On `release: published`, GitHub Actions mirrors release assets to Cloudflare R2 (`agent.package.example.invalid/agent-install-pkg/<tag>/...`) and updates `version.agent.example.invalid/v1/manifest.json`.
+- Manifest is updated only after mirror verification succeeds.
+- `install.sh` keeps GitHub as primary download source and Cloudflare as fallback.
+- `main` merges do not deploy the install worker. Use `./scripts/publish_install_worker_release_branch.sh <tag>` only when installer/worker sources change.
 
 See release operations: [`docs/RELEASE.md`](docs/RELEASE.md).
 
