@@ -1,0 +1,10 @@
+name = "redeven-install-script-get"
+main = "dist/install-worker.mjs"
+compatibility_date = "2024-01-01"
+
+# Bind this Worker to the install.sh endpoint on the main domain.
+# When using SSL for SaaS with wildcard hosts, each route must specify
+# the zone explicitly via zone_name or zone_id.
+[[routes]]
+pattern = "example.invalid/install.sh"
+zone_name = "example.invalid"
