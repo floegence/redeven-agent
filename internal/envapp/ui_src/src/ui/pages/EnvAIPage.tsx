@@ -750,7 +750,7 @@ export function EnvAIPage() {
                       options={ai.modelOptions()}
                       placeholder="Select model..."
                       disabled={ai.models.loading || !!ai.models.error || activeThreadRunning()}
-                      class="min-w-[120px] max-w-[160px] sm:min-w-[140px] sm:max-w-[200px] h-7 text-[11px]"
+                      class="ai-model-select-trigger min-w-[120px] max-w-[160px] sm:min-w-[140px] sm:max-w-[200px] h-7 text-[11px]"
                     />
                   </Show>
 
