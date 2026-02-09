@@ -64,13 +64,7 @@ The installer script source of truth is in this repository:
 
 - `scripts/install.sh`
 
-Cloudflare Worker deployment is handled by `.github/workflows/deploy-install-worker.yml`.
-
-Trigger conditions:
-
-- push to `main` with changes under `scripts/install.sh` or `deployment/cloudflare/workers/install-agent/**`
-- published release
-- manual dispatch
+Cloudflare Worker deployment is managed by **Cloudflare Workers Builds** (GitHub integration), not by GitHub Actions.
 
 Worker files:
 
@@ -78,10 +72,27 @@ Worker files:
 - generated bundle: `deployment/cloudflare/workers/install-agent/dist/install-worker.mjs`
 - wrangler config: `deployment/cloudflare/workers/install-agent/wrangler.toml`
 
-Required repository secrets:
+### One-time Cloudflare setup
 
-- `CLOUDFLARE_API_TOKEN`
-- `CLOUDFLARE_ACCOUNT_ID`
+Configure the Worker build in Cloudflare Dashboard:
+
+1. Connect repository: `floegence/redeven-agent`.
+2. Set production branch to `release/install-worker`.
+3. Set project root to `deployment/cloudflare/workers/install-agent`.
+4. Build command: `node generate-worker.js`.
+5. Deploy command: `npx wrangler deploy --config wrangler.toml`.
+
+This setup ensures that merges into `main` do not trigger install-worker deployment.
+
+### Tag-driven publish flow
+
+Cloudflare Workers Builds deploys on branch updates. To deploy by release tag (instead of every `main` merge), publish the release tag commit to the dedicated Cloudflare production branch:
+
+```bash
+./scripts/publish_install_worker_release_branch.sh vX.Y.Z
+```
+
+This command force-updates `release/install-worker` to the commit behind the tag. Cloudflare then builds and deploys that exact tagged commit.
 
 ## Operational notes
 
