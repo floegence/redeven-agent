@@ -291,11 +291,24 @@ export function EnvAIPage() {
   let chat: ChatContextValue | null = null;
   const [chatReady, setChatReady] = createSignal(false);
 
+  const FOLLOW_BOTTOM_THRESHOLD_PX = 24;
+  let autoFollowEnabled = true;
+  let followScrollRafPending = false;
+
+  const getMessageListScroller = () =>
+    document.querySelector<HTMLElement>('.chat-message-list-scroll') ??
+    document.querySelector<HTMLElement>('.chat-message-list');
+
+  const isNearBottom = (el: HTMLElement) =>
+    el.scrollHeight - el.scrollTop - el.clientHeight <= FOLLOW_BOTTOM_THRESHOLD_PX;
+
+  const enableAutoFollow = () => {
+    autoFollowEnabled = true;
+  };
+
   const forceScrollToLatest = () => {
     const scrollBottom = () => {
-      const el =
-        document.querySelector<HTMLElement>('.chat-message-list-scroll') ??
-        document.querySelector<HTMLElement>('.chat-message-list');
+      const el = getMessageListScroller();
       if (!el) return false;
       el.scrollTo({ top: el.scrollHeight, behavior: 'auto' });
       return true;
@@ -307,6 +320,28 @@ export function EnvAIPage() {
       requestAnimationFrame(() => {
         void scrollBottom();
       });
+    });
+  };
+
+  const scheduleFollowScrollToLatest = () => {
+    const scroller = getMessageListScroller();
+    if (scroller) {
+      if (isNearBottom(scroller)) {
+        autoFollowEnabled = true;
+      } else {
+        autoFollowEnabled = false;
+      }
+    }
+
+    if (!autoFollowEnabled || followScrollRafPending) {
+      return;
+    }
+
+    followScrollRafPending = true;
+    requestAnimationFrame(() => {
+      followScrollRafPending = false;
+      if (!autoFollowEnabled) return;
+      forceScrollToLatest();
     });
   };
 
@@ -401,6 +436,7 @@ export function EnvAIPage() {
     }
 
     const tid = ai.activeThreadId();
+    enableAutoFollow();
 
     // Draft -> thread promotion: keep the optimistic user message rendered by ChatProvider.
     if (skipNextThreadLoad && tid) {
@@ -430,6 +466,7 @@ export function EnvAIPage() {
       if (event.eventType === 'stream_event') {
         if (tid === String(ai.activeThreadId() ?? '').trim()) {
           syncThreadReplay(tid);
+          scheduleFollowScrollToLatest();
         }
         return;
       }
@@ -561,6 +598,7 @@ export function EnvAIPage() {
     // sendPending is usually raised by onWillSend, this call keeps attachment-only flows responsive.
     setHasMessages(true);
     setSendPending(true);
+    enableAutoFollow();
     forceScrollToLatest();
 
     let tid = ai.activeThreadId();
@@ -618,6 +656,7 @@ export function EnvAIPage() {
       if (import.meta.env.DEV) console.debug('[AI Chat] onWillSend fired at', performance.now().toFixed(1), 'ms');
       setSendPending(true);
       setHasMessages(true);
+      enableAutoFollow();
       forceScrollToLatest();
     },
     onSendMessage: async (content, attachments, _addMessage) => {
