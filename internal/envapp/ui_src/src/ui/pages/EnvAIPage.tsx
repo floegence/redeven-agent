@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createSignal, onCleanup, untrack, type Component } from 'solid-js';
+import { For, Show, createEffect, createMemo, createSignal, untrack, type Component } from 'solid-js';
 import { cn, useNotification } from '@floegence/floe-webapp-core';
 import { Motion } from 'solid-motionone';
 import {
@@ -307,7 +307,8 @@ export function EnvAIPage() {
   let watchdogTimer: number | null = null;
   let stopFallbackTimer: number | null = null;
   let currentRunThreadId: string | null = null;
-  let inputWrapperRef: HTMLDivElement | undefined;
+  // 标记 FileBrowser 注入上下文，防止 messages watcher 误触发 sendPending
+  let isInjectingContext = false;
 
   const runningThreadId = createMemo(() => String(ai.runningThreadId() ?? '').trim() || null);
   const activeThreadRunning = createMemo(() => ai.isThreadRunning(ai.activeThreadId()));
@@ -525,7 +526,9 @@ export function EnvAIPage() {
       }
       if (!tid) return;
 
+      isInjectingContext = true;
       chat?.addMessage(createUserMarkdownMessage(md));
+      isInjectingContext = false;
       setHasMessages(true);
 
       try {
@@ -884,52 +887,34 @@ export function EnvAIPage() {
     return true;
   };
 
-  // Capture-phase 监听器：在 ChatProvider 处理之前检测用户发送意图，立即展示 Working 指示器。
-  // ChatProvider.sendMessage 使用 deferNonBlocking（setTimeout 0）延迟调用 onSendMessage 回调，
-  // 导致 startRun 中的 setSendPending(true) 延迟一个宏任务。capture-phase 在 ChatInput
-  // 的事件处理器之前触发，此时 textarea 仍有内容，可以判断用户即将发送消息。
+  // 响应式消息监听：当 ChatProvider 的 batch 同步添加乐观消息后，messages() 信号立即更新。
+  // 此 effect 在同一微任务中触发，远早于 deferNonBlocking（setTimeout 0）的 onSendMessage 回调，
+  // 从而在用户按下 Enter 的同一帧内展示 Working 指示器。
+  let prevMsgLen = 0;
   let sendPendingSafetyTimer: number | null = null;
   createEffect(() => {
     if (!chatReady()) return;
-    const wrapper = inputWrapperRef;
-    if (!wrapper) return;
+    const msgs = chat?.messages?.() ?? [];
+    const len = msgs.length;
 
-    const triggerSendPending = () => {
-      setSendPending(true);
-      setHasMessages(true);
-      // 滚动到底部，确保 Working 指示器可见
-      requestAnimationFrame(() => {
-        const el = document.querySelector('.chat-message-list');
-        if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
-      });
-      // 安全兜底：如果 onSendMessage 回调因异常未触发，3 秒后自动清除
-      if (sendPendingSafetyTimer != null) window.clearTimeout(sendPendingSafetyTimer);
-      sendPendingSafetyTimer = window.setTimeout(() => {
-        if (sendPending() && !ai.running()) setSendPending(false);
-      }, 3000);
-    };
-
-    const onKeyDownCapture = (e: KeyboardEvent) => {
-      if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
-      const textarea = wrapper.querySelector('textarea');
-      if (!textarea || !(textarea as HTMLTextAreaElement).value.trim()) return;
-      triggerSendPending();
-    };
-
-    const onClickCapture = (e: MouseEvent) => {
-      const btn = (e.target as HTMLElement)?.closest('.chat-input-send-btn');
-      if (!btn || (btn as HTMLButtonElement).disabled) return;
-      triggerSendPending();
-    };
-
-    wrapper.addEventListener('keydown', onKeyDownCapture, { capture: true });
-    wrapper.addEventListener('click', onClickCapture, { capture: true });
-
-    onCleanup(() => {
-      wrapper.removeEventListener('keydown', onKeyDownCapture, { capture: true });
-      wrapper.removeEventListener('click', onClickCapture, { capture: true });
-      if (sendPendingSafetyTimer != null) window.clearTimeout(sendPendingSafetyTimer);
-    });
+    if (len > prevMsgLen && len > 0 && !untrack(() => messagesLoading()) && !isInjectingContext) {
+      const last = msgs[len - 1];
+      if (last.role === 'user') {
+        setSendPending(true);
+        setHasMessages(true);
+        // 滚动到底部，确保 Working 指示器可见
+        requestAnimationFrame(() => {
+          const el = document.querySelector('.chat-message-list');
+          if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+        });
+        // 安全兜底：如果 onSendMessage 回调因异常未触发，5 秒后自动清除
+        if (sendPendingSafetyTimer != null) window.clearTimeout(sendPendingSafetyTimer);
+        sendPendingSafetyTimer = window.setTimeout(() => {
+          if (sendPending() && !ai.running()) setSendPending(false);
+        }, 5000);
+      }
+    }
+    prevMsgLen = len;
   });
 
   return (
@@ -1082,13 +1067,11 @@ export function EnvAIPage() {
               <ChatWorkingIndicator />
             </Show>
 
-            {/* Input area — wrapper 用于 capture-phase 事件监听，提前检测发送意图 */}
-            <div ref={inputWrapperRef}>
-              <ChatInput
-                disabled={!canInteract()}
-                placeholder={ai.aiEnabled() ? 'Type a message...' : 'Configure AI in settings to start...'}
-              />
-            </div>
+            {/* Input area */}
+            <ChatInput
+              disabled={!canInteract()}
+              placeholder={ai.aiEnabled() ? 'Type a message...' : 'Configure AI in settings to start...'}
+            />
           </div>
         </Show>
 
