@@ -9,11 +9,11 @@ import {
   Globe,
   Grid3x3,
   LayoutDashboard,
+  MessageSquare,
   Moon,
   Refresh,
   Search,
   Settings,
-  Sparkles,
   Sun,
   Terminal,
 } from '@floegence/floe-webapp-core/icons';
@@ -505,7 +505,7 @@ export function EnvAppShell() {
       list.push({ id: 'ports', name: 'Ports', icon: Globe, component: EnvPortForwardsPage, sidebar: { order: 6, fullScreen: true } });
     }
     list.push(
-      { id: 'ai', name: 'AI', icon: Sparkles, component: EnvAIPage, sidebar: { order: 7, fullScreen: false, renderIn: 'main' } },
+      { id: 'ai', name: 'AI', icon: MessageSquare, component: EnvAIPage, sidebar: { order: 7, fullScreen: false, renderIn: 'main' } },
       { id: 'settings', name: 'Settings', icon: Settings, component: EnvSettingsPage, sidebar: { order: 99, fullScreen: true } },
     );
     return list;
@@ -561,7 +561,7 @@ export function EnvAppShell() {
     if (!isLocalMode()) {
       items.push({ id: 'ports', icon: Globe, label: 'Ports', collapseBehavior: 'preserve' });
     }
-    items.push({ id: 'ai', icon: Sparkles, label: 'AI', collapseBehavior: 'toggle' });
+    items.push({ id: 'ai', icon: MessageSquare, label: 'AI', collapseBehavior: 'toggle' });
     return items;
   };
 
