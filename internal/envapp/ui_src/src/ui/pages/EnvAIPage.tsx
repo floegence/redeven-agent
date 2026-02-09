@@ -790,6 +790,7 @@ export function EnvAIPage() {
     onWillSend: () => {
       // 同步钩子：ChatProvider 渲染乐观消息后立即调用，在 deferNonBlocking 之前。
       // 此处设置 sendPending 保证 Working 指示器在同一帧内出现。
+      if (import.meta.env.DEV) console.debug('[AI Chat] onWillSend fired at', performance.now().toFixed(1), 'ms');
       setSendPending(true);
       setHasMessages(true);
       requestAnimationFrame(() => {
@@ -1038,10 +1039,11 @@ export function EnvAIPage() {
               class="flex-1 min-h-0"
             />
 
-            {/* 自定义 Working 指示器（Neural + Waveform），替代 VirtualMessageList 内置的 Working... */}
-            <Show when={showWorkingIndicator()}>
+            {/* 自定义 Working 指示器（Neural + Waveform）— 始终在 DOM 中，通过 display 切换可见性，
+                避免 <Show> 每次切换时重新创建 DOM 带来的延迟 */}
+            <div style={{ display: showWorkingIndicator() ? '' : 'none' }}>
               <ChatWorkingIndicator />
-            </Show>
+            </div>
 
             {/* Input area */}
             <ChatInput
