@@ -7,11 +7,11 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag to sync (for example: v0.1.12)
+        description: "Release tag to sync (for example: v0.1.12)"
         required: true
         type: string
       recommended:
-        description: Optional recommended version override (defaults to tag)
+        description: "Optional recommended version override (defaults to tag)"
         required: false
         type: string
 
