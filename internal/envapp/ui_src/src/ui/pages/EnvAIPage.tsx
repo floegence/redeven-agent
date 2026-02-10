@@ -61,53 +61,128 @@ function InlineButtonSnakeLoading() {
 function ChatWorkingIndicator() {
   const uid = `neural-${Math.random().toString(36).slice(2, 8)}`;
 
-  // Inject SVG via innerHTML to avoid TypeScript SMIL typing friction (animateMotion).
-  const svgContent = `
-    <defs>
-      <filter id="${uid}">
-        <feGaussianBlur stdDeviation="1" result="blur"/>
-        <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
-      </filter>
-    </defs>
-    <style>
-      @keyframes ${uid}-draw {
-        from { stroke-dashoffset: 1; stroke-opacity: 0.15; }
-        to   { stroke-dashoffset: 0; stroke-opacity: 0.7; }
-      }
-    </style>
-    <g stroke="var(--primary)" stroke-width="0.8" fill="none">
-      <line x1="20" y1="8"  x2="20" y2="20" pathLength="1" stroke-dasharray="1" stroke-dashoffset="1" style="animation:${uid}-draw 1.5s linear 0s infinite"/>
-      <line x1="8"  y1="20" x2="20" y2="20" pathLength="1" stroke-dasharray="1" stroke-dashoffset="1" style="animation:${uid}-draw 1.5s linear 0.3s infinite"/>
-      <line x1="32" y1="20" x2="20" y2="20" pathLength="1" stroke-dasharray="1" stroke-dashoffset="1" style="animation:${uid}-draw 1.5s linear 0.6s infinite"/>
-      <line x1="14" y1="32" x2="20" y2="20" pathLength="1" stroke-dasharray="1" stroke-dashoffset="1" style="animation:${uid}-draw 1.5s linear 0.9s infinite"/>
-      <line x1="26" y1="32" x2="20" y2="20" pathLength="1" stroke-dasharray="1" stroke-dashoffset="1" style="animation:${uid}-draw 1.5s linear 1.2s infinite"/>
-      <line x1="20" y1="8" x2="8" y2="20" class="processing-neural-line" style="animation-delay:200ms"/>
-      <line x1="20" y1="8" x2="32" y2="20" class="processing-neural-line" style="animation-delay:350ms"/>
-      <line x1="8" y1="20" x2="14" y2="32" class="processing-neural-line" style="animation-delay:500ms"/>
-      <line x1="32" y1="20" x2="26" y2="32" class="processing-neural-line" style="animation-delay:250ms"/>
-      <line x1="14" y1="32" x2="26" y2="32" class="processing-neural-line" style="animation-delay:400ms"/>
-    </g>
-    <g>
-      <circle r="1.2" fill="var(--primary)" opacity="0.8"><animateMotion dur="1.5s" repeatCount="indefinite" path="M20,8 L20,20"/></circle>
-      <circle r="1.2" fill="var(--primary)" opacity="0.8"><animateMotion dur="1.5s" repeatCount="indefinite" begin="0.3s" path="M8,20 L20,20"/></circle>
-      <circle r="1.2" fill="var(--primary)" opacity="0.8"><animateMotion dur="1.5s" repeatCount="indefinite" begin="0.6s" path="M32,20 L20,20"/></circle>
-      <circle r="1.2" fill="var(--primary)" opacity="0.8"><animateMotion dur="1.5s" repeatCount="indefinite" begin="0.9s" path="M14,32 L20,20"/></circle>
-      <circle r="1.2" fill="var(--primary)" opacity="0.8"><animateMotion dur="1.5s" repeatCount="indefinite" begin="1.2s" path="M26,32 L20,20"/></circle>
-    </g>
-    <g filter="url(#${uid})">
-      <circle cx="20" cy="8" r="2" fill="var(--primary)" class="processing-neural-node"/>
-      <circle cx="8" cy="20" r="2" fill="var(--primary)" class="processing-neural-node" style="animation-delay:200ms"/>
-      <circle cx="32" cy="20" r="2" fill="var(--primary)" class="processing-neural-node" style="animation-delay:400ms"/>
-      <circle cx="14" cy="32" r="2" fill="var(--primary)" class="processing-neural-node" style="animation-delay:600ms"/>
-      <circle cx="26" cy="32" r="2" fill="var(--primary)" class="processing-neural-node" style="animation-delay:800ms"/>
-      <circle cx="20" cy="20" r="2.5" fill="var(--primary)" class="processing-neural-node" style="animation-delay:100ms"/>
-    </g>`;
+  const baseNodes = [
+    { x: 20, y: 8 },
+    { x: 8, y: 20 },
+    { x: 32, y: 20 },
+    { x: 14, y: 32 },
+    { x: 26, y: 32 },
+    { x: 20, y: 20 },
+  ];
+
+  const nodeAnimParams = [
+    { ax: 1.3, ay: 1.1, fx: 1.1, fy: 0.8, px: 0, py: 0.4 },
+    { ax: 1.2, ay: 1.3, fx: 0.9, fy: 1.1, px: 0.7, py: 0.2 },
+    { ax: 1.2, ay: 1.3, fx: 0.9, fy: 1.1, px: 1.9, py: 0.5 },
+    { ax: 1.3, ay: 1.1, fx: 1.05, fy: 0.85, px: 0.4, py: 1.1 },
+    { ax: 1.3, ay: 1.1, fx: 1.05, fy: 0.85, px: 1.3, py: 0.9 },
+    { ax: 0, ay: 0, fx: 0, fy: 0, px: 0, py: 0 },
+  ];
+
+  const toCenterConnections: Array<[number, number]> = [[0, 5], [1, 5], [2, 5], [3, 5], [4, 5]];
+  const toCenterDelays = [0, 0.3, 0.6, 0.9, 1.2];
+
+  const sideConnections: Array<[number, number]> = [[0, 1], [0, 2], [1, 3], [2, 4], [3, 4]];
+  const sideDelays = [200, 350, 500, 250, 400];
+
+  const [nodePositions, setNodePositions] = createSignal(baseNodes.map((n) => ({ x: n.x, y: n.y })));
+
+  createEffect(() => {
+    let animationId = 0;
+    const startTime = performance.now();
+
+    const animate = (currentTime: number) => {
+      const elapsed = (currentTime - startTime) / 1000;
+      setNodePositions(
+        baseNodes.map((base, i) => {
+          const p = nodeAnimParams[i];
+          return {
+            x: base.x + Math.sin(elapsed * p.fx + p.px) * p.ax,
+            y: base.y + Math.sin(elapsed * p.fy + p.py) * p.ay,
+          };
+        }),
+      );
+      animationId = requestAnimationFrame(animate);
+    };
+
+    animationId = requestAnimationFrame(animate);
+    onCleanup(() => cancelAnimationFrame(animationId));
+  });
 
   return (
     <div class="px-4 py-1.5 shrink-0">
       <div class="inline-flex items-center gap-2.5 px-3 py-2 rounded-xl bg-primary/[0.04] border border-primary/10">
         {/* Neural SVG animation */}
-        <svg class="w-7 h-7 shrink-0" viewBox="0 0 40 40" fill="none" innerHTML={svgContent} />
+        <svg class="w-7 h-7 shrink-0" viewBox="0 0 40 40" fill="none">
+          <defs>
+            <filter id={uid}>
+              <feGaussianBlur stdDeviation="1" result="blur" />
+              <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+            </filter>
+          </defs>
+          <style>
+            {`@keyframes ${uid}-draw { from { stroke-dashoffset: 1; stroke-opacity: 0.15; } to { stroke-dashoffset: 0; stroke-opacity: 0.7; } }`}
+          </style>
+
+          <g stroke="var(--primary)" stroke-width="0.8" fill="none">
+            <For each={toCenterConnections}>
+              {([from, to], i) => (
+                <line
+                  x1={nodePositions()[from].x}
+                  y1={nodePositions()[from].y}
+                  x2={nodePositions()[to].x}
+                  y2={nodePositions()[to].y}
+                  pathLength="1"
+                  stroke-dasharray="1"
+                  stroke-dashoffset="1"
+                  style={{ animation: `${uid}-draw 1.5s linear ${toCenterDelays[i()]}s infinite` }}
+                />
+              )}
+            </For>
+            <For each={sideConnections}>
+              {([from, to], i) => (
+                <line
+                  x1={nodePositions()[from].x}
+                  y1={nodePositions()[from].y}
+                  x2={nodePositions()[to].x}
+                  y2={nodePositions()[to].y}
+                  class="processing-neural-line"
+                  style={`animation-delay:${sideDelays[i()]}ms`}
+                />
+              )}
+            </For>
+          </g>
+
+          <g>
+            <For each={toCenterConnections}>
+              {([from, to], i) => (
+                <circle r="1.2" fill="var(--primary)" opacity="0.8">
+                  <animateMotion
+                    dur="1.5s"
+                    repeatCount="indefinite"
+                    begin={`${toCenterDelays[i()]}s`}
+                    path={`M${nodePositions()[from].x},${nodePositions()[from].y} L${nodePositions()[to].x},${nodePositions()[to].y}`}
+                  />
+                </circle>
+              )}
+            </For>
+          </g>
+
+          <g filter={`url(#${uid})`}>
+            <For each={nodePositions()}>
+              {(node, i) => (
+                <circle
+                  cx={node.x}
+                  cy={node.y}
+                  r={i() === 5 ? 2.5 : 2}
+                  fill="var(--primary)"
+                  class="processing-neural-node"
+                  style={`animation-delay:${[0, 200, 400, 600, 800, 100][i()]}ms`}
+                />
+              )}
+            </For>
+          </g>
+        </svg>
 
         {/* Status text (shimmer) */}
         <span class="text-xs text-muted-foreground processing-text-shimmer">Working</span>
