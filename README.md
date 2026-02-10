@@ -1,101 +1,175 @@
 # Redeven Agent
 
-Redeven Agent is the **endpoint** in the Redeven + Flowersec E2EE architecture.
+![Go Version](https://img.shields.io/badge/Go-1.25.7-00ADD8?logo=go)
+![Node Version](https://img.shields.io/badge/Node.js-20-339933?logo=node.js)
+![Architecture](https://img.shields.io/badge/Architecture-E2EE%20Endpoint-5B2CFF)
 
-- Control-plane: the agent connects to Region Center via **Flowersec direct** (`/control/ws`, no tunnel).
-- Data-plane: the agent receives `grant_server` over the control channel, then attaches to a **Flowersec tunnel server** as `role=server` and serves encrypted RPC/streams.
+Redeven Agent is the **endpoint runtime** in the Redeven + Flowersec architecture.
+It runs on the user machine, receives control-plane grants from Region Center, and serves encrypted RPC/streams over Flowersec.
 
-This repository is intended to be **open-sourced** so users can audit what runs on their machines.
+> This repository is designed to be open-source and auditable, so users can inspect exactly what runs locally.
 
-## Status
+## Why Redeven Agent
 
-Implemented in this repo:
+- **E2EE by design**: business traffic is encrypted end-to-end between browser and endpoint.
+- **Clear trust boundary**: control-plane metadata and data-plane bytes are separated by architecture.
+- **Local-first runtime**: files, terminals, monitoring, and code-server run on the user machine.
+- **Auditable behavior**: release and verification flow are documented and reproducible.
 
-- `floe_app = com.floegence.redeven.agent`
-  - File system RPC (list/read/write/delete/get_home) + `fs/read_file` stream
-  - Terminal RPC (create/list/attach) + bidirectional data notifications
-  - Monitor RPC (CPU/network/process snapshot)
-  - Agent-bundled Env App UI assets: `internal/envapp/ui_src/` -> `internal/envapp/ui/dist/`
-  - Optional: Env App AI Agent (TS sidecar + Go tool executor). Documentation: [`docs/AI_AGENT.md`](docs/AI_AGENT.md)
-  - Documentation: [`docs/ENV_APP.md`](docs/ENV_APP.md)
-- `floe_app = com.floegence.redeven.code`
-  - code-server over Flowersec E2EE proxy (`flowersec-proxy/http1`, `flowersec-proxy/ws`)
-  - Agent-bundled UI assets (CSP-safe inject script): `internal/codeapp/ui_src/` -> `internal/codeapp/ui/dist/`
-  - Documentation: [`docs/CODE_APP.md`](docs/CODE_APP.md)
+## Architecture at a Glance
 
-Not implemented yet (planned):
+```text
+                           (control-plane, direct)
+Region Center  -------------------------------------------->  Redeven Agent
+  /control/ws, grant_server + session_meta                     (endpoint runtime)
 
-- `floe_app = ...` (rebrowser, 3rd-party apps, etc)
+Browser (Sandbox)  <========== Flowersec Tunnel ==========>  Redeven Agent
+      E2EE client attach token + PSK            E2EE server role + app handlers
+                           (data-plane bytes only)
+```
 
-- Release process and artifact verification: [`docs/RELEASE.md`](docs/RELEASE.md)
+Control-plane and data-plane are intentionally split:
 
-## Install Distribution and Cloudflare Delivery
+- **Control-plane**: authenticate, authorize, issue grants, deliver `session_meta`.
+- **Data-plane**: forward encrypted bytes; tunnel cannot decrypt application data.
 
-- Installer source: `scripts/install.sh` (this repo)
-- Release mirror workflow: `.github/workflows/sync-release-assets-to-r2.yml`
-- Sync script: `scripts/sync_release_assets_to_r2.sh`
-- Install worker source template: `deployment/cloudflare/workers/install-agent/generate-worker.js`
-- Install worker config: `deployment/cloudflare/workers/install-agent/wrangler.toml`
-- Cloudflare production branch for install worker: `release`
+## Quick Start (2 Minutes)
 
-Delivery model:
-
-- GitHub Release is the single source of truth for binaries and checksum files.
-- On `release: published`, GitHub Actions mirrors release assets to Cloudflare R2 (`agent.package.example.invalid/agent-install-pkg/<tag>/...`) and updates `version.agent.example.invalid/v1/manifest.json`.
-- Manifest is updated only after mirror verification succeeds.
-- `install.sh` keeps GitHub as primary download source and Cloudflare as fallback.
-- `main` merges do not deploy the install worker. Use `./scripts/publish_install_worker_release_branch.sh <tag>` only when installer/worker sources change.
-
-See release operations: [`docs/RELEASE.md`](docs/RELEASE.md).
-
-## Build
-
-Requirements:
+### Prerequisites
 
 - Go `1.25.7`
-- Node.js `20` (to build embedded UI/sidecar assets)
-- npm (comes with Node.js)
+- Node.js `20`
+- npm
 - pnpm (or Node.js `corepack`)
 
-Build:
+### Build
 
 ```bash
 ./scripts/build_assets.sh
 go build -o redeven ./cmd/redeven
 ```
 
-Note: `internal/**/dist/` are generated build artifacts (embedded via Go `embed`) and are not checked into git.
+Notes:
 
-## Quick start
+- `internal/**/dist/` is generated and embedded via Go `embed`.
+- Generated `dist` assets are not checked into git.
 
-1) Bootstrap (exchange env token for direct control-channel credentials):
+### Bootstrap and run
 
 ```bash
 ./redeven bootstrap \
   --controlplane https://<region>.<base-domain> \
   --env-id <env_public_id> \
   --env-token <env_token>
-```
 
-This writes a local config file (default: `~/.redeven/config.json`).
-By default, the local permission cap is `execute_read_write`. You can override it via `--permission-policy`.
-
-2) Run:
-
-```bash
 ./redeven run
 ```
 
-## Security notes
+What bootstrap writes by default:
 
-- The config file contains secrets (PSK). Keep it private (`chmod 600`).
-- The agent **does not** trust browser-claimed permissions; it only trusts `session_meta` delivered by Region Center over the direct control channel.
-- Capability-to-permission mapping (what each permission enables): [`docs/CAPABILITY_PERMISSIONS.md`](docs/CAPABILITY_PERMISSIONS.md).
-- Local permission cap (`permission_policy`): [`docs/PERMISSION_POLICY.md`](docs/PERMISSION_POLICY.md).
+- Config path: `~/.redeven/config.json`
+- Default local permission cap: `execute_read_write`
 
-## FS path model
+### Success checklist
 
-FS RPC paths use a **virtual root**:
+- `redeven run` starts without config validation errors.
+- Region Center sees the endpoint online through direct control channel.
+- Env App can open and perform basic file/terminal actions through E2EE sessions.
 
-- `/` is the agent's configured filesystem root directory.
-- All FS requests/responses use POSIX-like absolute paths (e.g. `/projects/app`).
+## What You Get Today
+
+### `floe_app = com.floegence.redeven.agent`
+
+- File system RPC (`list/read/write/delete/get_home`) + `fs/read_file` stream
+- Terminal RPC (`create/list/attach`) with bidirectional data notifications
+- Monitor RPC (CPU/network/process snapshots)
+- Agent-bundled Env App UI assets
+- Optional AI Agent (TypeScript sidecar + Go executor)
+
+Details:
+
+- Env App: [`docs/ENV_APP.md`](docs/ENV_APP.md)
+- AI Agent: [`docs/AI_AGENT.md`](docs/AI_AGENT.md)
+
+### `floe_app = com.floegence.redeven.code`
+
+- code-server over Flowersec E2EE proxy (`flowersec-proxy/http1`, `flowersec-proxy/ws`)
+- Agent-bundled inject script for CSP-safe WebSocket/fetch proxying
+- Local codespace lifecycle management via agent local gateway
+
+Details:
+
+- Code App: [`docs/CODE_APP.md`](docs/CODE_APP.md)
+
+## Security Model
+
+- The agent **does not trust browser-claimed permissions**.
+- Effective permissions come from:
+  - control-plane `session_meta`
+  - intersected with local `permission_policy` cap
+- Capability behavior is explicit and documented:
+  - [`docs/CAPABILITY_PERMISSIONS.md`](docs/CAPABILITY_PERMISSIONS.md)
+  - [`docs/PERMISSION_POLICY.md`](docs/PERMISSION_POLICY.md)
+- Config contains sensitive material (including E2EE PSK); keep local files private (`chmod 600`).
+
+## Data and State on Disk
+
+Default state directory is derived from config path:
+
+- Config: `~/.redeven/config.json`
+- State dir: `~/.redeven/`
+
+Common local files:
+
+- `~/.redeven/config.json` (runtime config)
+- `~/.redeven/agent.lock` (single-process lock for one state dir)
+- `~/.redeven/secrets.json` (local secrets such as AI provider API keys)
+- `~/.redeven/audit/events.jsonl` (audit metadata log)
+- `~/.redeven/apps/code/...` (code-server spaces and logs)
+
+Multi-environment mode uses isolated state per environment:
+
+- `~/.redeven/envs/<env_public_id>/config.json`
+
+## Operations and Release
+
+- GitHub Release is the source of truth for versioned binaries and checksums.
+- On `release: published`, assets are mirrored to Cloudflare R2 after verification.
+- `install.sh` downloads from GitHub first, then falls back to Cloudflare mirror.
+
+Release details:
+
+- [`docs/RELEASE.md`](docs/RELEASE.md)
+
+## Documentation Map
+
+- **Env App runtime**: [`docs/ENV_APP.md`](docs/ENV_APP.md)
+- **Code App runtime**: [`docs/CODE_APP.md`](docs/CODE_APP.md)
+- **AI sidecar and behavior**: [`docs/AI_AGENT.md`](docs/AI_AGENT.md)
+- **AI settings and secrets model**: [`docs/AI_SETTINGS.md`](docs/AI_SETTINGS.md)
+- **Capability-to-permission contract**: [`docs/CAPABILITY_PERMISSIONS.md`](docs/CAPABILITY_PERMISSIONS.md)
+- **Local permission policy**: [`docs/PERMISSION_POLICY.md`](docs/PERMISSION_POLICY.md)
+- **Release and artifact verification**: [`docs/RELEASE.md`](docs/RELEASE.md)
+
+## FAQ / Troubleshooting
+
+### `bootstrap failed` or `missing direct connect info`
+
+- Verify `--controlplane`, `--env-id`, and `--env-token` are correct.
+- Confirm Region Center can reach the environment and issue bootstrap credentials.
+
+### Code App says `code-server binary not found`
+
+- Install `code-server` locally, or set `REDEVEN_CODE_SERVER_BIN` to an absolute path.
+- See detailed binary resolution and platform notes in [`docs/CODE_APP.md`](docs/CODE_APP.md).
+
+### Codespace page shows `Missing init payload`
+
+- Open codespace from Env App (Codespaces page), not by directly visiting sandbox URL.
+- If opener context is gone after refresh, reopen from Env App to mint a new entry ticket.
+
+## Roadmap (Near Term)
+
+- Add more `floe_app` surfaces on top of the same control/data-plane contract.
+- Continue hardening runtime permissions and auditability.
+- Improve operational diagnostics for endpoint-side troubleshooting.
