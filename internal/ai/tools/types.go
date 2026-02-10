@@ -16,7 +16,6 @@ type ErrorCode string
 
 const (
 	ErrorCodeNotFound         ErrorCode = "NOT_FOUND"
-	ErrorCodeOutsideWorkspace ErrorCode = "OUTSIDE_WORKSPACE"
 	ErrorCodeInvalidPath      ErrorCode = "INVALID_PATH"
 	ErrorCodePermissionDenied ErrorCode = "PERMISSION_DENIED"
 	ErrorCodeTimeout          ErrorCode = "TIMEOUT"
