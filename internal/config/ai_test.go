@@ -215,13 +215,13 @@ func TestAIConfigValidate_RejectsInvalidToolRecoveryMaxSteps(t *testing.T) {
 func TestAIConfig_EffectiveToolRequiredIntents_DefaultAndDedupe(t *testing.T) {
 	t.Parallel()
 
-	cfg := &AIConfig{ToolRequiredIntents: []string{"  PWD  ", "pwd", "scan"}}
+	cfg := &AIConfig{ToolRequiredIntents: []string{"  execute  ", "execute", "scan"}}
 	got := cfg.EffectiveToolRequiredIntents()
 	if len(got) != 2 {
 		t.Fatalf("EffectiveToolRequiredIntents len=%d, want 2 (%v)", len(got), got)
 	}
-	if got[0] != "pwd" || got[1] != "scan" {
-		t.Fatalf("EffectiveToolRequiredIntents=%v, want [pwd scan]", got)
+	if got[0] != "execute" || got[1] != "scan" {
+		t.Fatalf("EffectiveToolRequiredIntents=%v, want [execute scan]", got)
 	}
 
 	nilCfg := (*AIConfig)(nil)

@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -650,9 +649,9 @@ func (r *run) run(ctx context.Context, req RunRequest) (retErr error) {
 	if r.cfg == nil {
 		return r.failRun("AI not configured", errors.New("ai not configured"))
 	}
-	workspaceRootAbs, rootErr := r.workspaceRootAbs()
+	workingDirAbs, rootErr := r.workingDirAbs()
 	if rootErr != nil {
-		return r.failRun("AI workspace not configured", rootErr)
+		return r.failRun("AI working directory not configured", rootErr)
 	}
 	toolRequiredIntents := r.cfg.EffectiveToolRequiredIntents()
 	r.requiresTools = shouldRequireToolExecution(req.Input.Text, toolRequiredIntents)
@@ -676,7 +675,7 @@ func (r *run) run(ctx context.Context, req RunRequest) (retErr error) {
 		"history_count", len(req.History),
 		"attachment_count", len(req.Input.Attachments),
 		"input_chars", utf8.RuneCountInString(strings.TrimSpace(req.Input.Text)),
-		"workspace_root_abs", sanitizeLogText(workspaceRootAbs, 200),
+		"working_dir_abs", sanitizeLogText(workingDirAbs, 200),
 		"recovery_enabled", r.recoveryEnabled,
 		"recovery_max_steps", r.recoveryMaxSteps,
 		"recovery_allow_path_rewrite", r.recoveryAllowPathRewrite,
@@ -795,6 +794,11 @@ func (r *run) run(ctx context.Context, req RunRequest) (retErr error) {
 	lastRecoveryErrorCode := ""
 	lastRecoveryErrorMessage := ""
 
+	attemptToolMemories := []RunToolMemory{}
+	if req.ContextPackage != nil {
+		attemptToolMemories = append(attemptToolMemories, req.ContextPackage.ToolMemories...)
+	}
+
 	sendRunStart := func(attemptIdx int, history []RunHistoryMsg, input RunInput, includeAttachments bool) error {
 		attachments := []map[string]any{}
 		if includeAttachments {
@@ -804,19 +808,22 @@ func (r *run) run(ctx context.Context, req RunRequest) (retErr error) {
 		if budgetLeft < 0 {
 			budgetLeft = 0
 		}
-		if req.ContextPackage != nil {
-			req.ContextPackage.TaskProgressDigest = truncateProgressDigest(r.taskLoopState.LastDigest, 320)
-			if strings.TrimSpace(req.ContextPackage.TaskObjective) == "" {
-				req.ContextPackage.TaskObjective = strings.TrimSpace(r.taskLoopState.Objective)
-			}
+		if req.ContextPackage == nil {
+			req.ContextPackage = &RunContextPackage{}
+		}
+		req.ContextPackage.WorkingDirAbs = workingDirAbs
+		req.ContextPackage.ToolMemories = tailRunToolMemories(attemptToolMemories, historyToolMemoryKeep)
+		req.ContextPackage.TaskProgressDigest = truncateProgressDigest(r.taskLoopState.LastDigest, 320)
+		if strings.TrimSpace(req.ContextPackage.TaskObjective) == "" {
+			req.ContextPackage.TaskObjective = strings.TrimSpace(r.taskLoopState.Objective)
 		}
 		if err := sc.send("run.start", map[string]any{
-			"run_id":             r.id,
-			"model":              req.Model,
-			"mode":               r.cfg.EffectiveMode(),
-			"history":            history,
-			"context_package":    req.ContextPackage,
-			"workspace_root_abs": workspaceRootAbs,
+			"run_id":          r.id,
+			"model":           req.Model,
+			"mode":            r.cfg.EffectiveMode(),
+			"history":         history,
+			"context_package": req.ContextPackage,
+			"working_dir_abs": workingDirAbs,
 			"input": map[string]any{
 				"text":        input.Text,
 				"attachments": attachments,
@@ -1123,6 +1130,9 @@ func (r *run) run(ctx context.Context, req RunRequest) (retErr error) {
 				}
 				if outcome == nil {
 					continue
+				}
+				if memory, ok := buildRunToolMemoryFromOutcome(r.id, outcome); ok {
+					attemptToolMemories = appendRunToolMemory(attemptToolMemories, memory)
 				}
 				if outcome.Success {
 					attemptSummary.ToolSuccesses++
@@ -1476,6 +1486,58 @@ func appendHistoryForRetry(history []RunHistoryMsg, userText string, assistantTe
 		out = append(out, RunHistoryMsg{Role: "assistant", Text: txt})
 	}
 	return out
+}
+
+func appendRunToolMemory(memories []RunToolMemory, item RunToolMemory) []RunToolMemory {
+	if strings.TrimSpace(item.ToolName) == "" {
+		return memories
+	}
+	out := append(memories, item)
+	if len(out) > 48 {
+		out = append([]RunToolMemory(nil), out[len(out)-48:]...)
+	}
+	return out
+}
+
+func tailRunToolMemories(memories []RunToolMemory, keep int) []RunToolMemory {
+	if keep <= 0 {
+		keep = historyToolMemoryKeep
+	}
+	normalized := normalizeRunToolMemories(memories)
+	if len(normalized) <= keep {
+		return normalized
+	}
+	start := len(normalized) - keep
+	return append([]RunToolMemory(nil), normalized[start:]...)
+}
+
+func buildRunToolMemoryFromOutcome(runID string, outcome *toolCallOutcome) (RunToolMemory, bool) {
+	if outcome == nil || strings.TrimSpace(outcome.ToolName) == "" {
+		return RunToolMemory{}, false
+	}
+	status := "error"
+	if outcome.Success {
+		status = "success"
+	}
+	item := RunToolMemory{
+		RunID:         strings.TrimSpace(runID),
+		ToolName:      strings.TrimSpace(outcome.ToolName),
+		Status:        status,
+		ArgsPreview:   previewAnyForLog(redactToolArgsForLog(outcome.ToolName, outcome.Args), historyToolMemoryPreview),
+		ResultPreview: "",
+		ErrorCode:     "",
+		ErrorMessage:  "",
+	}
+	if outcome.Success {
+		item.ResultPreview = previewAnyForLog(redactAnyForLog("", outcome.Result, 0), historyToolMemoryPreview)
+		return item, true
+	}
+	if outcome.ToolError != nil {
+		outcome.ToolError.Normalize()
+		item.ErrorCode = strings.TrimSpace(strings.ToUpper(string(outcome.ToolError.Code)))
+		item.ErrorMessage = strings.TrimSpace(outcome.ToolError.Message)
+	}
+	return item, true
 }
 
 func buildToolCallSignature(toolName string, args map[string]any) string {
@@ -1873,6 +1935,7 @@ type toolCallOutcome struct {
 	Success        bool
 	ToolName       string
 	Args           map[string]any
+	Result         any
 	ToolError      *aitools.ToolError
 	RecoveryAction string
 }
@@ -2046,7 +2109,7 @@ func (r *run) handleToolCall(ctx context.Context, sc *sidecarProcess, toolID str
 
 	meta, err := r.sessionMetaForTool()
 	if err != nil {
-		toolErr := aitools.ClassifyError(aitools.Invocation{ToolName: toolName, Args: args, FSRoot: r.fsRoot}, err)
+		toolErr := aitools.ClassifyError(aitools.Invocation{ToolName: toolName, Args: args, WorkingDir: r.fsRoot}, err)
 		setToolError(toolErr, "")
 		env := aitools.ToolResultEnvelope{RunID: r.id, ToolID: toolID, Status: aitools.ResultStatusError, Error: toolErr}
 		return outcome, r.sendToolResult(sc, env)
@@ -2117,7 +2180,7 @@ func (r *run) handleToolCall(ctx context.Context, sc *sidecarProcess, toolID str
 
 	result, toolErrRaw := r.execTool(ctx, meta, toolName, args)
 	if toolErrRaw != nil {
-		toolErr := aitools.ClassifyError(aitools.Invocation{ToolName: toolName, Args: args, FSRoot: r.fsRoot}, toolErrRaw)
+		toolErr := aitools.ClassifyError(aitools.Invocation{ToolName: toolName, Args: args, WorkingDir: r.fsRoot}, toolErrRaw)
 		recoveryAction := ""
 		if aitools.ShouldRetryWithNormalizedArgs(toolErr) {
 			recoveryAction = string(recoveryActionRetryNormalizedArgs)
@@ -2147,6 +2210,7 @@ func (r *run) handleToolCall(ctx context.Context, sc *sidecarProcess, toolID str
 	)
 
 	outcome.Success = true
+	outcome.Result = result
 	outcome.ToolError = nil
 	outcome.RecoveryAction = ""
 	env := aitools.ToolResultEnvelope{RunID: r.id, ToolID: toolID, Status: aitools.ResultStatusSuccess, Result: result}
@@ -2361,110 +2425,46 @@ func (r *run) execTool(ctx context.Context, meta *session.Meta, toolName string,
 // --- FS tools ---
 
 var (
-	errEmptyFSRoot          = errors.New("empty fs_root")
-	errInvalidFSRoot        = errors.New("invalid fs_root")
+	errEmptyWorkingDir      = errors.New("empty working_dir")
+	errInvalidWorkingDir    = errors.New("invalid working_dir")
 	errInvalidToolPath      = errors.New("invalid path")
-	errPathOutsideWorkspace = errors.New("path outside workspace root")
+	errToolPathMustAbsolute = errors.New("path must be absolute")
 )
 
-func (r *run) workspaceRootAbs() (string, error) {
-	root := strings.TrimSpace(r.fsRoot)
-	if root == "" {
-		return "", errEmptyFSRoot
+func (r *run) workingDirAbs() (string, error) {
+	workingDir := strings.TrimSpace(r.fsRoot)
+	if workingDir == "" {
+		return "", errEmptyWorkingDir
 	}
-	root = filepath.Clean(root)
-	if !filepath.IsAbs(root) {
-		abs, err := filepath.Abs(root)
+	workingDir = filepath.Clean(workingDir)
+	if !filepath.IsAbs(workingDir) {
+		abs, err := filepath.Abs(workingDir)
 		if err != nil {
-			return "", errInvalidFSRoot
+			return "", errInvalidWorkingDir
 		}
-		root = filepath.Clean(abs)
+		workingDir = filepath.Clean(abs)
 	}
-	return root, nil
+	return workingDir, nil
 }
 
-func (r *run) virtualPathFromReal(rootAbs string, realAbs string) string {
-	rootAbs = filepath.Clean(strings.TrimSpace(rootAbs))
-	realAbs = filepath.Clean(strings.TrimSpace(realAbs))
-	if rootAbs == "" || realAbs == "" {
-		return "/"
-	}
-	rel, err := filepath.Rel(rootAbs, realAbs)
-	if err != nil {
-		return "/"
-	}
-	rel = filepath.Clean(rel)
-	if rel == "." {
-		return "/"
-	}
-	v := "/" + strings.TrimPrefix(filepath.ToSlash(rel), "/")
-	v = path.Clean(v)
-	if v == "." || v == "" {
-		return "/"
-	}
-	if !strings.HasPrefix(v, "/") {
-		v = "/" + v
-	}
-	return v
-}
-
-func (r *run) resolvePathInWorkspace(raw string) (string, string, error) {
-	rootAbs, err := r.workspaceRootAbs()
-	if err != nil {
-		return "", "", err
-	}
-
+func resolveAbsoluteToolPath(raw string) (string, error) {
 	candidate := strings.TrimSpace(raw)
 	if candidate == "" {
-		return "", "", errInvalidToolPath
+		return "", errInvalidToolPath
 	}
-	candidate = strings.ReplaceAll(candidate, "\\", "/")
-
-	if strings.HasPrefix(candidate, "~/") {
-		candidate = "/" + strings.TrimPrefix(candidate, "~/")
+	candidate = filepath.Clean(candidate)
+	if !filepath.IsAbs(candidate) {
+		return "", errToolPathMustAbsolute
 	}
-
-	if filepath.IsAbs(candidate) {
-		cleanAbs := filepath.Clean(candidate)
-		ok, relErr := isWithinRoot(cleanAbs, rootAbs)
-		if relErr != nil {
-			return "", "", errInvalidFSRoot
-		}
-		if ok {
-			return cleanAbs, r.virtualPathFromReal(rootAbs, cleanAbs), nil
-		}
-		candidate = filepath.ToSlash(cleanAbs)
-	}
-
-	if !strings.HasPrefix(candidate, "/") {
-		candidate = "/" + candidate
-	}
-	virtualPath := path.Clean(candidate)
-	if virtualPath == "." || virtualPath == "" {
-		virtualPath = "/"
-	}
-	if !strings.HasPrefix(virtualPath, "/") {
-		virtualPath = "/" + virtualPath
-	}
-
-	relPart := strings.TrimPrefix(virtualPath, "/")
-	realAbs := filepath.Clean(filepath.Join(rootAbs, filepath.FromSlash(relPart)))
-	ok, relErr := isWithinRoot(realAbs, rootAbs)
-	if relErr != nil {
-		return "", "", errInvalidFSRoot
-	}
-	if !ok {
-		return "", "", errPathOutsideWorkspace
-	}
-	return realAbs, virtualPath, nil
+	return candidate, nil
 }
 
 func mapToolPathError(err error) error {
 	switch {
 	case err == nil:
 		return nil
-	case errors.Is(err, errPathOutsideWorkspace):
-		return errors.New("path outside workspace root")
+	case errors.Is(err, errToolPathMustAbsolute):
+		return errors.New("path must be absolute")
 	default:
 		return errors.New("invalid path")
 	}
@@ -2474,35 +2474,15 @@ func mapToolCwdError(err error) error {
 	switch {
 	case err == nil:
 		return nil
-	case errors.Is(err, errPathOutsideWorkspace):
-		return errors.New("cwd outside workspace root")
+	case errors.Is(err, errToolPathMustAbsolute):
+		return errors.New("cwd must be absolute")
 	default:
 		return errors.New("invalid cwd")
 	}
 }
 
-func isWithinRoot(path string, root string) (bool, error) {
-	path = filepath.Clean(path)
-	root = filepath.Clean(root)
-	rel, err := filepath.Rel(root, path)
-	if err != nil {
-		return false, err
-	}
-	rel = filepath.Clean(rel)
-	if rel == "." {
-		return true, nil
-	}
-	if rel == ".." {
-		return false, nil
-	}
-	if strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
-		return false, nil
-	}
-	return true, nil
-}
-
 func (r *run) toolFSListDir(p string) (any, error) {
-	abs, dirVirtual, err := r.resolvePathInWorkspace(p)
+	abs, err := resolveAbsoluteToolPath(p)
 	if err != nil {
 		return nil, mapToolPathError(err)
 	}
@@ -2520,13 +2500,10 @@ func (r *run) toolFSListDir(p string) (any, error) {
 			continue
 		}
 		name := e.Name()
-		fullVirtual := path.Clean(path.Join(dirVirtual, name))
-		if !strings.HasPrefix(fullVirtual, "/") {
-			fullVirtual = "/" + fullVirtual
-		}
+		fullPath := filepath.Clean(filepath.Join(abs, name))
 		mod := info.ModTime().UnixMilli()
 		out = append(out, map[string]any{
-			"path":                fullVirtual,
+			"path":                fullPath,
 			"name":                name,
 			"is_dir":              info.IsDir(),
 			"size":                info.Size(),
@@ -2537,7 +2514,7 @@ func (r *run) toolFSListDir(p string) (any, error) {
 }
 
 func (r *run) toolFSStat(p string) (any, error) {
-	abs, virtualPath, err := r.resolvePathInWorkspace(p)
+	abs, err := resolveAbsoluteToolPath(p)
 	if err != nil {
 		return nil, mapToolPathError(err)
 	}
@@ -2547,7 +2524,7 @@ func (r *run) toolFSStat(p string) (any, error) {
 	}
 	mod := info.ModTime().UnixMilli()
 	out := map[string]any{
-		"path":                virtualPath,
+		"path":                abs,
 		"is_dir":              info.IsDir(),
 		"size":                info.Size(),
 		"modified_at_unix_ms": mod,
@@ -2574,7 +2551,7 @@ func (r *run) toolFSReadFile(p string, offset int64, maxBytes int64) (any, error
 		return nil, errors.New("offset must be >= 0")
 	}
 
-	abs, _, err := r.resolvePathInWorkspace(p)
+	abs, err := resolveAbsoluteToolPath(p)
 	if err != nil {
 		return nil, mapToolPathError(err)
 	}
@@ -2616,7 +2593,7 @@ func (r *run) toolFSReadFile(p string, offset int64, maxBytes int64) (any, error
 }
 
 func (r *run) toolFSWriteFile(p string, content string, create bool, ifMatch string) (any, error) {
-	abs, _, err := r.resolvePathInWorkspace(p)
+	abs, err := resolveAbsoluteToolPath(p)
 	if err != nil {
 		return nil, mapToolPathError(err)
 	}
@@ -2687,9 +2664,13 @@ func (r *run) toolTerminalExec(ctx context.Context, command string, cwd string, 
 
 	cwd = strings.TrimSpace(cwd)
 	if cwd == "" {
-		cwd = "/"
+		resolved, err := r.workingDirAbs()
+		if err != nil {
+			return nil, mapToolCwdError(err)
+		}
+		cwd = resolved
 	}
-	cwdAbs, _, err := r.resolvePathInWorkspace(cwd)
+	cwdAbs, err := resolveAbsoluteToolPath(cwd)
 	if err != nil {
 		return nil, mapToolCwdError(err)
 	}

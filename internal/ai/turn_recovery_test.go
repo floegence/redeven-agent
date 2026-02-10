@@ -101,8 +101,8 @@ func TestDecideTurnRecovery_ToolFailureTriggersContinuation(t *testing.T) {
 	if decision.FailRun {
 		t.Fatalf("unexpected fail decision: %+v", decision)
 	}
-	if decision.Action != recoveryActionProbeWorkspace {
-		t.Fatalf("action=%q, want=%q", decision.Action, recoveryActionProbeWorkspace)
+	if decision.Action != recoveryActionRetryAlternative {
+		t.Fatalf("action=%q, want=%q", decision.Action, recoveryActionRetryAlternative)
 	}
 	if state.RecoverySteps != 1 {
 		t.Fatalf("recovery_steps=%d, want=1", state.RecoverySteps)

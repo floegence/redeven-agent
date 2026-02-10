@@ -8,70 +8,49 @@ import (
 	"testing"
 )
 
-func TestResolvePathInWorkspace(t *testing.T) {
+func TestResolveAbsoluteToolPath(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	inside := filepath.Join(root, "sub", "dir")
-	if err := os.MkdirAll(inside, 0o755); err != nil {
-		t.Fatalf("mkdir inside: %v", err)
+	target := filepath.Join(root, "sub", "dir")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatalf("mkdir target: %v", err)
 	}
 
-	r := &run{fsRoot: root}
-
-	t.Run("virtual root slash", func(t *testing.T) {
+	t.Run("accepts absolute path", func(t *testing.T) {
 		t.Parallel()
-		realPath, virtualPath, err := r.resolvePathInWorkspace("/")
+		resolved, err := resolveAbsoluteToolPath(target)
 		if err != nil {
-			t.Fatalf("resolvePathInWorkspace: %v", err)
+			t.Fatalf("resolveAbsoluteToolPath: %v", err)
 		}
-		if filepath.Clean(realPath) != filepath.Clean(root) {
-			t.Fatalf("real_path=%q, want %q", realPath, root)
-		}
-		if virtualPath != "/" {
-			t.Fatalf("virtual_path=%q, want /", virtualPath)
+		if filepath.Clean(resolved) != filepath.Clean(target) {
+			t.Fatalf("resolved=%q, want=%q", resolved, target)
 		}
 	})
 
-	t.Run("relative path mapped to virtual", func(t *testing.T) {
+	t.Run("rejects relative path", func(t *testing.T) {
 		t.Parallel()
-		realPath, virtualPath, err := r.resolvePathInWorkspace("sub/dir")
-		if err != nil {
-			t.Fatalf("resolvePathInWorkspace: %v", err)
+		_, err := resolveAbsoluteToolPath("sub/dir")
+		if err == nil {
+			t.Fatalf("expected error for relative path")
 		}
-		if filepath.Clean(realPath) != filepath.Clean(inside) {
-			t.Fatalf("real_path=%q, want %q", realPath, inside)
-		}
-		if virtualPath != "/sub/dir" {
-			t.Fatalf("virtual_path=%q, want /sub/dir", virtualPath)
-		}
-	})
-
-	t.Run("host absolute path inside root", func(t *testing.T) {
-		t.Parallel()
-		realPath, virtualPath, err := r.resolvePathInWorkspace(inside)
-		if err != nil {
-			t.Fatalf("resolvePathInWorkspace: %v", err)
-		}
-		if filepath.Clean(realPath) != filepath.Clean(inside) {
-			t.Fatalf("real_path=%q, want %q", realPath, inside)
-		}
-		if virtualPath != "/sub/dir" {
-			t.Fatalf("virtual_path=%q, want /sub/dir", virtualPath)
+		if got := strings.TrimSpace(mapToolPathError(err).Error()); got != "path must be absolute" {
+			t.Fatalf("error=%q, want=path must be absolute", got)
 		}
 	})
 }
 
-func TestToolFSListDir_UsesVirtualRootModel(t *testing.T) {
+func TestToolFSListDir_ReturnsAbsoluteEntryPaths(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
+	docsDir := filepath.Join(root, "docs")
+	if err := os.MkdirAll(docsDir, 0o755); err != nil {
 		t.Fatalf("mkdir docs: %v", err)
 	}
-	r := &run{fsRoot: root}
 
-	out, err := r.toolFSListDir("/")
+	r := &run{fsRoot: root}
+	out, err := r.toolFSListDir(root)
 	if err != nil {
 		t.Fatalf("toolFSListDir: %v", err)
 	}
@@ -79,23 +58,45 @@ func TestToolFSListDir_UsesVirtualRootModel(t *testing.T) {
 	if !ok {
 		t.Fatalf("unexpected result type: %T", out)
 	}
-	entries, _ := m["entries"].([]map[string]any)
-	if len(entries) == 0 {
-		// []any in JSON-like maps is common; fallback decode.
-		listAny, _ := m["entries"].([]any)
-		if len(listAny) == 0 {
-			t.Fatalf("expected at least one entry under virtual root")
+	entriesAny := []map[string]any{}
+	if typed, ok := m["entries"].([]map[string]any); ok {
+		entriesAny = typed
+	} else if typed, ok := m["entries"].([]any); ok {
+		for _, item := range typed {
+			entry, _ := item.(map[string]any)
+			if entry != nil {
+				entriesAny = append(entriesAny, entry)
+			}
 		}
+	}
+	if len(entriesAny) == 0 {
+		t.Fatalf("expected at least one entry")
+	}
+
+	foundDocs := false
+	for _, entry := range entriesAny {
+		if strings.TrimSpace(anyToString(entry["name"])) != "docs" {
+			continue
+		}
+		gotPath := filepath.Clean(anyToString(entry["path"]))
+		if gotPath != filepath.Clean(docsDir) {
+			t.Fatalf("entry path=%q, want=%q", gotPath, docsDir)
+		}
+		foundDocs = true
+		break
+	}
+	if !foundDocs {
+		t.Fatalf("missing docs entry in list result")
 	}
 }
 
 func TestToolTerminalExec_CwdRules(t *testing.T) {
 	t.Parallel()
 
-	root := t.TempDir()
-	r := &run{fsRoot: root, shell: "bash"}
+	workingDir := t.TempDir()
+	r := &run{fsRoot: workingDir, shell: "bash"}
 
-	t.Run("empty cwd falls back to workspace root", func(t *testing.T) {
+	t.Run("empty cwd falls back to working_dir_abs", func(t *testing.T) {
 		t.Parallel()
 		out, err := r.toolTerminalExec(context.Background(), "pwd", "", 5000)
 		if err != nil {
@@ -106,24 +107,19 @@ func TestToolTerminalExec_CwdRules(t *testing.T) {
 			t.Fatalf("unexpected result type: %T", out)
 		}
 		stdout := strings.TrimSpace(anyToString(m["stdout"]))
-		if filepath.Clean(stdout) != filepath.Clean(root) {
-			t.Fatalf("stdout=%q, want cwd=%q", stdout, root)
+		if filepath.Clean(stdout) != filepath.Clean(workingDir) {
+			t.Fatalf("stdout=%q, want cwd=%q", stdout, workingDir)
 		}
 	})
 
-	t.Run("virtual slash cwd maps to workspace root", func(t *testing.T) {
+	t.Run("relative cwd is rejected", func(t *testing.T) {
 		t.Parallel()
-		out, err := r.toolTerminalExec(context.Background(), "pwd", "/", 5000)
-		if err != nil {
-			t.Fatalf("toolTerminalExec: %v", err)
+		_, err := r.toolTerminalExec(context.Background(), "pwd", "subdir", 5000)
+		if err == nil {
+			t.Fatalf("expected error for relative cwd")
 		}
-		m, ok := out.(map[string]any)
-		if !ok {
-			t.Fatalf("unexpected result type: %T", out)
-		}
-		stdout := strings.TrimSpace(anyToString(m["stdout"]))
-		if filepath.Clean(stdout) != filepath.Clean(root) {
-			t.Fatalf("stdout=%q, want cwd=%q", stdout, root)
+		if got := strings.TrimSpace(err.Error()); got != "cwd must be absolute" {
+			t.Fatalf("error=%q, want=cwd must be absolute", got)
 		}
 	})
 }

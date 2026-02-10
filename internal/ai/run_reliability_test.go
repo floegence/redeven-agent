@@ -515,16 +515,16 @@ rl.on('line', (line) => {
 
   if (method === 'run.start') {
     runId = String(msg.params?.run_id || '').trim();
-    const workspaceRoot = String(msg.params?.workspace_root_abs || '').trim();
-    if (!workspaceRoot) {
-      send('run.error', { run_id: runId, error: 'missing workspace_root_abs' });
+    const workingDir = String(msg.params?.working_dir_abs || '').trim();
+    if (!workingDir) {
+      send('run.error', { run_id: runId, error: 'missing working_dir_abs' });
       return;
     }
     send('tool.call', {
       run_id: runId,
       tool_id: 'tool_pwd_1',
       tool_name: 'terminal.exec',
-      args: { command: 'pwd', cwd: workspaceRoot, timeout_ms: 5000 },
+      args: { command: 'pwd', cwd: workingDir, timeout_ms: 5000 },
     });
     return;
   }
@@ -632,7 +632,7 @@ rl.on('line', (line) => {
   if (method === 'run.start') {
     runId = String(msg.params?.run_id || '').trim();
     const attempt = Number(msg.params?.recovery?.attempt_index || 0);
-    const workspaceRoot = String(msg.params?.workspace_root_abs || '').trim();
+    const workingDir = String(msg.params?.working_dir_abs || '').trim();
 
     if (attempt === 0) {
       send('run.delta', { run_id: runId, delta: '我先快速扫一遍项目结构和关键配置，然后给你结论。' });
@@ -640,18 +640,22 @@ rl.on('line', (line) => {
       return;
     }
 
+    if (!workingDir) {
+      send('run.error', { run_id: runId, error: 'missing working_dir_abs for recovery attempt' });
+      return;
+    }
     phase = 1;
     send('tool.call', {
       run_id: runId,
       tool_id: 'tool_ls_1',
       tool_name: 'fs.list_dir',
-      args: { path: workspaceRoot },
+      args: { path: workingDir },
     });
     return;
   }
 
   if (method === 'tool.result' && phase === 1) {
-    send('run.delta', { run_id: runId, delta: 'Listed workspace and finished analysis.' });
+    send('run.delta', { run_id: runId, delta: 'Listed working directory and finished analysis.' });
     send('run.end', { run_id: runId });
     process.exit(0);
   }
@@ -700,7 +704,7 @@ setInterval(() => {}, 1000);
 	if view == nil {
 		t.Fatalf("thread missing after run")
 	}
-	if !strings.Contains(view.LastMessagePreview, "Listed workspace") {
+	if !strings.Contains(view.LastMessagePreview, "Listed working directory") {
 		t.Fatalf("last_message_preview=%q, want recovery completion text, stream=%q", view.LastMessagePreview, rr.Body.String())
 	}
 	if strings.Contains(view.LastMessagePreview, "Assistant finished without a visible response.") {
@@ -894,7 +898,7 @@ setInterval(() => {}, 1000);
 	}
 }
 
-func TestRun_FSStatVirtualRootSlashReturnsDirectory(t *testing.T) {
+func TestRun_FSStatAbsoluteRootReturnsDirectory(t *testing.T) {
 	t.Parallel()
 
 	script := writeTestSidecarScript(t, `
@@ -923,7 +927,7 @@ rl.on('line', (line) => {
 
   if (method === 'tool.result') {
     if (String(msg.params?.status || '') !== 'success') {
-      send('run.error', { run_id: runId, error: 'expected fs.stat root success' });
+      send('run.error', { run_id: runId, error: 'expected fs.stat absolute root success' });
       process.exit(1);
       return;
     }
@@ -1390,6 +1394,7 @@ rl.on('line', (line) => {
     runId = String(msg.params?.run_id || '').trim();
     attempt = Number(msg.params?.recovery?.attempt_index || 0);
     const inputText = String(msg.params?.input?.text || '').trim();
+    const workingDir = String(msg.params?.working_dir_abs || '').trim();
 
     if (attempt === 0) {
       send('tool.call', {
@@ -1406,11 +1411,27 @@ rl.on('line', (line) => {
         send('run.error', { run_id: runId, error: 'missing task evidence follow-up prompt' });
         return;
       }
+      const toolMemories = Array.isArray(msg.params?.context_package?.tool_memories)
+        ? msg.params.context_package.tool_memories
+        : [];
+      const hasListEvidence = toolMemories.some((it) =>
+        String(it?.tool_name || '').trim() === 'fs.list_dir' &&
+        String(it?.status || '').trim().toLowerCase() === 'success'
+      );
+      if (!hasListEvidence) {
+        send('run.error', { run_id: runId, error: 'missing previous tool memory for follow-up attempt' });
+        return;
+      }
+      if (!workingDir) {
+        send('run.error', { run_id: runId, error: 'missing working_dir_abs for evidence attempt' });
+        return;
+      }
+      const sep = workingDir.endsWith('/') ? '' : '/';
       send('tool.call', {
         run_id: runId,
         tool_id: 'tool_readme_1',
         tool_name: 'fs.read_file',
-        args: { path: '/README.md', offset: 0, max_bytes: 4096 },
+        args: { path: workingDir + sep + 'README.md', offset: 0, max_bytes: 4096 },
       });
       return;
     }
