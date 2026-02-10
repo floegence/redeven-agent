@@ -511,11 +511,16 @@ rl.on('line', (line) => {
 
   if (method === 'run.start') {
     runId = String(msg.params?.run_id || '').trim();
+    const workspaceRoot = String(msg.params?.workspace_root_abs || '').trim();
+    if (!workspaceRoot) {
+      send('run.error', { run_id: runId, error: 'missing workspace_root_abs' });
+      return;
+    }
     send('tool.call', {
       run_id: runId,
       tool_id: 'tool_pwd_1',
       tool_name: 'terminal.exec',
-      args: { command: 'pwd', cwd: '/', timeout_ms: 5000 },
+      args: { command: 'pwd', cwd: workspaceRoot, timeout_ms: 5000 },
     });
     return;
   }
