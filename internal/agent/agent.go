@@ -23,6 +23,7 @@ import (
 	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
 	"github.com/floegence/flowersec/flowersec-go/origin"
 	fsproxy "github.com/floegence/flowersec/flowersec-go/proxy"
+	fsproxyprofile "github.com/floegence/flowersec/flowersec-go/proxy/profile"
 	"github.com/floegence/flowersec/flowersec-go/rpc"
 	rpctyped "github.com/floegence/flowersec/flowersec-go/rpc/typed"
 	"github.com/floegence/redeven-agent/internal/auditlog"
@@ -55,17 +56,6 @@ const (
 	maintenanceOpUpgrade int32 = 1
 	maintenanceOpRestart int32 = 2
 )
-
-var (
-	// HTTP proxy (flowersec-proxy/http1) is used for streaming features (e.g. AI NDJSON runs).
-	// The default 30s timeout in flowersec-go is too aggressive and can cause upstream disconnects.
-	proxyDefaultTimeout = 10 * time.Minute
-	proxyMaxTimeout     = 30 * time.Minute
-)
-
-// proxyMaxWSFrameBytes caps a single WS frame payload for flowersec-proxy/ws.
-// Keep it in sync with the browser runtime maxWsFrameBytes (Region sandbox bootstrap).
-const proxyMaxWSFrameBytes = 32 * 1024 * 1024
 
 type Options struct {
 	Config *config.Config
@@ -743,13 +733,11 @@ func (a *Agent) serveCodeAppSession(ctx context.Context, sess endpoint.Session, 
 		return err
 	}
 
-	if err := fsproxy.Register(srv, fsproxy.Options{
-		Upstream:        up,
-		UpstreamOrigin:  origin,
-		MaxWSFrameBytes: proxyMaxWSFrameBytes,
-		DefaultTimeout:  &proxyDefaultTimeout,
-		MaxTimeout:      &proxyMaxTimeout,
-	}); err != nil {
+	proxyOpts := fsproxyprofile.Apply(fsproxy.Options{
+		Upstream:       up,
+		UpstreamOrigin: origin,
+	}, fsproxyprofile.ProfileCodeServer)
+	if err := fsproxy.Register(srv, proxyOpts); err != nil {
 		return err
 	}
 
@@ -797,13 +785,11 @@ func (a *Agent) servePortForwardSession(ctx context.Context, sess endpoint.Sessi
 		return err
 	}
 
-	if err := fsproxy.Register(srv, fsproxy.Options{
-		Upstream:        up,
-		UpstreamOrigin:  origin,
-		MaxWSFrameBytes: proxyMaxWSFrameBytes,
-		DefaultTimeout:  &proxyDefaultTimeout,
-		MaxTimeout:      &proxyMaxTimeout,
-	}); err != nil {
+	proxyOpts := fsproxyprofile.Apply(fsproxy.Options{
+		Upstream:       up,
+		UpstreamOrigin: origin,
+	}, fsproxyprofile.ProfileCodeServer)
+	if err := fsproxy.Register(srv, proxyOpts); err != nil {
 		return err
 	}
 
@@ -864,13 +850,11 @@ func (a *Agent) serveRedevenAgentSession(ctx context.Context, sess endpoint.Sess
 		if err != nil {
 			return err
 		}
-		if err := fsproxy.Register(srv, fsproxy.Options{
-			Upstream:        up,
-			UpstreamOrigin:  origin,
-			MaxWSFrameBytes: proxyMaxWSFrameBytes,
-			DefaultTimeout:  &proxyDefaultTimeout,
-			MaxTimeout:      &proxyMaxTimeout,
-		}); err != nil {
+		proxyOpts := fsproxyprofile.Apply(fsproxy.Options{
+			Upstream:       up,
+			UpstreamOrigin: origin,
+		}, fsproxyprofile.ProfileCodeServer)
+		if err := fsproxy.Register(srv, proxyOpts); err != nil {
 			return err
 		}
 	}
