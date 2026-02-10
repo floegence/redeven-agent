@@ -218,13 +218,13 @@ rl.on('line', (line) => {
   const method = String(msg.method || '').trim();
   if (method === 'run.start') {
     runId = String(msg.params?.run_id || '').trim();
-    const workspaceRoot = String(msg.params?.workspace_root_abs || '').trim();
-    if (!workspaceRoot) {
-      send('run.error', { run_id: runId, error: 'missing workspace_root_abs' });
+    const workingDir = String(msg.params?.working_dir_abs || '').trim();
+    if (!workingDir) {
+      send('run.error', { run_id: runId, error: 'missing working_dir_abs' });
       return;
     }
-    const sep = workspaceRoot.endsWith('/') ? '' : '/';
-    const notePath = workspaceRoot + sep + 'note.txt';
+    const sep = workingDir.endsWith('/') ? '' : '/';
+    const notePath = workingDir + sep + 'note.txt';
     send('tool.call', {
       run_id: runId,
       tool_id: 'tool_local_1',
