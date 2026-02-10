@@ -85,15 +85,24 @@ type RunStartRequest struct {
 
 // RunRequest is the internal run request passed to the sidecar (includes history).
 type RunRequest struct {
-	Model   string          `json:"model"`
-	History []RunHistoryMsg `json:"history"`
-	Input   RunInput        `json:"input"`
-	Options RunOptions      `json:"options"`
+	Model          string             `json:"model"`
+	History        []RunHistoryMsg    `json:"history"`
+	Input          RunInput           `json:"input"`
+	Options        RunOptions         `json:"options"`
+	ContextPackage *RunContextPackage `json:"context_package,omitempty"`
 }
 
 type RunHistoryMsg struct {
 	Role string `json:"role"`
 	Text string `json:"text"`
+}
+
+type RunContextPackage struct {
+	OpenGoal       string            `json:"open_goal,omitempty"`
+	HistorySummary string            `json:"history_summary,omitempty"`
+	Anchors        []string          `json:"anchors,omitempty"`
+	Stats          map[string]int    `json:"stats,omitempty"`
+	Meta           map[string]string `json:"meta,omitempty"`
 }
 
 type RunInput struct {
