@@ -15,6 +15,7 @@ const (
 	recoveryActionRetryNormalizedArgs  recoveryAction = "retry_with_normalized_args"
 	recoveryActionProbeWorkspace       recoveryAction = "probe_workspace_then_retry"
 	recoveryActionForceToolCall        recoveryAction = "force_tool_call"
+	recoveryActionSynthesizeFinal      recoveryAction = "synthesize_final_answer"
 	recoveryActionStopAfterRepeatedErr recoveryAction = "stop_after_repeated_error"
 )
 
@@ -28,8 +29,11 @@ type turnRecoveryConfig struct {
 }
 
 type turnRecoveryState struct {
-	RecoverySteps     int
-	FailureSignatures map[string]int
+	RecoverySteps       int
+	FailureSignatures   map[string]int
+	CompletionSteps     int
+	NoProgressStreak    int
+	LastAssistantDigest string
 }
 
 type turnToolFailure struct {
@@ -40,11 +44,14 @@ type turnToolFailure struct {
 }
 
 type turnAttemptSummary struct {
-	AttemptIndex  int
-	ToolCalls     int
-	ToolSuccesses int
-	ToolFailures  []turnToolFailure
-	AssistantText string
+	AttemptIndex     int
+	ToolCalls        int
+	ToolSuccesses    int
+	ToolFailures     []turnToolFailure
+	AssistantText    string
+	OutcomeHasText   bool
+	OutcomeTextChars int
+	OutcomeToolCalls int
 }
 
 type turnRecoveryDecision struct {
@@ -118,6 +125,9 @@ func shouldRequireToolExecution(userInput string, intentHints []string) bool {
 		return true
 	}
 	if containsAny(text, []string{"pwd", "ls", "cat ", "rg ", "grep ", "tree "}) {
+		return true
+	}
+	if containsAny(text, []string{"call ", "tool call", "use tool", "fs.", "terminal.exec", "list_dir", "read_file", "write_file", "stat "}) {
 		return true
 	}
 	return false
@@ -385,6 +395,12 @@ func buildRecoveryRetryPrompt(userInput string, summary turnAttemptSummary, fail
 		lines = append(lines,
 			"First call fs.list_dir with path '/'.",
 			"Then choose the correct target path/tool based on that probe and continue.",
+		)
+	case recoveryActionSynthesizeFinal:
+		lines = append(lines,
+			"You already have tool results from the previous attempt.",
+			"Do not run another tool unless absolutely required to unblock.",
+			"Now synthesize a concrete user-facing answer from existing evidence.",
 		)
 	default:
 		lines = append(lines,

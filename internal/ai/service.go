@@ -721,7 +721,27 @@ func (s *Service) executePreparedRun(ctx context.Context, prepared *preparedRun)
 		}
 		history = append(history, RunHistoryMsg{Role: role, Text: text})
 	}
-	history = capHistoryByChars(history, 60_000)
+	rawUserInputText := strings.TrimSpace(req.Input.Text)
+	continueRequest := isContinueRequestText(rawUserInputText)
+	openGoal := ""
+	stateLoadCtx, cancelStateLoad := context.WithTimeout(context.Background(), persistTO)
+	threadState, stateErr := db.GetThreadState(stateLoadCtx, endpointID, threadID)
+	cancelStateLoad()
+	if stateErr != nil {
+		r.log.Warn("load thread state failed", "thread_id", threadID, "error", stateErr)
+	} else if threadState != nil {
+		openGoal = strings.TrimSpace(threadState.OpenGoal)
+	}
+
+	effectiveInput := req.Input
+	if continueRequest && openGoal != "" {
+		effectiveInput.Text = buildContinueInputText(openGoal)
+	} else if rawUserInputText != "" {
+		openGoal = rawUserInputText
+	}
+
+	contextBuilt := buildRunContext(history, effectiveInput.Text, openGoal)
+	historyForRun := contextBuilt.History
 
 	userMsgID, err := newUserMessageID()
 	if err != nil {
@@ -796,10 +816,11 @@ func (s *Service) executePreparedRun(ctx context.Context, prepared *preparedRun)
 	}
 
 	runReq := RunRequest{
-		Model:   model,
-		History: history,
-		Input:   req.Input,
-		Options: req.Options,
+		Model:          model,
+		History:        historyForRun,
+		Input:          effectiveInput,
+		Options:        req.Options,
+		ContextPackage: contextBuilt.Pkg,
 	}
 	runErr := r.run(ctx, runReq)
 	finalErr := runErr
@@ -858,7 +879,59 @@ func (s *Service) executePreparedRun(ctx context.Context, prepared *preparedRun)
 		}
 		return err
 	}
+
+	finalReason := strings.TrimSpace(r.getFinalizationReason())
+	stateCtx, cancelState := context.WithTimeout(context.Background(), persistTO)
+	if finalReason == "complete" {
+		_ = db.ClearThreadState(stateCtx, endpointID, threadID)
+	} else {
+		goalForState := strings.TrimSpace(openGoal)
+		if goalForState == "" && !continueRequest {
+			goalForState = rawUserInputText
+		}
+		if goalForState != "" {
+			assistantSummary := strings.TrimSpace(assistantText)
+			if assistantSummary == "" && contextBuilt.Pkg != nil {
+				assistantSummary = strings.TrimSpace(contextBuilt.Pkg.HistorySummary)
+			}
+			if len([]rune(assistantSummary)) > 600 {
+				assistantSummary = string([]rune(assistantSummary)[:600])
+			}
+			_ = db.UpsertThreadState(stateCtx, threadstore.ThreadState{
+				EndpointID:           endpointID,
+				ThreadID:             threadID,
+				OpenGoal:             goalForState,
+				LastAssistantSummary: assistantSummary,
+				UpdatedAtUnixMs:      time.Now().UnixMilli(),
+			})
+		}
+	}
+	cancelState()
+
 	return finalErr
+}
+
+func isContinueRequestText(text string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(text))
+	switch normalized {
+	case "continue", "please continue", "继续", "继续吧", "请继续", "继续执行", "继续分析":
+		return true
+	default:
+		return false
+	}
+}
+
+func buildContinueInputText(openGoal string) string {
+	goal := strings.TrimSpace(openGoal)
+	if goal == "" {
+		return "continue"
+	}
+	return strings.Join([]string{
+		"Continue the unfinished goal from previous turn.",
+		"Open goal: " + goal,
+		"Do not repeat preamble.",
+		"Use existing tool results first, then continue with the next concrete step and provide a progress update.",
+	}, "\n")
 }
 
 func deriveThreadRunState(endReason string, runErr error) (string, string) {
@@ -899,27 +972,6 @@ func deriveThreadRunState(endReason string, runErr error) (string, string) {
 		}
 		return "failed", "AI run ended unexpectedly."
 	}
-}
-
-func capHistoryByChars(in []RunHistoryMsg, maxChars int) []RunHistoryMsg {
-	if maxChars <= 0 || len(in) == 0 {
-		return in
-	}
-
-	// Keep the most recent messages under the cap (UI/UX first).
-	total := 0
-	for i := len(in) - 1; i >= 0; i-- {
-		text := strings.TrimSpace(in[i].Text)
-		n := len(text)
-		if n == 0 {
-			continue
-		}
-		if total+n > maxChars {
-			return in[i+1:]
-		}
-		total += n
-	}
-	return in
 }
 
 func (s *Service) CancelRun(meta *session.Meta, runID string) error {

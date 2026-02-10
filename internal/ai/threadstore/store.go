@@ -797,6 +797,90 @@ type RunEventRecord struct {
 	AtUnixMs    int64  `json:"at_unix_ms"`
 }
 
+type ThreadState struct {
+	EndpointID           string `json:"endpoint_id"`
+	ThreadID             string `json:"thread_id"`
+	OpenGoal             string `json:"open_goal"`
+	LastAssistantSummary string `json:"last_assistant_summary"`
+	UpdatedAtUnixMs      int64  `json:"updated_at_unix_ms"`
+}
+
+func (s *Store) GetThreadState(ctx context.Context, endpointID string, threadID string) (*ThreadState, error) {
+	if s == nil || s.db == nil {
+		return nil, errors.New("store not initialized")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	endpointID = strings.TrimSpace(endpointID)
+	threadID = strings.TrimSpace(threadID)
+	if endpointID == "" || threadID == "" {
+		return nil, errors.New("invalid request")
+	}
+	var st ThreadState
+	err := s.db.QueryRowContext(ctx, `
+SELECT endpoint_id, thread_id, open_goal, last_assistant_summary, updated_at_unix_ms
+FROM ai_thread_state
+WHERE endpoint_id = ? AND thread_id = ?
+`, endpointID, threadID).Scan(&st.EndpointID, &st.ThreadID, &st.OpenGoal, &st.LastAssistantSummary, &st.UpdatedAtUnixMs)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	st.OpenGoal = strings.TrimSpace(st.OpenGoal)
+	st.LastAssistantSummary = strings.TrimSpace(st.LastAssistantSummary)
+	return &st, nil
+}
+
+func (s *Store) UpsertThreadState(ctx context.Context, st ThreadState) error {
+	if s == nil || s.db == nil {
+		return errors.New("store not initialized")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	st.EndpointID = strings.TrimSpace(st.EndpointID)
+	st.ThreadID = strings.TrimSpace(st.ThreadID)
+	st.OpenGoal = strings.TrimSpace(st.OpenGoal)
+	st.LastAssistantSummary = strings.TrimSpace(st.LastAssistantSummary)
+	if st.EndpointID == "" || st.ThreadID == "" {
+		return errors.New("invalid thread state")
+	}
+	if st.UpdatedAtUnixMs <= 0 {
+		st.UpdatedAtUnixMs = time.Now().UnixMilli()
+	}
+	_, err := s.db.ExecContext(ctx, `
+INSERT INTO ai_thread_state(endpoint_id, thread_id, open_goal, last_assistant_summary, updated_at_unix_ms)
+VALUES(?, ?, ?, ?, ?)
+ON CONFLICT(endpoint_id, thread_id) DO UPDATE SET
+  open_goal=excluded.open_goal,
+  last_assistant_summary=excluded.last_assistant_summary,
+  updated_at_unix_ms=excluded.updated_at_unix_ms
+`, st.EndpointID, st.ThreadID, st.OpenGoal, st.LastAssistantSummary, st.UpdatedAtUnixMs)
+	return err
+}
+
+func (s *Store) ClearThreadState(ctx context.Context, endpointID string, threadID string) error {
+	if s == nil || s.db == nil {
+		return errors.New("store not initialized")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	endpointID = strings.TrimSpace(endpointID)
+	threadID = strings.TrimSpace(threadID)
+	if endpointID == "" || threadID == "" {
+		return errors.New("invalid request")
+	}
+	_, err := s.db.ExecContext(ctx, `
+DELETE FROM ai_thread_state
+WHERE endpoint_id = ? AND thread_id = ?
+`, endpointID, threadID)
+	return err
+}
+
 func (s *Store) UpsertRun(ctx context.Context, rec RunRecord) error {
 	if s == nil || s.db == nil {
 		return errors.New("store not initialized")
@@ -1148,6 +1232,15 @@ CREATE TABLE IF NOT EXISTS ai_run_events (
 );
 CREATE INDEX IF NOT EXISTS idx_ai_run_events_run_id ON ai_run_events(run_id, id ASC);
 CREATE INDEX IF NOT EXISTS idx_ai_run_events_endpoint_thread ON ai_run_events(endpoint_id, thread_id, id ASC);
+
+CREATE TABLE IF NOT EXISTS ai_thread_state (
+  endpoint_id TEXT NOT NULL,
+  thread_id TEXT NOT NULL,
+  open_goal TEXT NOT NULL DEFAULT '',
+  last_assistant_summary TEXT NOT NULL DEFAULT '',
+  updated_at_unix_ms INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY(endpoint_id, thread_id)
+);
 `); err != nil {
 		return err
 	}
