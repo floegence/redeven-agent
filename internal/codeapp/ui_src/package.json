@@ -10,7 +10,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@floegence/flowersec-core": "^0.10.2"
+    "@floegence/flowersec-core": "^0.11.0"
   },
   "devDependencies": {
     "esbuild": "^0.27.2",
