@@ -69,24 +69,18 @@ function ChatWorkingIndicator() {
         <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
       </filter>
     </defs>
+    <style>
+      @keyframes ${uid}-draw {
+        from { stroke-dashoffset: 1; stroke-opacity: 0.15; }
+        to   { stroke-dashoffset: 0; stroke-opacity: 0.7; }
+      }
+    </style>
     <g stroke="var(--primary)" stroke-width="0.8" fill="none">
-      <line x1="20" y1="8" x2="20" y2="8" stroke-opacity="0.6">
-        <animate attributeName="y2" values="8;20" dur="1.5s" begin="0s" repeatCount="indefinite"/>
-      </line>
-      <line x1="8" y1="20" x2="8" y2="20" stroke-opacity="0.6">
-        <animate attributeName="x2" values="8;20" dur="1.5s" begin="0.3s" repeatCount="indefinite"/>
-      </line>
-      <line x1="32" y1="20" x2="32" y2="20" stroke-opacity="0.6">
-        <animate attributeName="x2" values="32;20" dur="1.5s" begin="0.6s" repeatCount="indefinite"/>
-      </line>
-      <line x1="14" y1="32" x2="14" y2="32" stroke-opacity="0.6">
-        <animate attributeName="x2" values="14;20" dur="1.5s" begin="0.9s" repeatCount="indefinite"/>
-        <animate attributeName="y2" values="32;20" dur="1.5s" begin="0.9s" repeatCount="indefinite"/>
-      </line>
-      <line x1="26" y1="32" x2="26" y2="32" stroke-opacity="0.6">
-        <animate attributeName="x2" values="26;20" dur="1.5s" begin="1.2s" repeatCount="indefinite"/>
-        <animate attributeName="y2" values="32;20" dur="1.5s" begin="1.2s" repeatCount="indefinite"/>
-      </line>
+      <line x1="20" y1="8"  x2="20" y2="20" pathLength="1" stroke-dasharray="1" stroke-dashoffset="1" style="animation:${uid}-draw 1.5s linear 0s infinite"/>
+      <line x1="8"  y1="20" x2="20" y2="20" pathLength="1" stroke-dasharray="1" stroke-dashoffset="1" style="animation:${uid}-draw 1.5s linear 0.3s infinite"/>
+      <line x1="32" y1="20" x2="20" y2="20" pathLength="1" stroke-dasharray="1" stroke-dashoffset="1" style="animation:${uid}-draw 1.5s linear 0.6s infinite"/>
+      <line x1="14" y1="32" x2="20" y2="20" pathLength="1" stroke-dasharray="1" stroke-dashoffset="1" style="animation:${uid}-draw 1.5s linear 0.9s infinite"/>
+      <line x1="26" y1="32" x2="20" y2="20" pathLength="1" stroke-dasharray="1" stroke-dashoffset="1" style="animation:${uid}-draw 1.5s linear 1.2s infinite"/>
       <line x1="20" y1="8" x2="8" y2="20" class="processing-neural-line" style="animation-delay:200ms"/>
       <line x1="20" y1="8" x2="32" y2="20" class="processing-neural-line" style="animation-delay:350ms"/>
       <line x1="8" y1="20" x2="14" y2="32" class="processing-neural-line" style="animation-delay:500ms"/>
