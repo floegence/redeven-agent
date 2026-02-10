@@ -59,7 +59,7 @@ curl -fsSL https://redeven.com/install.sh | REDEVEN_VERSION=${release_tag} sh
 Upgrade an existing agent in place:
 
 \`\`\`bash
-redeven upgrade --to ${release_tag}
+curl -fsSL https://redeven.com/install.sh | REDEVEN_INSTALL_MODE=upgrade REDEVEN_VERSION=${release_tag} sh
 \`\`\`
 
 ## Binary Assets
