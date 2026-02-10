@@ -755,7 +755,7 @@ func (s *Service) executePreparedRun(ctx context.Context, prepared *preparedRun)
 		toolMemories = buildRunToolMemories(recentToolCalls)
 	}
 
-	contextBuilt := buildRunContext(history, effectiveInput.Text, openGoal, toolMemories)
+	contextBuilt := buildRunContext(history, effectiveInput.Text, openGoal, s.fsRoot, toolMemories)
 	historyForRun := contextBuilt.History
 
 	userMsgID, err := newUserMessageID()

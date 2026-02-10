@@ -9,40 +9,39 @@ import (
 func TestClassifyError_InvalidPathProducesNormalizedArgs(t *testing.T) {
 	t.Parallel()
 
-	root := filepath.Clean("/tmp/workspace")
 	inv := Invocation{
 		ToolName: "fs.list_dir",
-		FSRoot:   root,
 		Args: map[string]any{
-			"path": "docs",
+			"path": "/tmp/workspace/../workspace/docs/",
 		},
 	}
-	err := ClassifyError(inv, errors.New("invalid path: must be absolute"))
-	if err == nil {
+	toolErr := ClassifyError(inv, errors.New("invalid path"))
+	if toolErr == nil {
 		t.Fatalf("expected tool error")
 	}
-	if err.Code != ErrorCodeInvalidPath {
-		t.Fatalf("code=%q, want=%q", err.Code, ErrorCodeInvalidPath)
+	if toolErr.Code != ErrorCodeInvalidPath {
+		t.Fatalf("code=%q, want=%q", toolErr.Code, ErrorCodeInvalidPath)
 	}
-	if !err.Retryable {
+	if !toolErr.Retryable {
 		t.Fatalf("retryable=false, want true")
 	}
-	if got := err.NormalizedArgs["path"]; got != "/docs" {
-		t.Fatalf("normalized path=%v", got)
+	want := filepath.Clean("/tmp/workspace/docs")
+	if got := toolErr.NormalizedArgs["path"]; got != want {
+		t.Fatalf("normalized path=%v, want=%v", got, want)
 	}
 }
 
 func TestClassifyError_NotFound(t *testing.T) {
 	t.Parallel()
 
-	err := ClassifyError(Invocation{ToolName: "fs.stat"}, errors.New("not found"))
-	if err == nil {
+	toolErr := ClassifyError(Invocation{ToolName: "fs.stat"}, errors.New("not found"))
+	if toolErr == nil {
 		t.Fatalf("expected tool error")
 	}
-	if err.Code != ErrorCodeNotFound {
-		t.Fatalf("code=%q, want=%q", err.Code, ErrorCodeNotFound)
+	if toolErr.Code != ErrorCodeNotFound {
+		t.Fatalf("code=%q, want=%q", toolErr.Code, ErrorCodeNotFound)
 	}
-	if err.Retryable {
+	if toolErr.Retryable {
 		t.Fatalf("retryable=true, want false")
 	}
 }
@@ -50,57 +49,31 @@ func TestClassifyError_NotFound(t *testing.T) {
 func TestShouldRetryWithNormalizedArgs(t *testing.T) {
 	t.Parallel()
 
-	te := &ToolError{
-		Code:      ErrorCodeOutsideWorkspace,
-		Message:   "path outside workspace root",
+	toolErr := &ToolError{
+		Code:      ErrorCodeInvalidPath,
+		Message:   "path must be absolute",
 		Retryable: true,
 		NormalizedArgs: map[string]any{
 			"path": "/tmp/workspace",
 		},
 	}
-	if !ShouldRetryWithNormalizedArgs(te) {
+	if !ShouldRetryWithNormalizedArgs(toolErr) {
 		t.Fatalf("expected retry with normalized args")
-	}
-}
-
-func TestClassifyError_NotFoundWithRootAlignedAbsolutePath(t *testing.T) {
-	t.Parallel()
-
-	root := filepath.Clean("/Users/tangjianyin/Downloads/code/redeven")
-	inv := Invocation{
-		ToolName: "fs.list_dir",
-		FSRoot:   root,
-		Args: map[string]any{
-			"path": "/Downloads/code/redeven",
-		},
-	}
-	err := ClassifyError(inv, errors.New("not found"))
-	if err == nil {
-		t.Fatalf("expected tool error")
-	}
-	if err.Code != ErrorCodeNotFound {
-		t.Fatalf("code=%q, want=%q", err.Code, ErrorCodeNotFound)
-	}
-	if !err.Retryable {
-		t.Fatalf("retryable=false, want true")
-	}
-	if got := err.NormalizedArgs["path"]; got != "/" {
-		t.Fatalf("normalized path=%v, want=/", got)
 	}
 }
 
 func TestShouldRetryWithNormalizedArgs_NotFound(t *testing.T) {
 	t.Parallel()
 
-	te := &ToolError{
+	toolErr := &ToolError{
 		Code:      ErrorCodeNotFound,
 		Message:   "not found",
 		Retryable: true,
 		NormalizedArgs: map[string]any{
-			"path": "/",
+			"path": "/tmp/workspace",
 		},
 	}
-	if !ShouldRetryWithNormalizedArgs(te) {
-		t.Fatalf("expected retry with normalized args for not found")
+	if ShouldRetryWithNormalizedArgs(toolErr) {
+		t.Fatalf("did not expect normalized retry for not found")
 	}
 }
