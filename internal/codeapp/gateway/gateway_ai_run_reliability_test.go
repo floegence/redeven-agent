@@ -218,11 +218,18 @@ rl.on('line', (line) => {
   const method = String(msg.method || '').trim();
   if (method === 'run.start') {
     runId = String(msg.params?.run_id || '').trim();
+    const workspaceRoot = String(msg.params?.workspace_root_abs || '').trim();
+    if (!workspaceRoot) {
+      send('run.error', { run_id: runId, error: 'missing workspace_root_abs' });
+      return;
+    }
+    const sep = workspaceRoot.endsWith('/') ? '' : '/';
+    const notePath = workspaceRoot + sep + 'note.txt';
     send('tool.call', {
       run_id: runId,
       tool_id: 'tool_local_1',
       tool_name: 'fs.read_file',
-      args: { path: '/note.txt', offset: 0, max_bytes: 1024 },
+      args: { path: notePath, offset: 0, max_bytes: 1024 },
     });
     return;
   }

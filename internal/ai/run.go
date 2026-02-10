@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -461,12 +460,18 @@ func (r *run) run(ctx context.Context, req RunRequest) (retErr error) {
 	modelID := strings.TrimSpace(req.Model)
 	providerID, _, ok := strings.Cut(modelID, "/")
 	providerID = strings.TrimSpace(providerID)
+	workspaceRootAbs, rootErr := r.workspaceRootAbs()
+	if rootErr != nil {
+		r.sendStreamEvent(streamEventError{Type: "error", MessageID: r.messageID, Error: "AI workspace not configured"})
+		return rootErr
+	}
 	r.debug("ai.run.start",
 		"model", modelID,
 		"max_steps", req.Options.MaxSteps,
 		"history_count", len(req.History),
 		"attachment_count", len(req.Input.Attachments),
 		"input_chars", utf8.RuneCountInString(strings.TrimSpace(req.Input.Text)),
+		"workspace_root_abs", sanitizeLogText(workspaceRootAbs, 200),
 	)
 	if !ok || providerID == "" {
 		r.sendStreamEvent(streamEventError{Type: "error", MessageID: r.messageID, Error: "Invalid model id"})
@@ -587,9 +592,10 @@ func (r *run) run(ctx context.Context, req RunRequest) (retErr error) {
 	}
 
 	if err := sc.send("run.start", map[string]any{
-		"run_id":  r.id,
-		"model":   req.Model,
-		"history": req.History,
+		"run_id":             r.id,
+		"model":              req.Model,
+		"history":            req.History,
+		"workspace_root_abs": workspaceRootAbs,
 		"input": map[string]any{
 			"text":        req.Input.Text,
 			"attachments": sidecarAttachments,
@@ -1467,42 +1473,79 @@ func (r *run) execTool(ctx context.Context, meta *session.Meta, toolName string,
 
 // --- FS tools ---
 
-func (r *run) resolveVirtual(p string) (virtual string, real string, err error) {
+var (
+	errEmptyFSRoot          = errors.New("empty fs_root")
+	errInvalidFSRoot        = errors.New("invalid fs_root")
+	errPathMustBeAbsolute   = errors.New("path must be absolute")
+	errPathOutsideWorkspace = errors.New("path outside workspace root")
+)
+
+func (r *run) workspaceRootAbs() (string, error) {
 	root := strings.TrimSpace(r.fsRoot)
 	if root == "" {
-		return "", "", errors.New("empty fs_root")
+		return "", errEmptyFSRoot
+	}
+	root = filepath.Clean(root)
+	if !filepath.IsAbs(root) {
+		abs, err := filepath.Abs(root)
+		if err != nil {
+			return "", errInvalidFSRoot
+		}
+		root = filepath.Clean(abs)
+	}
+	return root, nil
+}
+
+func (r *run) resolveAbsoluteWithinRoot(p string) (string, error) {
+	rootAbs, err := r.workspaceRootAbs()
+	if err != nil {
+		return "", err
 	}
 
 	p = strings.TrimSpace(p)
 	if p == "" {
-		p = "/"
+		return "", errPathMustBeAbsolute
 	}
-	p = strings.ReplaceAll(p, "\\", "/")
-	if !strings.HasPrefix(p, "/") {
-		p = "/" + p
-	}
-	vp := path.Clean(p)
-	if vp == "." {
-		vp = "/"
-	}
-	if !strings.HasPrefix(vp, "/") {
-		vp = "/" + vp
+	absPath := filepath.Clean(p)
+	if !filepath.IsAbs(absPath) {
+		return "", errPathMustBeAbsolute
 	}
 
-	rel := strings.TrimPrefix(vp, "/")
-	relOS := filepath.FromSlash(rel)
-	if relOS != "" && filepath.IsAbs(relOS) {
-		return "", "", errors.New("invalid absolute path")
+	ok, err := isWithinRoot(absPath, rootAbs)
+	if err != nil {
+		return "", errInvalidFSRoot
 	}
-
-	abs := filepath.Clean(filepath.Join(root, relOS))
-	ok, err := isWithinRoot(abs, root)
-	if err != nil || !ok {
-		return "", "", errors.New("path escapes root")
+	if !ok {
+		return "", errPathOutsideWorkspace
 	}
-	return vp, abs, nil
+	return absPath, nil
 }
 
+func mapToolPathError(err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, errPathMustBeAbsolute):
+		return errors.New("invalid path: must be absolute")
+	case errors.Is(err, errPathOutsideWorkspace):
+		return errors.New("path outside workspace root")
+	default:
+		return errors.New("invalid path")
+	}
+}
+
+func mapToolCwdError(err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, errPathMustBeAbsolute):
+		return errors.New("invalid cwd: must be absolute")
+	case errors.Is(err, errPathOutsideWorkspace):
+		return errors.New("cwd outside workspace root")
+	default:
+		return errors.New("invalid cwd")
+	}
+}
 func isWithinRoot(path string, root string) (bool, error) {
 	path = filepath.Clean(path)
 	root = filepath.Clean(root)
@@ -1524,9 +1567,9 @@ func isWithinRoot(path string, root string) (bool, error) {
 }
 
 func (r *run) toolFSListDir(p string) (any, error) {
-	vp, abs, err := r.resolveVirtual(p)
+	abs, err := r.resolveAbsoluteWithinRoot(p)
 	if err != nil {
-		return nil, errors.New("invalid path")
+		return nil, mapToolPathError(err)
 	}
 	ents, err := os.ReadDir(abs)
 	if err != nil {
@@ -1542,7 +1585,7 @@ func (r *run) toolFSListDir(p string) (any, error) {
 			continue
 		}
 		name := e.Name()
-		full := path.Join(vp, name)
+		full := filepath.Clean(filepath.Join(abs, name))
 		mod := info.ModTime().UnixMilli()
 		out = append(out, map[string]any{
 			"path":                full,
@@ -1556,9 +1599,9 @@ func (r *run) toolFSListDir(p string) (any, error) {
 }
 
 func (r *run) toolFSStat(p string) (any, error) {
-	vp, abs, err := r.resolveVirtual(p)
+	abs, err := r.resolveAbsoluteWithinRoot(p)
 	if err != nil {
-		return nil, errors.New("invalid path")
+		return nil, mapToolPathError(err)
 	}
 	info, err := os.Stat(abs)
 	if err != nil || info == nil {
@@ -1566,7 +1609,7 @@ func (r *run) toolFSStat(p string) (any, error) {
 	}
 	mod := info.ModTime().UnixMilli()
 	out := map[string]any{
-		"path":                vp,
+		"path":                abs,
 		"is_dir":              info.IsDir(),
 		"size":                info.Size(),
 		"modified_at_unix_ms": mod,
@@ -1593,9 +1636,9 @@ func (r *run) toolFSReadFile(p string, offset int64, maxBytes int64) (any, error
 		return nil, errors.New("offset must be >= 0")
 	}
 
-	_, abs, err := r.resolveVirtual(p)
+	abs, err := r.resolveAbsoluteWithinRoot(p)
 	if err != nil {
-		return nil, errors.New("invalid path")
+		return nil, mapToolPathError(err)
 	}
 
 	f, err := os.Open(abs)
@@ -1635,9 +1678,9 @@ func (r *run) toolFSReadFile(p string, offset int64, maxBytes int64) (any, error
 }
 
 func (r *run) toolFSWriteFile(p string, content string, create bool, ifMatch string) (any, error) {
-	_, abs, err := r.resolveVirtual(p)
+	abs, err := r.resolveAbsoluteWithinRoot(p)
 	if err != nil {
-		return nil, errors.New("invalid path")
+		return nil, mapToolPathError(err)
 	}
 
 	if create {
@@ -1704,9 +1747,18 @@ func (r *run) toolTerminalExec(ctx context.Context, command string, cwd string, 
 		timeoutMS = 60_000
 	}
 
-	_, cwdAbs, err := r.resolveVirtual(cwd)
+	cwd = strings.TrimSpace(cwd)
+	var (
+		cwdAbs string
+		err    error
+	)
+	if cwd == "" {
+		cwdAbs, err = r.workspaceRootAbs()
+	} else {
+		cwdAbs, err = r.resolveAbsoluteWithinRoot(cwd)
+	}
 	if err != nil {
-		return nil, errors.New("invalid cwd")
+		return nil, mapToolCwdError(err)
 	}
 
 	execCtx := ctx
