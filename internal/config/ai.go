@@ -42,8 +42,7 @@ type AIConfig struct {
 	// ToolRecoveryAllowPathRewrite controls deterministic path normalization/rewrite strategies.
 	ToolRecoveryAllowPathRewrite *bool `json:"tool_recovery_allow_path_rewrite,omitempty"`
 
-	// ToolRecoveryAllowProbeTools controls whether runtime recovery can request probe-first retries
-	// (for example, list workspace root before retrying a target path).
+	// ToolRecoveryAllowProbeTools is reserved for strategy diversification retries in runtime recovery.
 	ToolRecoveryAllowProbeTools *bool `json:"tool_recovery_allow_probe_tools,omitempty"`
 
 	// ToolRecoveryFailOnRepeatedSignature controls fail-fast behavior when the same failure signature
@@ -113,17 +112,17 @@ var defaultToolRequiredIntents = []string{
 	"check config",
 	"run command",
 	"execute",
-	"pwd",
-	"ls",
-	"cat",
-	"grep",
-	"rg",
+	"analysis",
+	"project",
+	"codebase",
 	"分析",
 	"扫描",
 	"读取",
 	"查看目录",
 	"执行命令",
 	"检查配置",
+	"项目",
+	"代码",
 }
 
 func (c *AIConfig) Validate() error {

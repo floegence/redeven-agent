@@ -238,7 +238,7 @@ func buildLoopGuardRetryPrompt(objective string, signature string, summary turnA
 		fmt.Sprintf("Repeated signature: %s", strings.TrimSpace(signature)),
 		fmt.Sprintf("Turn progress: %d turns used, no-progress streak %d.", state.TurnsUsed, state.NoProgressTurn),
 		"You must switch strategy now. Do not repeat the same tool call signature.",
-		"If path is unclear, first call fs.list_dir on /, then choose a different target.",
+		"Pick a different evidence source, path, or tool strategy before continuing.",
 		"After switching strategy, provide a concise progress update grounded in tool output.",
 	}
 	if goal := strings.TrimSpace(objective); goal != "" {

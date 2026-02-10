@@ -13,7 +13,6 @@ const (
 	recoveryActionNone                 recoveryAction = ""
 	recoveryActionRetryAlternative     recoveryAction = "retry_alternative_tool"
 	recoveryActionRetryNormalizedArgs  recoveryAction = "retry_with_normalized_args"
-	recoveryActionProbeWorkspace       recoveryAction = "probe_workspace_then_retry"
 	recoveryActionForceToolCall        recoveryAction = "force_tool_call"
 	recoveryActionSynthesizeFinal      recoveryAction = "synthesize_final_answer"
 	recoveryActionStopAfterRepeatedErr recoveryAction = "stop_after_repeated_error"
@@ -83,7 +82,6 @@ var toolRecoveryActionHints = []string{
 	"list",
 	"check",
 	"execute",
-	"run",
 	"open",
 	"explore",
 	"diagnose",
@@ -100,7 +98,6 @@ var toolRecoveryActionHints = []string{
 	"执行",
 	"检查",
 	"排查",
-	"命令",
 }
 
 var toolRecoveryCommitmentPhrases = []string{
@@ -138,10 +135,7 @@ func shouldRequireToolExecution(userInput string, intentHints []string) bool {
 	if hasPathHint(text) && containsAny(text, toolRecoveryActionHints) {
 		return true
 	}
-	if containsAny(text, []string{"pwd", "ls", "cat ", "rg ", "grep ", "tree "}) {
-		return true
-	}
-	if containsAny(text, []string{"call ", "tool call", "use tool", "fs.", "terminal.exec", "list_dir", "read_file", "write_file", "stat "}) {
+	if containsAny(text, []string{"tool call", "use tool", "fs.", "terminal.exec"}) {
 		return true
 	}
 	return false
@@ -307,9 +301,6 @@ func pickRecoveryAction(cfg turnRecoveryConfig, failure *turnToolFailure) recove
 	if cfg.AllowPathRewrite && strings.EqualFold(strings.TrimSpace(failure.RecoveryAction), string(recoveryActionRetryNormalizedArgs)) {
 		return recoveryActionRetryNormalizedArgs
 	}
-	if cfg.AllowProbeTools && isPathFailure(failure) {
-		return recoveryActionProbeWorkspace
-	}
 	return recoveryActionRetryAlternative
 }
 
@@ -339,7 +330,7 @@ func isPathFailure(failure *turnToolFailure) bool {
 	}
 	failure.Error.Normalize()
 	switch failure.Error.Code {
-	case aitools.ErrorCodeInvalidPath, aitools.ErrorCodeOutsideWorkspace, aitools.ErrorCodeNotFound:
+	case aitools.ErrorCodeInvalidPath, aitools.ErrorCodeNotFound:
 		return true
 	default:
 		return false
@@ -409,11 +400,6 @@ func buildRecoveryRetryPrompt(userInput string, summary turnAttemptSummary, fail
 		lines = append(lines,
 			"Retry the failed tool once using normalized_args from the latest tool error payload.",
 			"If the retry still fails, switch to an alternative tool/path and continue.",
-		)
-	case recoveryActionProbeWorkspace:
-		lines = append(lines,
-			"First call fs.list_dir with path '/'.",
-			"Then choose the correct target path/tool based on that probe and continue.",
 		)
 	case recoveryActionSynthesizeFinal:
 		lines = append(lines,

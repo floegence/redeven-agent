@@ -18,14 +18,14 @@ const (
 	historyToolMemoryPreview     = 280
 )
 
-var historyAnchorPattern = regexp.MustCompile(`(?:~?/[^\s"'` + "`" + `]+|\.{1,2}/[^\s"'` + "`" + `]+|\b(?:pwd|ls|cat|rg|grep|tree|go test|npm run|pnpm)\b)`)
+var historyAnchorPattern = regexp.MustCompile(`(?:~?/[^\s"'` + "`" + `]+|\.{1,2}/[^\s"'` + "`" + `]+|\b(?:fs\.[a-z_]+|terminal\.exec)\b)`)
 
 type runContextBuildResult struct {
 	History []RunHistoryMsg
 	Pkg     *RunContextPackage
 }
 
-func buildRunContext(history []RunHistoryMsg, userInput string, openGoal string, toolMemories []RunToolMemory) runContextBuildResult {
+func buildRunContext(history []RunHistoryMsg, userInput string, openGoal string, workingDirAbs string, toolMemories []RunToolMemory) runContextBuildResult {
 	normalized := normalizeHistoryMessages(history)
 	normalizedTools := normalizeRunToolMemories(toolMemories)
 	taskObjective := strings.TrimSpace(openGoal)
@@ -37,6 +37,7 @@ func buildRunContext(history []RunHistoryMsg, userInput string, openGoal string,
 		Pkg: &RunContextPackage{
 			OpenGoal:      strings.TrimSpace(openGoal),
 			ToolMemories:  normalizedTools,
+			WorkingDirAbs: strings.TrimSpace(workingDirAbs),
 			TaskObjective: taskObjective,
 			TaskSteps:     buildTaskStepSketch(taskObjective),
 			Stats:         map[string]int{},

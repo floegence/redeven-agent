@@ -279,8 +279,8 @@ func TestStore_ListRecentThreadToolCalls(t *testing.T) {
 		ToolName:     "fs.list_dir",
 		Status:       "error",
 		ArgsJSON:     `{"path":"/tmp"}`,
-		ErrorCode:    "OUTSIDE_WORKSPACE",
-		ErrorMessage: "path outside workspace root",
+		ErrorCode:    "INVALID_PATH",
+		ErrorMessage: "path must be absolute",
 	}); err != nil {
 		t.Fatalf("UpsertToolCall tool_b: %v", err)
 	}

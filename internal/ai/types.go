@@ -102,6 +102,7 @@ type RunContextPackage struct {
 	HistorySummary     string            `json:"history_summary,omitempty"`
 	Anchors            []string          `json:"anchors,omitempty"`
 	ToolMemories       []RunToolMemory   `json:"tool_memories,omitempty"`
+	WorkingDirAbs      string            `json:"working_dir_abs,omitempty"`
 	TaskObjective      string            `json:"task_objective,omitempty"`
 	TaskSteps          []RunTaskStep     `json:"task_steps,omitempty"`
 	TaskProgressDigest string            `json:"task_progress_digest,omitempty"`
