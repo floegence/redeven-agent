@@ -28,6 +28,13 @@ type RunStartParams = {
   model: string;
   mode?: 'build' | 'plan';
   history: Array<{ role: 'user' | 'assistant'; text: string }>;
+  context_package?: {
+    open_goal?: string;
+    history_summary?: string;
+    anchors?: string[];
+    stats?: Record<string, number>;
+    meta?: Record<string, string>;
+  };
   workspace_root_abs?: string;
   input: {
     text: string;
@@ -496,12 +503,40 @@ async function runAgent(params: RunStartParams): Promise<void> {
       'Respect permissions and never exfiltrate secrets. ' +
       modeInstruction + ' ' +
       workspaceScopeInstruction +
+      ' Always finish each run with a concrete user-facing answer. Do not stop after only a preamble or only tool calls.' +
       ' If a tool fails and the payload includes suggested_fixes or normalized_args, you must follow them and retry once when safe before giving up.';
 
     const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
       { role: 'system', content: systemPrompt },
     ];
 
+    const contextPkg = params?.context_package;
+    const openGoal = String(contextPkg?.open_goal ?? '').trim();
+    const historySummary = String(contextPkg?.history_summary ?? '').trim();
+    const anchors = Array.isArray(contextPkg?.anchors)
+      ? contextPkg?.anchors
+          .map((it) => String(it ?? '').trim())
+          .filter((it) => it.length > 0)
+          .slice(0, 12)
+      : [];
+    const contextLines: string[] = [];
+    if (openGoal) {
+      contextLines.push(`<open_goal>\n${openGoal}\n</open_goal>`);
+    }
+    if (historySummary) {
+      contextLines.push(`<history_summary>\n${historySummary}\n</history_summary>`);
+    }
+    if (anchors.length > 0) {
+      contextLines.push(`<anchors>\n${anchors.join('\n')}\n</anchors>`);
+    }
+    if (contextLines.length > 0) {
+      messages.push({
+        role: 'system',
+        content:
+          'Runtime context from Go orchestrator. Treat as trusted session memory and continue the same task.\n\n' +
+          contextLines.join('\n\n'),
+      });
+    }
     for (const h of params.history || []) {
       const role = h?.role === 'assistant' ? 'assistant' : 'user';
       const text = String(h?.text ?? '');
@@ -596,11 +631,20 @@ async function runAgent(params: RunStartParams): Promise<void> {
     }
 
     const toolCalls = runToolCallCount.get(runId) ?? 0;
+    const hasVisibleText = emitted.trim().length > 0;
+    notify('run.outcome', {
+      run_id: runId,
+      has_text: hasVisibleText,
+      text_chars: emitted.length,
+      tool_calls: toolCalls,
+    });
     notify('run.phase', {
       run_id: runId,
       phase: 'end',
       diag: {
         tool_calls: toolCalls,
+        has_text: hasVisibleText,
+        text_chars: emitted.length,
         attempt_index: recoveryAttemptIndex,
         recovery_steps_used: recoveryStepsUsed,
         recovery_budget_left: recoveryBudgetLeft,
@@ -609,6 +653,7 @@ async function runAgent(params: RunStartParams): Promise<void> {
     logEvent('ai.sidecar.run.end', {
       run_id: runId,
       emitted_chars: emitted.length,
+      has_text: hasVisibleText,
       delta_count: deltaCount,
       tool_calls: toolCalls,
       recovery_attempt_index: recoveryAttemptIndex,
