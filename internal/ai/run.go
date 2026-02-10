@@ -545,9 +545,16 @@ func (r *run) run(ctx context.Context, req RunRequest) (retErr error) {
 	r.setFinalizationReason("")
 	startedAt := time.Now()
 	r.persistRunRecord(RunStateRunning, "", "", startedAt.UnixMilli(), 0)
-	r.persistRunEvent("run.start", RealtimeStreamKindLifecycle, map[string]any{
-		"model": strings.TrimSpace(req.Model),
-	})
+	runStartPayload := map[string]any{
+		"model":         strings.TrimSpace(req.Model),
+		"history_count": len(req.History),
+	}
+	if req.ContextPackage != nil {
+		runStartPayload["context_open_goal"] = strings.TrimSpace(req.ContextPackage.OpenGoal)
+		runStartPayload["context_anchor_count"] = len(req.ContextPackage.Anchors)
+		runStartPayload["context_summary_chars"] = utf8.RuneCountInString(strings.TrimSpace(req.ContextPackage.HistorySummary))
+	}
+	r.persistRunEvent("run.start", RealtimeStreamKindLifecycle, runStartPayload)
 	defer func() {
 		endReason := strings.TrimSpace(r.getEndReason())
 		if endReason == "" {
@@ -784,6 +791,7 @@ func (r *run) run(ctx context.Context, req RunRequest) (retErr error) {
 			"model":              req.Model,
 			"mode":               r.cfg.EffectiveMode(),
 			"history":            history,
+			"context_package":    req.ContextPackage,
 			"workspace_root_abs": workspaceRootAbs,
 			"input": map[string]any{
 				"text":        input.Text,
@@ -893,6 +901,9 @@ func (r *run) run(ctx context.Context, req RunRequest) (retErr error) {
 	r.totalToolCalls = 0
 	r.recoveryState.RecoverySteps = 0
 	r.recoveryState.FailureSignatures = map[string]int{}
+	r.recoveryState.CompletionSteps = 0
+	r.recoveryState.NoProgressStreak = 0
+	r.recoveryState.LastAssistantDigest = ""
 	r.persistRunEvent("turn.recovery.config", RealtimeStreamKindLifecycle, map[string]any{
 		"enabled":                            r.recoveryEnabled,
 		"max_steps":                          r.recoveryMaxSteps,
@@ -903,7 +914,26 @@ func (r *run) run(ctx context.Context, req RunRequest) (retErr error) {
 		"tool_required_hints":                toolRequiredIntents,
 	})
 
+	maxAttemptLoops := r.recoveryMaxSteps + 4
+	if maxAttemptLoops < 4 {
+		maxAttemptLoops = 4
+	}
+	if maxAttemptLoops > 12 {
+		maxAttemptLoops = 12
+	}
+
 	for attemptIdx := 0; ; attemptIdx++ {
+		if attemptIdx >= maxAttemptLoops {
+			r.persistRunEvent("turn.loop.exhausted", RealtimeStreamKindLifecycle, map[string]any{
+				"max_attempts": maxAttemptLoops,
+				"steps_used":   r.recoveryState.RecoverySteps,
+			})
+			_ = r.appendTextDelta("I could not finish within the current loop budget. Send 'continue' and I will resume from current progress.")
+			r.setFinalizationReason("loop_budget_exhausted")
+			r.setEndReason("complete")
+			r.sendStreamEvent(streamEventMessageEnd{Type: "message-end", MessageID: r.messageID})
+			return nil
+		}
 		if attemptIdx > 0 {
 			r.needNewTextBlock = true
 			budgetLeft := r.recoveryMaxSteps - r.recoveryState.RecoverySteps
@@ -1084,6 +1114,26 @@ func (r *run) run(ctx context.Context, req RunRequest) (retErr error) {
 				}
 				r.persistRunEvent("turn.phase."+phase, RealtimeStreamKindLifecycle, payload)
 
+			case "run.outcome":
+				var p struct {
+					RunID     string `json:"run_id"`
+					HasText   bool   `json:"has_text"`
+					TextChars int    `json:"text_chars"`
+					ToolCalls int    `json:"tool_calls"`
+				}
+				_ = json.Unmarshal(msg.Params, &p)
+				if strings.TrimSpace(p.RunID) != r.id {
+					continue
+				}
+				attemptSummary.OutcomeHasText = p.HasText
+				attemptSummary.OutcomeTextChars = p.TextChars
+				attemptSummary.OutcomeToolCalls = p.ToolCalls
+				r.persistRunEvent("turn.outcome", RealtimeStreamKindLifecycle, map[string]any{
+					"has_text":   p.HasText,
+					"text_chars": p.TextChars,
+					"tool_calls": p.ToolCalls,
+				})
+
 			case "tool.error.classified":
 				var p struct {
 					RunID             string `json:"run_id"`
@@ -1200,6 +1250,58 @@ func (r *run) run(ctx context.Context, req RunRequest) (retErr error) {
 					return nil
 				}
 
+				completionDecision := decideTurnCompletion(turnCompletionConfig{
+					Enabled:       true,
+					RequiresTools: r.requiresTools,
+					MaxSteps:      r.recoveryMaxSteps + 1,
+				}, attemptSummary, &r.recoveryState, req.Input.Text)
+
+				if completionDecision.Continue {
+					budgetLeft := r.recoveryMaxSteps - r.recoveryState.RecoverySteps
+					if budgetLeft < 0 {
+						budgetLeft = 0
+					}
+					r.persistRunEvent("turn.completion.continue", RealtimeStreamKindLifecycle, map[string]any{
+						"reason":                completionDecision.Reason,
+						"action":                string(completionDecision.Action),
+						"attempt_index":         attemptIdx,
+						"completion_steps_used": r.recoveryState.CompletionSteps,
+						"recovery_budget_left":  budgetLeft,
+						"attempt_tool_calls":    attemptSummary.ToolCalls,
+						"attempt_tool_success":  attemptSummary.ToolSuccesses,
+						"attempt_tool_failures": len(attemptSummary.ToolFailures),
+					})
+					attemptHistory = appendHistoryForRetry(attemptHistory, req.Input.Text, attemptSummary.AssistantText)
+					attemptInput = RunInput{Text: completionDecision.NextPrompt}
+					continueAttempt = true
+					break attemptLoop
+				}
+
+				if completionDecision.FailRun {
+					r.persistRunEvent("turn.completion.failed", RealtimeStreamKindLifecycle, map[string]any{
+						"reason":                completionDecision.Reason,
+						"action":                string(completionDecision.Action),
+						"attempt_index":         attemptIdx,
+						"completion_steps_used": r.recoveryState.CompletionSteps,
+						"attempt_tool_calls":    attemptSummary.ToolCalls,
+						"attempt_tool_success":  attemptSummary.ToolSuccesses,
+						"attempt_tool_failures": len(attemptSummary.ToolFailures),
+					})
+					failureMsg := strings.TrimSpace(completionDecision.FailureMessage)
+					if failureMsg != "" {
+						prefix := ""
+						if r.hasNonEmptyAssistantText() {
+							prefix = "\n\n"
+						}
+						_ = r.appendTextDelta(prefix + failureMsg)
+					}
+					r.ensureNonEmptyAssistant()
+					r.setFinalizationReason(completionDecision.Reason)
+					r.setEndReason("complete")
+					r.sendStreamEvent(streamEventMessageEnd{Type: "message-end", MessageID: r.messageID})
+					return nil
+				}
+
 				if r.recoveryState.RecoverySteps > 0 {
 					r.persistRunEvent("turn.recovery.recovered", RealtimeStreamKindLifecycle, map[string]any{
 						"attempt_index":         attemptIdx,
@@ -1210,6 +1312,12 @@ func (r *run) run(ctx context.Context, req RunRequest) (retErr error) {
 						"attempt_tool_failures": len(attemptSummary.ToolFailures),
 					})
 				}
+				r.persistRunEvent("turn.completion.done", RealtimeStreamKindLifecycle, map[string]any{
+					"attempt_index":         attemptIdx,
+					"attempt_tool_calls":    attemptSummary.ToolCalls,
+					"attempt_tool_success":  attemptSummary.ToolSuccesses,
+					"attempt_tool_failures": len(attemptSummary.ToolFailures),
+				})
 				r.ensureNonEmptyAssistant()
 				r.setFinalizationReason("complete")
 				r.setEndReason("complete")
@@ -1446,22 +1554,10 @@ func (r *run) fallbackTextFromSuccessfulTool() string {
 		return "File content:\n\n```\n" + truncateRunes(content, 4000) + "\n```"
 
 	case "fs.list_dir":
-		entries, _ := resultMap["entries"].([]any)
-		return fmt.Sprintf("Directory listed successfully (%d entries).", len(entries))
+		return ""
 
 	case "fs.stat":
-		pathValue := strings.TrimSpace(anyToString(resultMap["path"]))
-		isDir, _ := resultMap["is_dir"].(bool)
-		if pathValue == "" {
-			if isDir {
-				return "Path metadata loaded (directory)."
-			}
-			return "Path metadata loaded."
-		}
-		if isDir {
-			return fmt.Sprintf("Path metadata loaded for %s (directory).", pathValue)
-		}
-		return fmt.Sprintf("Path metadata loaded for %s.", pathValue)
+		return ""
 
 	case "fs.write_file":
 		bytesWritten := anyToInt(resultMap["bytes_written"])
