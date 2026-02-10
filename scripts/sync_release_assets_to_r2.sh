@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Sync GitHub release assets to Cloudflare R2 and update version manifest atomically.
+# Sync GitHub release assets to Cloudflare R2 package mirror.
 
 log_info() {
   printf '[INFO] %s\n' "$1"
@@ -39,20 +39,17 @@ validate_release_tag() {
 summarize() {
   if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
     {
-      echo '## Release Mirror Result'
+      echo '## Release Package Mirror Result'
       echo ''
       echo "- tag: \`$RELEASE_TAG\`"
-      echo "- recommended: \`$RECOMMENDED_VERSION\`"
       echo "- package bucket: \`$R2_PACKAGE_BUCKET\`"
       echo "- package prefix: \`$PACKAGE_PREFIX\`"
-      echo "- manifest bucket: \`$R2_MANIFEST_BUCKET\`"
-      echo "- manifest key: \`$MANIFEST_OBJECT_KEY\`"
+      echo "- source: \`$RELEASE_REPO\`"
     } >>"$GITHUB_STEP_SUMMARY"
   fi
 }
 
 require_cmd gh
-require_cmd jq
 require_cmd aws
 require_cmd cosign
 require_cmd sha256sum
@@ -65,14 +62,10 @@ require_env R2_ENDPOINT
 require_env AWS_ACCESS_KEY_ID
 require_env AWS_SECRET_ACCESS_KEY
 require_env R2_PACKAGE_BUCKET
-require_env R2_MANIFEST_BUCKET
 
 PACKAGE_PREFIX="${R2_PACKAGE_PREFIX:-agent-install-pkg}"
-MANIFEST_OBJECT_KEY="${MANIFEST_OBJECT_KEY:-v1/manifest.json}"
-RECOMMENDED_VERSION="${RECOMMENDED_VERSION:-$RELEASE_TAG}"
 
 validate_release_tag "$RELEASE_TAG"
-validate_release_tag "$RECOMMENDED_VERSION"
 
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
@@ -163,58 +156,5 @@ for file in "${EXPECTED_FILES[@]}"; do
   fi
 done
 
-MANIFEST_CURRENT="$WORK_DIR/manifest.current.json"
-MANIFEST_NEXT="$WORK_DIR/manifest.next.json"
-MANIFEST_VERIFY="$WORK_DIR/manifest.verify.json"
-
-if aws s3 cp \
-  "s3://$R2_MANIFEST_BUCKET/$MANIFEST_OBJECT_KEY" \
-  "$MANIFEST_CURRENT" \
-  --endpoint-url "$R2_ENDPOINT" \
-  --only-show-errors 2>/dev/null; then
-  log_info 'Loaded existing manifest from R2'
-else
-  log_info 'Manifest does not exist yet, creating a new one'
-  echo '{}' >"$MANIFEST_CURRENT"
-fi
-
-if ! jq -e . "$MANIFEST_CURRENT" >/dev/null 2>&1; then
-  log_error 'Existing manifest is not valid JSON'
-  exit 1
-fi
-
-UPDATED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-jq -c \
-  --arg latest "$RELEASE_TAG" \
-  --arg recommended "$RECOMMENDED_VERSION" \
-  --arg updated_at "$UPDATED_AT" \
-  --arg source_release_tag "$RELEASE_TAG" \
-  '.latest = $latest
-   | .recommended = $recommended
-   | .updated_at = $updated_at
-   | .source_release_tag = $source_release_tag
-   | .mirror_complete = true' \
-  "$MANIFEST_CURRENT" >"$MANIFEST_NEXT"
-
-log_info 'Uploading manifest to R2'
-aws s3 cp \
-  "$MANIFEST_NEXT" \
-  "s3://$R2_MANIFEST_BUCKET/$MANIFEST_OBJECT_KEY" \
-  --endpoint-url "$R2_ENDPOINT" \
-  --content-type 'application/json; charset=utf-8' \
-  --cache-control 'no-store' \
-  --only-show-errors
-
-aws s3 cp \
-  "s3://$R2_MANIFEST_BUCKET/$MANIFEST_OBJECT_KEY" \
-  "$MANIFEST_VERIFY" \
-  --endpoint-url "$R2_ENDPOINT" \
-  --only-show-errors
-
-if ! cmp -s "$MANIFEST_NEXT" "$MANIFEST_VERIFY"; then
-  log_error 'Manifest verification failed after upload'
-  exit 1
-fi
-
 summarize
-log_info 'Release assets and manifest synced successfully'
+log_info 'Release assets mirrored successfully'
