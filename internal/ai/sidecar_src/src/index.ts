@@ -41,6 +41,7 @@ type RunStartParams = {
       error_code?: string;
       error_message?: string;
     }>;
+    working_dir_abs?: string;
     task_objective?: string;
     task_steps?: Array<{
       title?: string;
@@ -50,7 +51,7 @@ type RunStartParams = {
     stats?: Record<string, number>;
     meta?: Record<string, string>;
   };
-  workspace_root_abs?: string;
+  working_dir_abs?: string;
   input: {
     text: string;
     attachments?: Array<{
@@ -313,7 +314,7 @@ function shouldRetryWithNormalizedArgs(toolName: string, err: ToolErrorPayload):
   if (!err?.retryable) return false;
   if (!err?.normalized_args || typeof err.normalized_args !== 'object') return false;
   const code = String(err.code ?? '').toUpperCase();
-  if (code !== 'INVALID_PATH' && code !== 'OUTSIDE_WORKSPACE' && code !== 'NOT_FOUND') return false;
+  if (code !== 'INVALID_PATH') return false;
   if (toolName === 'terminal.exec') {
     return typeof err.normalized_args.cwd === 'string' && String(err.normalized_args.cwd).trim() !== '';
   }
@@ -478,7 +479,7 @@ async function runAgent(params: RunStartParams): Promise<void> {
 
   const abort = new AbortController();
   currentRun = { runId, abort };
-  const workspaceRootAbs = String(params?.workspace_root_abs ?? '').trim();
+  let workingDirAbs = String(params?.working_dir_abs ?? '').trim();
   const recoveryEnabled = Boolean(params?.recovery?.enabled);
   const recoveryRequiresTools = Boolean(params?.recovery?.requires_tools);
   const recoveryAttemptIndex = Number.isFinite(Number(params?.recovery?.attempt_index))
@@ -515,7 +516,7 @@ async function runAgent(params: RunStartParams): Promise<void> {
     history_count: Array.isArray(params?.history) ? params.history.length : 0,
     attachment_count: Array.isArray(params?.input?.attachments) ? params.input.attachments.length : 0,
     input_chars: String(params?.input?.text ?? '').trim().length,
-    workspace_root_abs: workspaceRootAbs,
+    working_dir_abs: workingDirAbs,
     recovery_enabled: recoveryEnabled,
     recovery_requires_tools: recoveryRequiresTools,
     recovery_attempt_index: recoveryAttemptIndex,
@@ -531,11 +532,15 @@ async function runAgent(params: RunStartParams): Promise<void> {
   try {
     const model = createModel(String(params.model ?? '').trim(), runId);
     const maxSteps = Math.max(1, Math.min(50, Number(params?.options?.max_steps ?? 10)));
+    const contextPkg = params?.context_package;
+    if (!workingDirAbs) {
+      workingDirAbs = String(contextPkg?.working_dir_abs ?? '').trim();
+    }
 
     const mode = String(params?.mode ?? 'build').trim().toLowerCase() === 'plan' ? 'plan' : 'build';
-    const workspaceScopeInstruction = workspaceRootAbs
-      ? `Workspace real root is ${workspaceRootAbs}. For fs.* tools use virtual absolute paths where '/' maps to workspace root. For terminal_exec.cwd use '/' for workspace root.`
-      : "Workspace root is not provided. For fs.* and terminal_exec.cwd use virtual absolute paths and keep everything under '/'.";
+    const workspaceScopeInstruction = workingDirAbs
+      ? `Use host absolute paths for all fs.* paths and terminal_exec.cwd. System root is '/'. Current working directory is ${workingDirAbs}.`
+      : "Use host absolute paths for all fs.* paths and terminal_exec.cwd. System root is '/'.";
     const modeInstruction =
       mode === 'plan'
         ? 'You are running in PLAN mode. Do not request mutating tools such as fs_write_file or terminal_exec.'
@@ -552,7 +557,6 @@ async function runAgent(params: RunStartParams): Promise<void> {
       { role: 'system', content: systemPrompt },
     ];
 
-    const contextPkg = params?.context_package;
     const openGoal = String(contextPkg?.open_goal ?? '').trim();
     const historySummary = String(contextPkg?.history_summary ?? '').trim();
     const taskObjective = String(contextPkg?.task_objective ?? '').trim();
@@ -616,6 +620,11 @@ ${anchors.join('\n')}
 ${toolMemories.join('\n')}
 </recent_tool_results>`);
     }
+    if (workingDirAbs) {
+      contextLines.push(`<working_dir_abs>
+${workingDirAbs}
+</working_dir_abs>`);
+    }
     if (contextLines.length > 0) {
       messages.push({
         role: 'system',
@@ -640,17 +649,17 @@ ${toolMemories.join('\n')}
       // Keep the Go-side tool names stable (e.g. "fs.list_dir") and only sanitize the
       // OpenAI-exposed function names here.
       fs_list_dir: tool({
-        description: "List directory entries using a virtual absolute path where '/' maps to workspace root.",
+        description: "List directory entries. Argument path must be a host absolute path.",
         inputSchema: z.object({ path: z.string() }),
         execute: async (a: any) => executeTool(runId, 'fs.list_dir', a),
       }),
       fs_stat: tool({
-        description: "Get file/directory metadata using a virtual absolute path where '/' maps to workspace root.",
+        description: "Get file or directory metadata. Argument path must be a host absolute path.",
         inputSchema: z.object({ path: z.string() }),
         execute: async (a: any) => executeTool(runId, 'fs.stat', a),
       }),
       fs_read_file: tool({
-        description: "Read a UTF-8 text file using a virtual absolute path where '/' maps to workspace root.",
+        description: "Read a UTF-8 text file. Argument path must be a host absolute path.",
         inputSchema: z.object({
           path: z.string(),
           offset: z.number().int().nonnegative().default(0),
@@ -659,7 +668,7 @@ ${toolMemories.join('\n')}
         execute: async (a: any) => executeTool(runId, 'fs.read_file', a),
       }),
       fs_write_file: tool({
-        description: "Write a UTF-8 text file to a virtual absolute path where '/' maps to workspace root (requires explicit user approval).",
+        description: "Write a UTF-8 text file to a host absolute path (requires explicit user approval).",
         inputSchema: z.object({
           path: z.string(),
           content_utf8: z.string(),
@@ -669,10 +678,10 @@ ${toolMemories.join('\n')}
         execute: async (a: any) => executeTool(runId, 'fs.write_file', a),
       }),
       terminal_exec: tool({
-        description: "Execute a shell command (requires explicit user approval) with cwd as a virtual absolute path where '/' maps to workspace root.",
+        description: "Execute a shell command (requires explicit user approval). If provided, cwd must be a host absolute path.",
         inputSchema: z.object({
           command: z.string(),
-          cwd: z.string().default('/'),
+          cwd: z.string().optional(),
           timeout_ms: z.number().int().positive().max(60_000).default(60_000),
         }),
         execute: async (a: any) => executeTool(runId, 'terminal.exec', a),
