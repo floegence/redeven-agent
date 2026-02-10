@@ -27,6 +27,7 @@ type RunStartParams = {
   run_id: string;
   model: string;
   history: Array<{ role: 'user' | 'assistant'; text: string }>;
+  workspace_root_abs?: string;
   input: {
     text: string;
     attachments?: Array<{
@@ -42,8 +43,12 @@ type RunStartParams = {
   options: { max_steps: number };
 };
 
+type ToolCallResult =
+  | { ok: true; result: any }
+  | { ok: false; error: string; retryable?: boolean };
+
 const providers: ProviderConfig[] = [];
-const toolWaiters = new Map<string, { resolve: (v: any) => void; reject: (e: Error) => void }>();
+const toolWaiters = new Map<string, { resolve: (v: ToolCallResult) => void }>();
 
 let currentRun: {
   runId: string;
@@ -237,7 +242,7 @@ function createModel(modelId: string, runId = "") {
   }
 }
 
-async function callTool(runId: string, toolName: string, args: any): Promise<any> {
+async function callTool(runId: string, toolName: string, args: any): Promise<ToolCallResult> {
   const toolId = `tc_${randomUUID()}`;
   logEvent('ai.sidecar.tool.call.emit', {
     run_id: runId,
@@ -247,17 +252,29 @@ async function callTool(runId: string, toolName: string, args: any): Promise<any
   });
   notify('tool.call', { run_id: runId, tool_id: toolId, tool_name: toolName, args });
 
-  return await new Promise<any>((resolve, reject) => {
-    toolWaiters.set(toolId, { resolve, reject });
+  return await new Promise<ToolCallResult>((resolve) => {
+    toolWaiters.set(toolId, { resolve });
     // Safety: avoid leaking waiters forever if something goes wrong.
     setTimeout(() => {
       const w = toolWaiters.get(toolId);
       if (!w) return;
       toolWaiters.delete(toolId);
       logEvent('ai.sidecar.tool.call.timeout', { run_id: runId, tool_id: toolId, tool_name: toolName });
-      reject(new Error('Tool call timed out'));
+      resolve({ ok: false, error: 'Tool call timed out', retryable: true });
     }, 10 * 60 * 1000);
   });
+}
+
+async function executeTool(runId: string, toolName: string, args: any): Promise<any> {
+  const out = await callTool(runId, toolName, args);
+  if (out.ok) {
+    return out.result;
+  }
+  return {
+    ok: false,
+    error: String(out.error ?? 'Tool failed').trim() || 'Tool failed',
+    retryable: Boolean(out.retryable),
+  };
 }
 
 function buildUserContent(text: string, atts: RunStartParams['input']['attachments']): string {
@@ -290,21 +307,28 @@ async function runAgent(params: RunStartParams): Promise<void> {
 
   const abort = new AbortController();
   currentRun = { runId, abort };
+  const workspaceRootAbs = String(params?.workspace_root_abs ?? '').trim();
   logEvent('ai.sidecar.run.start', {
     run_id: runId,
     model: String(params?.model ?? '').trim(),
     history_count: Array.isArray(params?.history) ? params.history.length : 0,
     attachment_count: Array.isArray(params?.input?.attachments) ? params.input.attachments.length : 0,
     input_chars: String(params?.input?.text ?? '').trim().length,
+    workspace_root_abs: workspaceRootAbs,
   });
 
   try {
     const model = createModel(String(params.model ?? '').trim(), runId);
     const maxSteps = Math.max(1, Math.min(50, Number(params?.options?.max_steps ?? 10)));
 
+    const workspaceScopeInstruction = workspaceRootAbs
+      ? `Workspace root is ${workspaceRootAbs}. Only use absolute paths inside this root for fs.* and terminal_exec.cwd.`
+      : 'Workspace root is not provided. Use absolute paths for fs.* and terminal_exec.cwd, and avoid paths outside workspace.';
     const systemPrompt =
       'You are an AI agent inside the Redeven Env App. ' +
-      'Use tools only when necessary, respect permissions, and never exfiltrate secrets.';
+      'Use tools only when necessary, respect permissions, and never exfiltrate secrets. ' +
+      workspaceScopeInstruction +
+      ' If a tool returns an error, analyze the error and try a different valid approach before giving up.';
 
     const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
       { role: 'system', content: systemPrompt },
@@ -326,42 +350,42 @@ async function runAgent(params: RunStartParams): Promise<void> {
       // Keep the Go-side tool names stable (e.g. "fs.list_dir") and only sanitize the
       // OpenAI-exposed function names here.
       fs_list_dir: tool({
-        description: 'List directory entries.',
+        description: 'List directory entries for an absolute path inside workspace root.',
         inputSchema: z.object({ path: z.string() }),
-        execute: async (a: any) => callTool(runId, 'fs.list_dir', a),
+        execute: async (a: any) => executeTool(runId, 'fs.list_dir', a),
       }),
       fs_stat: tool({
-        description: 'Get file/directory metadata (size, mtime, sha256).',
+        description: 'Get file/directory metadata for an absolute path inside workspace root.',
         inputSchema: z.object({ path: z.string() }),
-        execute: async (a: any) => callTool(runId, 'fs.stat', a),
+        execute: async (a: any) => executeTool(runId, 'fs.stat', a),
       }),
       fs_read_file: tool({
-        description: 'Read a UTF-8 text file (with offset and size cap).',
+        description: 'Read a UTF-8 text file using an absolute path inside workspace root.',
         inputSchema: z.object({
           path: z.string(),
           offset: z.number().int().nonnegative().default(0),
           max_bytes: z.number().int().positive().max(200_000).default(200_000),
         }),
-        execute: async (a: any) => callTool(runId, 'fs.read_file', a),
+        execute: async (a: any) => executeTool(runId, 'fs.read_file', a),
       }),
       fs_write_file: tool({
-        description: 'Write a UTF-8 text file (requires explicit user approval).',
+        description: 'Write a UTF-8 text file to an absolute path inside workspace root (requires explicit user approval).',
         inputSchema: z.object({
           path: z.string(),
           content_utf8: z.string(),
           create: z.boolean().default(false),
           if_match_sha256: z.string().optional().default(''),
         }),
-        execute: async (a: any) => callTool(runId, 'fs.write_file', a),
+        execute: async (a: any) => executeTool(runId, 'fs.write_file', a),
       }),
       terminal_exec: tool({
-        description: 'Execute a shell command (requires explicit user approval).',
+        description: 'Execute a shell command (requires explicit user approval) with cwd as an absolute path inside workspace root.',
         inputSchema: z.object({
           command: z.string(),
-          cwd: z.string().default('/'),
+          cwd: z.string().default(workspaceRootAbs || '/'),
           timeout_ms: z.number().int().positive().max(60_000).default(60_000),
         }),
-        execute: async (a: any) => callTool(runId, 'terminal.exec', a),
+        execute: async (a: any) => executeTool(runId, 'terminal.exec', a),
       }),
     };
 
@@ -422,19 +446,19 @@ function handleToolResult(params: any) {
   toolWaiters.delete(toolId);
 
   const ok = Boolean(params?.ok);
+  const errMsg = String(params?.error ?? 'Tool failed').trim() || 'Tool failed';
   logEvent('ai.sidecar.tool.result.recv', {
     run_id: String(params?.run_id ?? currentRun?.runId ?? '').trim(),
     tool_id: toolId,
     ok,
-    error: ok ? '' : String(params?.error ?? 'Tool failed'),
+    error: ok ? '' : errMsg,
     result_preview: ok ? previewForLog(redactForLog('result', params?.result), 280) : '',
   });
   if (ok) {
-    waiter.resolve(params?.result);
+    waiter.resolve({ ok: true, result: params?.result });
     return;
   }
-  const errMsg = String(params?.error ?? 'Tool failed');
-  waiter.reject(new Error(errMsg));
+  waiter.resolve({ ok: false, error: errMsg });
 }
 
 function handleCancel(params: any) {
