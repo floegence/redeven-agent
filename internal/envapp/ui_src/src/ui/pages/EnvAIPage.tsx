@@ -41,6 +41,33 @@ function createUserMarkdownMessage(markdown: string): Message {
   };
 }
 
+type ExecutionMode = 'act' | 'plan';
+
+const EXECUTION_MODE_STORAGE_KEY = 'redeven_ai_execution_mode';
+
+function normalizeExecutionMode(raw: unknown): ExecutionMode {
+  const v = String(raw ?? '')
+    .trim()
+    .toLowerCase();
+  return v === 'act' ? 'act' : 'plan';
+}
+
+function readPersistedExecutionMode(): ExecutionMode {
+  try {
+    return normalizeExecutionMode(localStorage.getItem(EXECUTION_MODE_STORAGE_KEY));
+  } catch {
+    return 'plan';
+  }
+}
+
+function persistExecutionMode(mode: ExecutionMode): void {
+  try {
+    localStorage.setItem(EXECUTION_MODE_STORAGE_KEY, normalizeExecutionMode(mode));
+  } catch {
+    // ignore
+  }
+}
+
 const ChatCapture: Component<{ onReady: (ctx: ChatContextValue) => void }> = (props) => {
   const ctx = useChatContext();
   createEffect(() => props.onReady(ctx));
@@ -195,6 +222,29 @@ function ChatWorkingIndicator(props: { phaseLabel?: string }) {
           <div class="w-[3px] bg-primary/70 rounded-full processing-bar" style="animation-delay:300ms" />
         </div>
       </div>
+    </div>
+  );
+}
+
+function ExecutionModeToggle(props: {
+  value: ExecutionMode;
+  disabled?: boolean;
+  onChange: (mode: ExecutionMode) => void;
+}) {
+  const btnClass = (active: boolean) => {
+    const base = 'px-2.5 py-1 text-[11px] font-medium rounded-md transition-all duration-150';
+    if (active) return `${base} bg-background text-foreground shadow-sm border border-border`;
+    return `${base} text-muted-foreground hover:text-foreground hover:bg-muted/50`;
+  };
+
+  return (
+    <div class={cn('inline-flex items-center gap-0.5 rounded-lg border border-border p-0.5 bg-muted/40', props.disabled && 'opacity-60 pointer-events-none')}>
+      <button type="button" class={btnClass(props.value === 'plan')} onClick={() => props.onChange('plan')} title="Read-only analysis mode">
+        Plan
+      </button>
+      <button type="button" class={btnClass(props.value === 'act')} onClick={() => props.onChange('act')} title="Allow edits and command execution">
+        Act
+      </button>
     </div>
   );
 }
@@ -369,6 +419,7 @@ export function EnvAIPage() {
   const [hasMessages, setHasMessages] = createSignal(false);
   // Turns true immediately after send to keep instant feedback before run state events arrive.
   const [sendPending, setSendPending] = createSignal(false);
+  const [executionMode, setExecutionMode] = createSignal<ExecutionMode>(readPersistedExecutionMode());
 
   let chat: ChatContextValue | null = null;
   const [chatReady, setChatReady] = createSignal(false);
@@ -475,6 +526,11 @@ export function EnvAIPage() {
   const canInteract = createMemo(
     () => protocol.status() === 'connected' && !activeThreadRunning() && ai.aiEnabled() && ai.modelsReady(),
   );
+  const updateExecutionMode = (nextMode: ExecutionMode) => {
+    const next = normalizeExecutionMode(nextMode);
+    setExecutionMode(next);
+    persistExecutionMode(next);
+  };
 
   const isTerminalRunStatus = (status: string) =>
     status === 'success' || status === 'failed' || status === 'canceled' || status === 'timed_out';
@@ -772,7 +828,7 @@ export function EnvAIPage() {
           text: userText,
           attachments: attIn,
         },
-        options: { maxSteps: 10 },
+        options: { maxSteps: 10, mode: executionMode() },
       });
 
       const rid = String(resp.runId ?? '').trim();
@@ -1043,6 +1099,15 @@ export function EnvAIPage() {
             {/* Keep indicator mounted and toggle visibility via display to avoid mount/unmount jitter. */}
             <div style={{ display: showWorkingIndicator() ? '' : 'none' }}>
               <ChatWorkingIndicator phaseLabel={runPhaseLabel()} />
+            </div>
+
+            <div class="px-4 pt-0.5 pb-2 flex items-center justify-between gap-3">
+              <span class="text-[11px] text-muted-foreground">Execution mode</span>
+              <ExecutionModeToggle
+                value={executionMode()}
+                disabled={activeThreadRunning()}
+                onChange={(mode) => updateExecutionMode(mode)}
+              />
             </div>
 
             {/* Input area */}

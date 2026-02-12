@@ -8,7 +8,7 @@
         "blocks": [
           {
             "type": "text",
-            "content": "帮我分析项目"
+            "content": "Please analyze this project."
           }
         ],
         "status": "complete"

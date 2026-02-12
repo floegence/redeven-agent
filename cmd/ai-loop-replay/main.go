@@ -134,7 +134,7 @@ func evaluateReplay(assistantText string, toolCalls int) []string {
 	if toolCalls > 0 && utf8.RuneCountInString(text) < 40 {
 		reasons = append(reasons, "too_short_after_tool_calls")
 	}
-	if toolCalls >= 6 && !containsAny(text, []string{"conclusion", "result", "findings", "结论", "结果", "总结"}) {
+	if toolCalls >= 6 && !containsAny(text, []string{"conclusion", "result", "findings", "summary"}) {
 		reasons = append(reasons, "many_tool_calls_without_conclusion")
 	}
 	return reasons
