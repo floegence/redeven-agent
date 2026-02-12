@@ -8,7 +8,7 @@ import { useProtocol } from '@floegence/floe-webapp-protocol';
 import { Motion } from 'solid-motionone';
 import { useAIChatContext, type ThreadRunStatus, type ThreadView } from './AIChatContext';
 
-// 短格式时间戳，用于卡片右侧显示
+// Compact timestamp for the right side of each thread card.
 function fmtShortTime(ms: number): string {
   if (!ms) return '';
   try {
@@ -32,10 +32,10 @@ function fmtShortTime(ms: number): string {
   }
 }
 
-// 时间分组类型
+// Time group type.
 type TimeGroup = 'Today' | 'Yesterday' | 'This Week' | 'Older';
 
-// 按日期分组线程（仅当总数 >= 5 时才分组）
+// Group threads by date (only when total count >= 5).
 function groupThreadsByDate(threads: ThreadView[]): { group: TimeGroup; threads: ThreadView[] }[] {
   if (threads.length < 5) {
     return [{ group: 'Today' as TimeGroup, threads }];
@@ -44,7 +44,7 @@ function groupThreadsByDate(threads: ThreadView[]): { group: TimeGroup; threads:
   const now = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   const yesterdayStart = todayStart - 86400000;
-  // 本周开始（周一）
+  // Start of this week (Monday).
   const dayOfWeek = now.getDay();
   const weekStart = todayStart - ((dayOfWeek === 0 ? 6 : dayOfWeek - 1) * 86400000);
 
@@ -72,7 +72,7 @@ function groupThreadsByDate(threads: ThreadView[]): { group: TimeGroup; threads:
   return order.filter((g) => groups[g].length > 0).map((g) => ({ group: g, threads: groups[g] }));
 }
 
-// 状态圆点颜色映射
+// Status dot color mapping.
 function statusDotClass(status: ThreadRunStatus): string {
   switch (status) {
     case 'accepted':
@@ -94,7 +94,7 @@ function statusDotClass(status: ThreadRunStatus): string {
   }
 }
 
-// 状态文字用于 tooltip
+// Status label used for tooltip text.
 function statusLabel(status: ThreadRunStatus): string {
   switch (status) {
     case 'accepted': return 'Queued';
@@ -110,15 +110,15 @@ function statusLabel(status: ThreadRunStatus): string {
 }
 
 /**
- * AI chat 侧边栏 – 线程列表
- * 使用 floe-webapp SidebarContent 作为容器，自定义线程卡片渲染
+ * AI chat sidebar thread list.
+ * Uses floe-webapp SidebarContent as the container with custom thread card rendering.
  */
 export function AIChatSidebar() {
   const ctx = useAIChatContext();
   const protocol = useProtocol();
   const notify = useNotification();
 
-  // 删除确认对话框状态
+  // Delete confirmation dialog state.
   const [deleteOpen, setDeleteOpen] = createSignal(false);
   const [deleteThreadId, setDeleteThreadId] = createSignal<string | null>(null);
   const [deleteThreadTitle, setDeleteThreadTitle] = createSignal('');
@@ -184,7 +184,7 @@ export function AIChatSidebar() {
 
   return (
     <SidebarContent>
-      {/* 顶部 New Chat 按钮 */}
+      {/* Top New Chat button */}
       <div class="px-1 pb-1">
         <Button
           variant="outline"
@@ -250,7 +250,7 @@ export function AIChatSidebar() {
         </Show>
       </Show>
 
-      {/* 删除确认对话框 */}
+      {/* Delete confirmation dialog */}
       <ConfirmDialog
         open={deleteOpen()}
         onOpenChange={(open) => {
@@ -285,7 +285,7 @@ export function AIChatSidebar() {
   );
 }
 
-// ---- 线程卡片组件 ----
+// ---- Thread card component ----
 
 function ThreadCard(props: {
   thread: ThreadView;
@@ -327,29 +327,29 @@ function ThreadCard(props: {
       }`}
       onClick={props.onClick}
     >
-      {/* 左侧 accent bar */}
+      {/* Left accent bar */}
       <Show when={props.active}>
         <div class="absolute left-0 top-1.5 bottom-1.5 w-[2px] rounded-full bg-primary" />
       </Show>
 
-      {/* 状态圆点 */}
+      {/* Status dot */}
       <div class="relative mt-1.5 shrink-0">
         <div
           class={`w-2 h-2 rounded-full ${statusDotClass(status())}`}
           title={statusLabel(status())}
         />
-        {/* running 脉冲动画 */}
+        {/* Running pulse animation */}
         <Show when={status() === 'running'}>
           <div class="absolute inset-0 w-2 h-2 rounded-full bg-primary/50 animate-pulse" />
         </Show>
       </div>
 
-      {/* 内容区 */}
+      {/* Content area */}
       <div class="flex flex-col gap-0.5 min-w-0 flex-1">
-        {/* 标题行 */}
+        {/* Title row */}
         <div class="flex items-center gap-1">
           <span class="text-xs font-medium truncate flex-1">{title()}</span>
-          {/* 时间戳 / hover 时变为删除按钮（用 opacity 替代 display 切换，避免高度跳动） */}
+          {/* Timestamp / switches to delete button on hover (opacity avoids layout jump). */}
           <div class="shrink-0 w-5 h-5 flex items-center justify-center relative">
             <span class="text-[10px] text-muted-foreground/60 transition-opacity duration-150 group-hover:opacity-0 pointer-events-none select-none">
               {timeStr()}
@@ -375,7 +375,7 @@ function ThreadCard(props: {
           </div>
         </div>
 
-        {/* 预览文字 / running 状态 */}
+        {/* Preview text / running state */}
         <Show when={status() === 'running'} fallback={
           <Show when={!!preview()}>
             <p class="text-[11px] text-muted-foreground/50 truncate leading-tight">{preview()}</p>
@@ -388,12 +388,12 @@ function ThreadCard(props: {
   );
 }
 
-// ---- 空状态 ----
+// ---- Empty state ----
 
 function EmptyState() {
   return (
     <div class="px-2.5 py-8 text-center">
-      {/* 图标容器 */}
+      {/* Icon container */}
       <Motion.div
         initial={{ opacity: 0, scale: 0.8 }}
         animate={{ opacity: 1, scale: 1 }}
@@ -401,7 +401,7 @@ function EmptyState() {
         class="relative w-14 h-14 rounded-2xl bg-sidebar-accent/80 flex items-center justify-center mx-auto mb-3"
       >
         <MessageSquare class="w-7 h-7 text-muted-foreground/60" />
-        {/* Sparkles 装饰 */}
+        {/* Sparkles decoration */}
         <Motion.div
           initial={{ opacity: 0, scale: 0 }}
           animate={{ opacity: 1, scale: 1 }}
@@ -412,7 +412,7 @@ function EmptyState() {
         </Motion.div>
       </Motion.div>
 
-      {/* 文字 */}
+      {/* Text */}
       <Motion.div
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}

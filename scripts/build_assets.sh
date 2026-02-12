@@ -76,7 +76,7 @@ build_envapp_ui() {
   log "Env App UI: building..."
   (
     cd "$dir"
-    # 清理 Vite 预打包缓存，确保 node_modules 中升级的依赖不会因缓存而使用旧版本
+    # Clear Vite pre-bundle cache so upgraded dependencies in node_modules are rebuilt.
     rm -rf node_modules/.vite 2>/dev/null || true
     if need_install "$dir"; then
       run_pnpm install --frozen-lockfile

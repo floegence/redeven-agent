@@ -27,6 +27,7 @@ type openAIToolLoopMock struct {
 	fsPath                string
 	sawResponses          bool
 	sawToolDefinitions    bool
+	sawFunctionCallInput  bool
 	sawFunctionCallOutput bool
 }
 
@@ -57,6 +58,9 @@ func (m *openAIToolLoopMock) handle(w http.ResponseWriter, r *http.Request) {
 	m.sawResponses = true
 	if rawTools, ok := req["tools"].([]any); ok && len(rawTools) > 0 {
 		m.sawToolDefinitions = true
+	}
+	if hasFunctionCallItem(req["input"]) {
+		m.sawFunctionCallInput = true
 	}
 	if hasFunctionCallOutputItem(req["input"]) {
 		m.sawFunctionCallOutput = true
@@ -165,10 +169,27 @@ func hasFunctionCallOutputItem(input any) bool {
 	return false
 }
 
-func (m *openAIToolLoopMock) snapshot() (bool, bool, bool, int) {
+func hasFunctionCallItem(input any) bool {
+	list, ok := input.([]any)
+	if !ok {
+		return false
+	}
+	for _, item := range list {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if strings.TrimSpace(fmt.Sprint(m["type"])) == "function_call" {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *openAIToolLoopMock) snapshot() (bool, bool, bool, bool, int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.sawResponses, m.sawToolDefinitions, m.sawFunctionCallOutput, m.step
+	return m.sawResponses, m.sawToolDefinitions, m.sawFunctionCallInput, m.sawFunctionCallOutput, m.step
 }
 
 func writeOpenAISSEJSON(w io.Writer, f http.Flusher, payload any) {
@@ -277,12 +298,15 @@ func TestIntegration_NativeSDK_OpenAI_ToolLoop_Succeeds(t *testing.T) {
 		t.Fatalf("last_message_preview=%q, want token %q", view.LastMessagePreview, finalToken)
 	}
 
-	sawResponses, sawToolDefs, sawCallOutput, stepCount := mock.snapshot()
+	sawResponses, sawToolDefs, sawCallInput, sawCallOutput, stepCount := mock.snapshot()
 	if !sawResponses {
 		t.Fatalf("expected OpenAI Responses API call (/responses)")
 	}
 	if !sawToolDefs {
 		t.Fatalf("expected OpenAI request to include tool definitions")
+	}
+	if !sawCallInput {
+		t.Fatalf("expected second turn input to include function_call")
 	}
 	if !sawCallOutput {
 		t.Fatalf("expected second turn input to include function_call_output")

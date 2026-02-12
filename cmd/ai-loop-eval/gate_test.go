@@ -69,7 +69,7 @@ func TestAssessTaskOutcome_FallbackFails(t *testing.T) {
 	task := evalTask{
 		ID:              "t1",
 		RequireEvidence: true,
-		MustContain:     []string{"结论|conclusion"},
+		MustContain:     []string{"conclusion"},
 		Forbidden:       []string{"No response"},
 		HardFailEvents:  []string{"turn.loop.exhausted"},
 	}

@@ -104,16 +104,16 @@ func TestAIConfigValidate_RejectsInvalidMode(t *testing.T) {
 	}
 }
 
-func TestAIConfig_EffectiveMode_DefaultsBuild(t *testing.T) {
+func TestAIConfig_EffectiveMode_DefaultsAct(t *testing.T) {
 	t.Parallel()
 
-	if got := ((*AIConfig)(nil)).EffectiveMode(); got != AIModeBuild {
-		t.Fatalf("EffectiveMode nil=%q, want %q", got, AIModeBuild)
+	if got := ((*AIConfig)(nil)).EffectiveMode(); got != AIModeAct {
+		t.Fatalf("EffectiveMode nil=%q, want %q", got, AIModeAct)
 	}
 
 	cfg := &AIConfig{}
-	if got := cfg.EffectiveMode(); got != AIModeBuild {
-		t.Fatalf("EffectiveMode empty=%q, want %q", got, AIModeBuild)
+	if got := cfg.EffectiveMode(); got != AIModeAct {
+		t.Fatalf("EffectiveMode empty=%q, want %q", got, AIModeAct)
 	}
 
 	cfg.Mode = AIModePlan

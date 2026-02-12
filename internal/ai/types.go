@@ -121,8 +121,12 @@ type RunOptions struct {
 	// RequireUserConfirmOnTaskComplete forces explicit user confirmation when model emits task_complete.
 	RequireUserConfirmOnTaskComplete bool `json:"require_user_confirm_on_task_complete,omitempty"`
 
-	// Mode overrides runtime mode for this run (build|plan).
+	// Mode overrides runtime mode for this run (act|plan).
 	Mode string `json:"mode,omitempty"`
+
+	// Intent is classified by the agent runtime (social|task).
+	// Clients should not set this field directly.
+	Intent string `json:"intent,omitempty"`
 
 	// Provider controls.
 	ThinkingBudgetTokens int      `json:"thinking_budget_tokens,omitempty"`

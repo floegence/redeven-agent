@@ -22,6 +22,7 @@ export type AIStartRunRequest = {
   };
   options: {
     maxSteps: number;
+    mode?: 'act' | 'plan';
   };
 };
 

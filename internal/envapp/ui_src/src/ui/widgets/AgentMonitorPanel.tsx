@@ -326,13 +326,13 @@ export function AgentMonitorPanel(props: AgentMonitorPanelProps) {
     if (!s) return '';
     const cpu = Number.isFinite(s.cpu) ? s.cpu : 0;
     const cores = Number.isFinite(s.cpuCores) ? s.cpuCores : 0;
-    return `${cpu.toFixed(1)}% · ${cores} cores`;
+    return `${cpu.toFixed(1)}% | ${cores} cores`;
   };
 
   const netSummary = () => {
     const s = sample();
     if (!s) return '';
-    return `↓${formatSpeed(s.netIn)} · ↑${formatSpeed(s.netOut)}`;
+    return `In: ${formatSpeed(s.netIn)} | Out: ${formatSpeed(s.netOut)}`;
   };
 
   const activeSortClass = 'bg-primary/10 text-primary';

@@ -5,14 +5,14 @@ tasks:
     stage: screen
     category: failure_real
     turns:
-      - "请基于真实文件快速分析 ${workspace} 项目，输出技术栈、目录结构、运行方式。必须引用至少2个证据文件绝对路径。"
+      - "Quickly analyze project ${workspace} using real files, and report the tech stack, directory layout, and run instructions. You must cite at least 2 absolute evidence file paths."
     max_steps: 4
     timeout_seconds: 35
     require_evidence: true
     must_contain:
-      - "技术栈|tech stack|stack"
-      - "目录|structure|module"
-      - "运行|run|start"
+      - "tech stack|stack"
+      - "structure|module"
+      - "run|start"
     forbidden:
       - "Tool workflow failed"
       - "Assistant finished without a visible response"
@@ -33,7 +33,7 @@ tasks:
     timeout_seconds: 20
     require_evidence: false
     must_contain:
-      - "directory|目录"
+      - "directory"
     forbidden:
       - "Tool workflow failed"
       - "No response"
@@ -46,12 +46,12 @@ tasks:
     stage: screen
     category: failure_real
     turns:
-      - "先尝试用 terminal.exec 执行 pwd（cwd=${workspace}），如果审批失败或被拒绝，立刻改用 fs.list_dir/fs.read_file 给出可用结论，不要停在失败。"
+      - "First try terminal.exec with pwd (cwd=${workspace}). If approval fails or is denied, immediately switch to fs.list_dir/fs.read_file and still provide a usable conclusion. Do not stop at the failure."
     max_steps: 5
     timeout_seconds: 35
     require_evidence: true
     must_contain:
-      - "结论|conclusion|result"
+      - "conclusion|result"
     forbidden:
       - "Tool workflow failed"
       - "No response"
@@ -65,14 +65,14 @@ tasks:
     stage: deep
     category: generic
     turns:
-      - "请深度分析 ${workspace} 项目：技术栈、模块边界、运行方式、风险清单、下一步建议。必须引用至少3个证据文件绝对路径。"
+      - "Deeply analyze project ${workspace}: tech stack, module boundaries, run instructions, risk list, and next-step suggestions. You must cite at least 3 absolute evidence file paths."
     max_steps: 6
     timeout_seconds: 45
     require_evidence: true
     must_contain:
-      - "技术栈|tech stack|stack"
-      - "风险|risk"
-      - "建议|next steps|recommend"
+      - "tech stack|stack"
+      - "risk"
+      - "next steps|recommend"
     forbidden:
       - "Tool workflow failed"
       - "No response"
@@ -86,14 +86,14 @@ tasks:
     stage: deep
     category: failure_real
     turns:
-      - "先基于真实文件分析 ${workspace}，给出初步结论（至少2个证据路径），最后明确写“可以继续深入”。"
+      - "Analyze ${workspace} using real files and provide an initial conclusion (at least 2 evidence paths), then explicitly state that deeper analysis can continue."
       - "continue"
     max_steps: 5
     timeout_seconds: 40
     require_evidence: true
     must_contain:
-      - "继续|continue"
-      - "结论|summary|findings"
+      - "continue"
+      - "summary|findings|conclusion"
     forbidden:
       - "Tool workflow failed"
       - "No response"

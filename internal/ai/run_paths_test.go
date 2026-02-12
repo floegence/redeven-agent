@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestResolveAbsoluteToolPath(t *testing.T) {
+func TestResolveToolPath(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
@@ -19,23 +19,39 @@ func TestResolveAbsoluteToolPath(t *testing.T) {
 
 	t.Run("accepts absolute path", func(t *testing.T) {
 		t.Parallel()
-		resolved, err := resolveAbsoluteToolPath(target)
+		resolved, err := resolveToolPath(target, root)
 		if err != nil {
-			t.Fatalf("resolveAbsoluteToolPath: %v", err)
+			t.Fatalf("resolveToolPath: %v", err)
 		}
 		if filepath.Clean(resolved) != filepath.Clean(target) {
 			t.Fatalf("resolved=%q, want=%q", resolved, target)
 		}
 	})
 
-	t.Run("rejects relative path", func(t *testing.T) {
+	t.Run("resolves relative path against working_dir_abs", func(t *testing.T) {
 		t.Parallel()
-		_, err := resolveAbsoluteToolPath("sub/dir")
-		if err == nil {
-			t.Fatalf("expected error for relative path")
+		resolved, err := resolveToolPath("sub/dir", root)
+		if err != nil {
+			t.Fatalf("resolveToolPath: %v", err)
 		}
-		if got := strings.TrimSpace(mapToolPathError(err).Error()); got != "path must be absolute" {
-			t.Fatalf("error=%q, want=path must be absolute", got)
+		want := filepath.Join(root, "sub", "dir")
+		if filepath.Clean(resolved) != filepath.Clean(want) {
+			t.Fatalf("resolved=%q, want=%q", resolved, want)
+		}
+	})
+
+	t.Run("expands tilde to home directory", func(t *testing.T) {
+		t.Parallel()
+		home, err := os.UserHomeDir()
+		if err != nil {
+			t.Fatalf("UserHomeDir: %v", err)
+		}
+		resolved, err := resolveToolPath("~/", root)
+		if err != nil {
+			t.Fatalf("resolveToolPath: %v", err)
+		}
+		if filepath.Clean(resolved) != filepath.Clean(home) {
+			t.Fatalf("resolved=%q, want home=%q", resolved, home)
 		}
 	})
 }
@@ -112,14 +128,23 @@ func TestToolTerminalExec_CwdRules(t *testing.T) {
 		}
 	})
 
-	t.Run("relative cwd is rejected", func(t *testing.T) {
+	t.Run("relative cwd resolves against working_dir_abs", func(t *testing.T) {
 		t.Parallel()
-		_, err := r.toolTerminalExec(context.Background(), "pwd", "subdir", 5000)
-		if err == nil {
-			t.Fatalf("expected error for relative cwd")
+		subdir := filepath.Join(workingDir, "subdir")
+		if err := os.MkdirAll(subdir, 0o755); err != nil {
+			t.Fatalf("mkdir subdir: %v", err)
 		}
-		if got := strings.TrimSpace(err.Error()); got != "cwd must be absolute" {
-			t.Fatalf("error=%q, want=cwd must be absolute", got)
+		out, err := r.toolTerminalExec(context.Background(), "pwd", "subdir", 5000)
+		if err != nil {
+			t.Fatalf("toolTerminalExec: %v", err)
+		}
+		m, ok := out.(map[string]any)
+		if !ok {
+			t.Fatalf("unexpected result type: %T", out)
+		}
+		stdout := strings.TrimSpace(anyToString(m["stdout"]))
+		if filepath.Clean(stdout) != filepath.Clean(subdir) {
+			t.Fatalf("stdout=%q, want cwd=%q", stdout, subdir)
 		}
 	})
 }

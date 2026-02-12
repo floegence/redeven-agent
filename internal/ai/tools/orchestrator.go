@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -20,7 +21,7 @@ func ClassifyError(inv Invocation, err error) *ToolError {
 		return nil
 	}
 
-	// 优先使用错误类型判断，避免依赖字符串匹配。
+	// Prefer typed error checks first to avoid brittle string matching.
 	if errors.Is(err, context.Canceled) {
 		out := &ToolError{Code: ErrorCodeCanceled, Message: "Canceled", Retryable: false}
 		out.Normalize()
@@ -57,7 +58,7 @@ func ClassifyError(inv Invocation, err error) *ToolError {
 	case strings.Contains(lower, "must be absolute") || strings.Contains(lower, "invalid path") || strings.Contains(lower, "invalid cwd"):
 		out.Code = ErrorCodeInvalidPath
 		out.Retryable = true
-		out.SuggestedFixes = []string{"Use a host absolute path.", "System root is '/'; use working_dir_abs as the default base context."}
+		out.SuggestedFixes = []string{"Use a valid filesystem path.", "Relative paths are resolved against working_dir_abs; '~/' resolves to the current user home directory."}
 	case strings.Contains(lower, "not found"):
 		out.Code = ErrorCodeNotFound
 		out.Retryable = false
@@ -92,7 +93,7 @@ func normalizeArgs(inv Invocation) map[string]any {
 		if raw == "" {
 			return
 		}
-		next, ok := normalizePathValue(raw)
+		next, ok := normalizePathValue(raw, inv.WorkingDir)
 		if !ok || next == raw {
 			return
 		}
@@ -115,19 +116,43 @@ func normalizeArgs(inv Invocation) map[string]any {
 	return clone
 }
 
-func normalizePathValue(raw string) (string, bool) {
+func normalizePathValue(raw string, workingDir string) (string, bool) {
 	candidate := strings.TrimSpace(raw)
 	if candidate == "" {
 		return "", false
 	}
+	original := candidate
+	if candidate == "~" || strings.HasPrefix(candidate, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", false
+		}
+		home = strings.TrimSpace(home)
+		if home == "" {
+			return "", false
+		}
+		if candidate == "~" {
+			candidate = home
+		} else {
+			candidate = filepath.Join(home, strings.TrimPrefix(candidate, "~/"))
+		}
+	}
 	if !filepath.IsAbs(candidate) {
-		return "", false
+		base := strings.TrimSpace(workingDir)
+		if base == "" {
+			return "", false
+		}
+		base = filepath.Clean(base)
+		if !filepath.IsAbs(base) {
+			return "", false
+		}
+		candidate = filepath.Join(base, candidate)
 	}
 	clean := filepath.Clean(candidate)
 	if clean == "" {
 		return "", false
 	}
-	if clean == candidate {
+	if clean == original {
 		return "", false
 	}
 	return clean, true

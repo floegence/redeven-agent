@@ -31,6 +31,30 @@ func TestClassifyError_InvalidPathProducesNormalizedArgs(t *testing.T) {
 	}
 }
 
+func TestClassifyError_InvalidPathNormalizesRelativePath(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	inv := Invocation{
+		ToolName:   "fs.read_file",
+		WorkingDir: root,
+		Args: map[string]any{
+			"path": "docs/readme.md",
+		},
+	}
+	toolErr := ClassifyError(inv, errors.New("path must be absolute"))
+	if toolErr == nil {
+		t.Fatalf("expected tool error")
+	}
+	if toolErr.Code != ErrorCodeInvalidPath {
+		t.Fatalf("code=%q, want=%q", toolErr.Code, ErrorCodeInvalidPath)
+	}
+	want := filepath.Clean(filepath.Join(root, "docs/readme.md"))
+	if got := toolErr.NormalizedArgs["path"]; got != want {
+		t.Fatalf("normalized path=%v, want=%v", got, want)
+	}
+}
+
 func TestClassifyError_NotFound(t *testing.T) {
 	t.Parallel()
 

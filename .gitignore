@@ -22,3 +22,5 @@ internal/codeapp/ui/dist/
 
 # Local agent blueprint draft (do not commit)
 .agent.md
+
+\.*\.md

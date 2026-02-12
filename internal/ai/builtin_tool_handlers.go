@@ -399,8 +399,8 @@ func builtInToolDefinitions() []ToolDef {
 	defs := []ToolDef{
 		{
 			Name:         "fs.list_dir",
-			Description:  "List directory entries at an absolute host path.",
-			InputSchema:  toSchema(map[string]any{"type": "object", "properties": map[string]any{"path": map[string]any{"type": "string"}}, "required": []string{"path"}}),
+			Description:  "List directory entries at an absolute host path. Use this to explore workspace structure, find relevant files, or verify paths exist.",
+			InputSchema:  toSchema(map[string]any{"type": "object", "properties": map[string]any{"path": map[string]any{"type": "string"}}, "required": []string{"path"}, "additionalProperties": false}),
 			ParallelSafe: true,
 			Mutating:     false,
 			Source:       "builtin",
@@ -410,7 +410,7 @@ func builtInToolDefinitions() []ToolDef {
 		{
 			Name:         "fs.stat",
 			Description:  "Get metadata for a file or directory.",
-			InputSchema:  toSchema(map[string]any{"type": "object", "properties": map[string]any{"path": map[string]any{"type": "string"}}, "required": []string{"path"}}),
+			InputSchema:  toSchema(map[string]any{"type": "object", "properties": map[string]any{"path": map[string]any{"type": "string"}}, "required": []string{"path"}, "additionalProperties": false}),
 			ParallelSafe: true,
 			Mutating:     false,
 			Source:       "builtin",
@@ -419,8 +419,8 @@ func builtInToolDefinitions() []ToolDef {
 		},
 		{
 			Name:         "fs.read_file",
-			Description:  "Read UTF-8 text from a file.",
-			InputSchema:  toSchema(map[string]any{"type": "object", "properties": map[string]any{"path": map[string]any{"type": "string"}, "offset": map[string]any{"type": "integer", "minimum": 0}, "max_bytes": map[string]any{"type": "integer", "minimum": 1, "maximum": 200000}}, "required": []string{"path"}}),
+			Description:  "Read UTF-8 text from a file. Always read files before modifying them to understand their current state.",
+			InputSchema:  toSchema(map[string]any{"type": "object", "properties": map[string]any{"path": map[string]any{"type": "string"}, "offset": map[string]any{"type": "integer", "minimum": 0}, "max_bytes": map[string]any{"type": "integer", "minimum": 1, "maximum": 200000}}, "required": []string{"path"}, "additionalProperties": false}),
 			ParallelSafe: true,
 			Mutating:     false,
 			Source:       "builtin",
@@ -429,8 +429,8 @@ func builtInToolDefinitions() []ToolDef {
 		},
 		{
 			Name:             "fs.write_file",
-			Description:      "Write UTF-8 text to a file.",
-			InputSchema:      toSchema(map[string]any{"type": "object", "properties": map[string]any{"path": map[string]any{"type": "string"}, "content_utf8": map[string]any{"type": "string"}, "create": map[string]any{"type": "boolean"}, "if_match_sha256": map[string]any{"type": "string"}}, "required": []string{"path", "content_utf8"}}),
+			Description:      "Write UTF-8 text to a file. Always read the file first to understand contents before overwriting.",
+			InputSchema:      toSchema(map[string]any{"type": "object", "properties": map[string]any{"path": map[string]any{"type": "string"}, "content_utf8": map[string]any{"type": "string"}, "create": map[string]any{"type": "boolean"}, "if_match_sha256": map[string]any{"type": "string"}}, "required": []string{"path", "content_utf8"}, "additionalProperties": false}),
 			ParallelSafe:     false,
 			Mutating:         true,
 			RequiresApproval: true,
@@ -440,8 +440,8 @@ func builtInToolDefinitions() []ToolDef {
 		},
 		{
 			Name:             "terminal.exec",
-			Description:      "Execute shell command in workspace.",
-			InputSchema:      toSchema(map[string]any{"type": "object", "properties": map[string]any{"command": map[string]any{"type": "string"}, "cwd": map[string]any{"type": "string"}, "timeout_ms": map[string]any{"type": "integer", "minimum": 1, "maximum": 60000}}, "required": []string{"command"}}),
+			Description:      "Execute shell command in workspace. Use for running builds, tests, git commands, or any CLI operation.",
+			InputSchema:      toSchema(map[string]any{"type": "object", "properties": map[string]any{"command": map[string]any{"type": "string"}, "cwd": map[string]any{"type": "string"}, "timeout_ms": map[string]any{"type": "integer", "minimum": 1, "maximum": 60000}}, "required": []string{"command"}, "additionalProperties": false}),
 			ParallelSafe:     false,
 			Mutating:         true,
 			RequiresApproval: true,
@@ -451,8 +451,8 @@ func builtInToolDefinitions() []ToolDef {
 		},
 		{
 			Name:         "task_complete",
-			Description:  "Signal explicit task completion with result summary.",
-			InputSchema:  toSchema(map[string]any{"type": "object", "properties": map[string]any{"result": map[string]any{"type": "string"}, "evidence_refs": map[string]any{"type": "array"}, "remaining_risks": map[string]any{"type": "array"}, "next_actions": map[string]any{"type": "array"}}, "required": []string{"result"}}),
+			Description:  "You MUST call this tool when the task is done. Provide a detailed result summary describing what was accomplished.",
+			InputSchema:  toSchema(map[string]any{"type": "object", "properties": map[string]any{"result": map[string]any{"type": "string"}, "evidence_refs": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, "remaining_risks": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, "next_actions": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}}, "required": []string{"result"}, "additionalProperties": false}),
 			ParallelSafe: true,
 			Mutating:     false,
 			Source:       "builtin",
@@ -461,8 +461,8 @@ func builtInToolDefinitions() []ToolDef {
 		},
 		{
 			Name:         "ask_user",
-			Description:  "Ask user for clarification.",
-			InputSchema:  toSchema(map[string]any{"type": "object", "properties": map[string]any{"question": map[string]any{"type": "string"}, "options": map[string]any{"type": "array"}}, "required": []string{"question"}}),
+			Description:  "Ask user for clarification. Only use when you genuinely cannot determine the answer from available tools.",
+			InputSchema:  toSchema(map[string]any{"type": "object", "properties": map[string]any{"question": map[string]any{"type": "string"}, "options": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}}, "required": []string{"question"}, "additionalProperties": false}),
 			ParallelSafe: true,
 			Mutating:     false,
 			Source:       "builtin",
@@ -472,7 +472,7 @@ func builtInToolDefinitions() []ToolDef {
 		{
 			Name:         "use_skill",
 			Description:  "Load and activate a skill by name.",
-			InputSchema:  toSchema(map[string]any{"type": "object", "properties": map[string]any{"name": map[string]any{"type": "string"}, "reason": map[string]any{"type": "string"}}, "required": []string{"name"}}),
+			InputSchema:  toSchema(map[string]any{"type": "object", "properties": map[string]any{"name": map[string]any{"type": "string"}, "reason": map[string]any{"type": "string"}}, "required": []string{"name"}, "additionalProperties": false}),
 			ParallelSafe: true,
 			Mutating:     false,
 			Source:       "builtin",
@@ -482,7 +482,7 @@ func builtInToolDefinitions() []ToolDef {
 		{
 			Name:         "delegate_task",
 			Description:  "Delegate a task to a subagent.",
-			InputSchema:  toSchema(map[string]any{"type": "object", "properties": map[string]any{"objective": map[string]any{"type": "string"}, "agent_type": map[string]any{"type": "string"}, "mode": map[string]any{"type": "string"}, "allowed_tools": map[string]any{"type": "array"}, "task_id": map[string]any{"type": "string"}, "budget": map[string]any{"type": "object"}}, "required": []string{"objective"}}),
+			InputSchema:  toSchema(map[string]any{"type": "object", "properties": map[string]any{"objective": map[string]any{"type": "string"}, "agent_type": map[string]any{"type": "string"}, "mode": map[string]any{"type": "string"}, "allowed_tools": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, "task_id": map[string]any{"type": "string"}, "budget": map[string]any{"type": "object", "properties": map[string]any{"max_steps": map[string]any{"type": "integer", "minimum": 1}, "timeout_sec": map[string]any{"type": "integer", "minimum": 1}}, "additionalProperties": false}}, "required": []string{"objective"}, "additionalProperties": false}),
 			ParallelSafe: true,
 			Mutating:     false,
 			Source:       "builtin",
@@ -492,7 +492,7 @@ func builtInToolDefinitions() []ToolDef {
 		{
 			Name:         "send_subagent_input",
 			Description:  "Send additional input to a running subagent.",
-			InputSchema:  toSchema(map[string]any{"type": "object", "properties": map[string]any{"id": map[string]any{"type": "string"}, "message": map[string]any{"type": "string"}, "interrupt": map[string]any{"type": "boolean"}}, "required": []string{"id", "message"}}),
+			InputSchema:  toSchema(map[string]any{"type": "object", "properties": map[string]any{"id": map[string]any{"type": "string"}, "message": map[string]any{"type": "string"}, "interrupt": map[string]any{"type": "boolean"}}, "required": []string{"id", "message"}, "additionalProperties": false}),
 			ParallelSafe: true,
 			Mutating:     false,
 			Source:       "builtin",
@@ -502,7 +502,7 @@ func builtInToolDefinitions() []ToolDef {
 		{
 			Name:         "wait_subagents",
 			Description:  "Wait for subagent tasks to reach terminal status or timeout.",
-			InputSchema:  toSchema(map[string]any{"type": "object", "properties": map[string]any{"ids": map[string]any{"type": "array"}, "timeout_ms": map[string]any{"type": "integer", "minimum": 10000, "maximum": 300000}}}),
+			InputSchema:  toSchema(map[string]any{"type": "object", "properties": map[string]any{"ids": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, "timeout_ms": map[string]any{"type": "integer", "minimum": 10000, "maximum": 300000}}, "additionalProperties": false}),
 			ParallelSafe: true,
 			Mutating:     false,
 			Source:       "builtin",
@@ -512,7 +512,7 @@ func builtInToolDefinitions() []ToolDef {
 		{
 			Name:         "close_subagent",
 			Description:  "Close a subagent and return its last known status.",
-			InputSchema:  toSchema(map[string]any{"type": "object", "properties": map[string]any{"id": map[string]any{"type": "string"}}, "required": []string{"id"}}),
+			InputSchema:  toSchema(map[string]any{"type": "object", "properties": map[string]any{"id": map[string]any{"type": "string"}}, "required": []string{"id"}, "additionalProperties": false}),
 			ParallelSafe: true,
 			Mutating:     false,
 			Source:       "builtin",

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -22,15 +23,21 @@ import (
 )
 
 const (
-	nativeDefaultMaxSteps        = 8
-	nativeDefaultMaxOutputTokens = 2048
-	nativeDefaultNoToolRounds    = 3
+	nativeDefaultMaxSteps        = 24
+	nativeDefaultMaxOutputTokens = 4096
+	nativeDefaultNoToolRounds    = 2
 	nativeCompactThreshold       = 0.70
-	nativeDefaultContextLimit    = 32000
+	nativeDefaultContextLimit    = 128000
+	// nativeHardMaxSteps is the absolute safety net for the task-driven loop.
+	// The loop is now driven by completion signals (task_complete, ask_user,
+	// implicit_complete), NOT by a step budget. This constant only prevents
+	// runaway loops caused by bugs.
+	nativeHardMaxSteps = 200
 )
 
 type openAIProvider struct {
-	client openai.Client
+	client           openai.Client
+	strictToolSchema bool
 }
 
 func (p *openAIProvider) StreamTurn(ctx context.Context, req TurnRequest, onEvent func(StreamEvent)) (TurnResult, error) {
@@ -69,10 +76,10 @@ func (p *openAIProvider) StreamTurn(ctx context.Context, req TurnRequest, onEven
 			Format: oresponses.ResponseFormatTextConfigUnionParam{OfJSONObject: &obj},
 		}
 	default:
-		// json_schema 需要 schema；这里不做隐式降级，交由上层通过 prompt/工具信号完成结构化输出。
+		// json_schema requires an explicit schema. Avoid implicit downgrade here and let upper layers drive structured output.
 	}
 
-	inputItems, instructions := buildOpenAIInput(req.Messages)
+	inputItems, instructions := buildOpenAIInput(req.Messages, p.strictToolSchema)
 	if len(inputItems) == 0 {
 		inputItems = append(inputItems, oresponses.ResponseInputItemParamOfMessage("Continue.", oresponses.EasyInputMessageRoleUser))
 	}
@@ -80,7 +87,7 @@ func (p *openAIProvider) StreamTurn(ctx context.Context, req TurnRequest, onEven
 	if strings.TrimSpace(instructions) != "" {
 		params.Instructions = openai.String(strings.TrimSpace(instructions))
 	}
-	tools, aliasToReal := buildOpenAITools(req.Tools)
+	tools, aliasToReal := buildOpenAITools(req.Tools, p.strictToolSchema)
 	if len(tools) > 0 {
 		params.Tools = tools
 	}
@@ -121,7 +128,7 @@ func (p *openAIProvider) StreamTurn(ctx context.Context, req TurnRequest, onEven
 		raw := strings.TrimSpace(pc.ArgsRaw.String())
 		var args map[string]any
 		if raw != "" {
-			_ = json.Unmarshal([]byte(raw), &args) // 流式增量下允许解析失败
+			_ = json.Unmarshal([]byte(raw), &args) // Streaming deltas may be incomplete; ignore parse failures.
 		}
 		emitProviderEvent(onEvent, StreamEvent{Type: StreamEventToolCallDelta, ToolCall: &PartialToolCall{ID: strings.TrimSpace(pc.CallID), Name: strings.TrimSpace(pc.Name), ArgumentsJSON: raw, Arguments: cloneAnyMap(args)}})
 	}
@@ -302,7 +309,7 @@ func (p *openAIProvider) StreamTurn(ctx context.Context, req TurnRequest, onEven
 		result.ToolCalls = append(result.ToolCalls, it.Call)
 	}
 
-	// Fallback: 如果 stream 未覆盖 tool_call 事件，则从 completed.output 补齐。
+	// Fallback: if stream events miss tool calls, recover them from completed.output.
 	for _, item := range completed.Output {
 		if strings.TrimSpace(item.Type) != "function_call" {
 			continue
@@ -349,7 +356,7 @@ func emitProviderEvent(onEvent func(StreamEvent), event StreamEvent) {
 	}
 }
 
-func buildOpenAITools(defs []ToolDef) ([]oresponses.ToolUnionParam, map[string]string) {
+func buildOpenAITools(defs []ToolDef, strict bool) ([]oresponses.ToolUnionParam, map[string]string) {
 	out := make([]oresponses.ToolUnionParam, 0, len(defs))
 	aliasToReal := make(map[string]string, len(defs))
 	for _, def := range defs {
@@ -361,15 +368,16 @@ func buildOpenAITools(defs []ToolDef) ([]oresponses.ToolUnionParam, map[string]s
 			_ = json.Unmarshal(def.InputSchema, &schema)
 		}
 		alias := sanitizeProviderToolName(def.Name)
-		out = append(out, oresponses.ToolParamOfFunction(alias, schema, true))
+		out = append(out, oresponses.ToolParamOfFunction(alias, schema, strict))
 		aliasToReal[alias] = def.Name
 	}
 	return out, aliasToReal
 }
 
-func buildOpenAIInput(messages []Message) (oresponses.ResponseInputParam, string) {
+func buildOpenAIInput(messages []Message, includeAssistantOutputMessages bool) (oresponses.ResponseInputParam, string) {
 	items := make(oresponses.ResponseInputParam, 0, len(messages)+2)
 	instructions := ""
+	assistantMsgSeq := 0
 	for _, msg := range messages {
 		role := strings.ToLower(strings.TrimSpace(msg.Role))
 		switch role {
@@ -399,8 +407,95 @@ func buildOpenAIInput(messages []Message) (oresponses.ResponseInputParam, string
 				}
 				items = append(items, oresponses.ResponseInputItemParamOfFunctionCallOutput(callID, output))
 			}
+		case "assistant":
+			appendFunctionCall := func(part ContentPart) {
+				callID := strings.TrimSpace(part.ToolCallID)
+				if callID == "" {
+					callID = strings.TrimSpace(part.ToolUseID)
+				}
+				if callID == "" {
+					return
+				}
+				name := strings.TrimSpace(part.ToolName)
+				if name == "" {
+					name = strings.TrimSpace(part.Text)
+				}
+				name = sanitizeProviderToolName(name)
+				if name == "" {
+					return
+				}
+				argsRaw := strings.TrimSpace(part.ArgsJSON)
+				if argsRaw == "" && len(part.JSON) > 0 {
+					argsRaw = strings.TrimSpace(string(part.JSON))
+				}
+				if argsRaw == "" {
+					argsRaw = "{}"
+				}
+				if !json.Valid([]byte(argsRaw)) {
+					argsRaw = "{}"
+				}
+				items = append(items, oresponses.ResponseInputItemParamOfFunctionCall(argsRaw, callID, name))
+			}
+			if !includeAssistantOutputMessages {
+				for _, part := range msg.Content {
+					if strings.ToLower(strings.TrimSpace(part.Type)) != "tool_call" {
+						continue
+					}
+					appendFunctionCall(part)
+				}
+				continue
+			}
+
+			outputContent := make([]oresponses.ResponseOutputMessageContentUnionParam, 0, len(msg.Content))
+			appendOutputText := func(text string) {
+				text = strings.TrimSpace(text)
+				if text == "" {
+					return
+				}
+				outputContent = append(outputContent, oresponses.ResponseOutputMessageContentUnionParam{
+					OfOutputText: &oresponses.ResponseOutputTextParam{
+						Text:        text,
+						Annotations: []oresponses.ResponseOutputTextAnnotationUnionParam{},
+					},
+				})
+			}
+			flushOutputMessage := func() {
+				if len(outputContent) == 0 {
+					return
+				}
+				assistantMsgSeq++
+				// OpenAI Responses requires output message IDs to start with "msg_".
+				msgID := fmt.Sprintf("msg_hist%d", assistantMsgSeq)
+				items = append(items, oresponses.ResponseInputItemParamOfOutputMessage(
+					outputContent,
+					msgID,
+					oresponses.ResponseOutputMessageStatusCompleted,
+				))
+				outputContent = outputContent[:0]
+			}
+			for _, part := range msg.Content {
+				switch strings.ToLower(strings.TrimSpace(part.Type)) {
+				case "text":
+					appendOutputText(part.Text)
+				case "tool_call":
+					flushOutputMessage()
+					appendFunctionCall(part)
+				}
+			}
+			if len(outputContent) == 0 {
+				appendOutputText(joinMessageText(msg))
+			}
+			flushOutputMessage()
 		default:
+			uiRole := oresponses.EasyInputMessageRoleUser
 			content := make(oresponses.ResponseInputMessageContentListParam, 0, len(msg.Content))
+			flushMessage := func() {
+				if len(content) == 0 {
+					return
+				}
+				items = append(items, oresponses.ResponseInputItemParamOfMessage(content, uiRole))
+				content = content[:0]
+			}
 			for _, part := range msg.Content {
 				switch strings.ToLower(strings.TrimSpace(part.Type)) {
 				case "text":
@@ -429,7 +524,7 @@ func buildOpenAIInput(messages []Message) (oresponses.ResponseInputParam, string
 					} else if strings.HasPrefix(uri, "http://") || strings.HasPrefix(uri, "https://") {
 						fp.FileURL = openai.String(uri)
 					} else {
-						// 本地路径不直接传给 provider；交由 fs 工具读取。
+						// Do not pass local paths directly to the provider; let the fs tool read them.
 						continue
 					}
 					if fn := strings.TrimSpace(part.Text); fn != "" {
@@ -439,20 +534,14 @@ func buildOpenAIInput(messages []Message) (oresponses.ResponseInputParam, string
 				}
 			}
 			if len(content) == 0 {
-				// 兼容旧路径：仅 text parts 时仍可退化为单字符串消息。
+				// Backward-compatible fallback: collapse text parts into a single string message.
 				if txt := joinMessageText(msg); txt != "" {
 					content = append(content, oresponses.ResponseInputContentUnionParam{
 						OfInputText: &oresponses.ResponseInputTextParam{Text: txt},
 					})
-				} else {
-					continue
 				}
 			}
-			uiRole := oresponses.EasyInputMessageRoleUser
-			if role == "assistant" {
-				uiRole = oresponses.EasyInputMessageRoleAssistant
-			}
-			items = append(items, oresponses.ResponseInputItemParamOfMessage(content, uiRole))
+			flushMessage()
 		}
 	}
 	return items, instructions
@@ -545,7 +634,7 @@ func (p *anthropicProvider) StreamTurn(ctx context.Context, req TurnRequest, onE
 		raw := strings.TrimSpace(pc.ArgsRaw.String())
 		var args map[string]any
 		if raw != "" {
-			_ = json.Unmarshal([]byte(raw), &args) // 流式增量下允许解析失败
+			_ = json.Unmarshal([]byte(raw), &args) // Streaming deltas may be incomplete; ignore parse failures.
 		}
 		emitProviderEvent(onEvent, StreamEvent{Type: StreamEventToolCallDelta, ToolCall: &PartialToolCall{ID: strings.TrimSpace(pc.ID), Name: strings.TrimSpace(pc.Name), ArgumentsJSON: raw, Arguments: cloneAnyMap(args)}})
 	}
@@ -887,12 +976,24 @@ func newProviderAdapter(providerType string, baseURL string, apiKey string) (Pro
 		return nil, errors.New("missing provider api key")
 	}
 	switch providerType {
-	case "openai", "openai_compatible":
+	case "openai":
 		opts := []ooption.RequestOption{ooption.WithAPIKey(strings.TrimSpace(apiKey))}
 		if strings.TrimSpace(baseURL) != "" {
 			opts = append(opts, ooption.WithBaseURL(strings.TrimSpace(baseURL)))
 		}
-		return &openAIProvider{client: openai.NewClient(opts...)}, nil
+		return &openAIProvider{
+			client:           openai.NewClient(opts...),
+			strictToolSchema: shouldUseStrictOpenAIToolSchema(providerType, baseURL),
+		}, nil
+	case "openai_compatible":
+		opts := []ooption.RequestOption{ooption.WithAPIKey(strings.TrimSpace(apiKey))}
+		if strings.TrimSpace(baseURL) != "" {
+			opts = append(opts, ooption.WithBaseURL(strings.TrimSpace(baseURL)))
+		}
+		return &openAIProvider{
+			client:           openai.NewClient(opts...),
+			strictToolSchema: shouldUseStrictOpenAIToolSchema(providerType, baseURL),
+		}, nil
 	case "anthropic":
 		opts := []aoption.RequestOption{aoption.WithAPIKey(strings.TrimSpace(apiKey))}
 		if strings.TrimSpace(baseURL) != "" {
@@ -902,6 +1003,29 @@ func newProviderAdapter(providerType string, baseURL string, apiKey string) (Pro
 	default:
 		return nil, fmt.Errorf("unsupported provider type %q", providerType)
 	}
+}
+
+func shouldUseStrictOpenAIToolSchema(providerType string, baseURL string) bool {
+	providerType = strings.ToLower(strings.TrimSpace(providerType))
+	if providerType == "openai_compatible" {
+		// Compatible gateways vary widely in strict function schema support; disable strict mode by default.
+		return false
+	}
+	if providerType != "openai" {
+		return true
+	}
+
+	baseURL = strings.TrimSpace(baseURL)
+	if baseURL == "" {
+		return true
+	}
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(strings.TrimSpace(u.Hostname()))
+	// Enable strict mode by default only for official OpenAI domains.
+	return host == "api.openai.com"
 }
 
 func (r *run) runNative(ctx context.Context, req RunRequest, providerCfg config.AIProvider, apiKey string, taskObjective string) error {
@@ -922,22 +1046,19 @@ func (r *run) runNative(ctx context.Context, req RunRequest, providerCfg config.
 	if maxSteps <= 0 {
 		maxSteps = nativeDefaultMaxSteps
 	}
-	if maxSteps > 64 {
-		maxSteps = 64
+	if maxSteps > nativeHardMaxSteps {
+		maxSteps = nativeHardMaxSteps
 	}
 	maxNoToolRounds := req.Options.MaxNoToolRounds
 	if maxNoToolRounds <= 0 {
 		maxNoToolRounds = nativeDefaultNoToolRounds
 	}
 
-	mode := strings.ToLower(strings.TrimSpace(req.Options.Mode))
-	if mode == "" {
-		mode = strings.ToLower(strings.TrimSpace(r.cfg.EffectiveMode()))
-	}
-	if mode == "" {
-		mode = config.AIModeBuild
-	}
+	mode := normalizeRunMode(req.Options.Mode, r.cfg.EffectiveMode())
+	req.Options.Mode = mode
 	r.runMode = mode
+	intent := normalizeRunIntent(req.Options.Intent)
+	req.Options.Intent = intent
 
 	execCtx := ctx
 	var cancelMaxWall context.CancelFunc
@@ -994,6 +1115,18 @@ func (r *run) runNative(ctx context.Context, req RunRequest, providerCfg config.
 		return r.failRun("Failed to initialize provider adapter", err)
 	}
 
+	r.persistRunEvent("native.runtime.start", RealtimeStreamKindLifecycle, map[string]any{
+		"provider_type": providerType,
+		"model":         modelName,
+		"max_steps":     maxSteps,
+		"mode":          mode,
+		"intent":        intent,
+	})
+
+	if intent == RunIntentSocial {
+		return r.runNativeSocial(execCtx, adapter, providerType, modelName, mode, req)
+	}
+
 	registry := NewInMemoryToolRegistry()
 	if err := registerBuiltInTools(registry, r); err != nil {
 		return r.failRun("Failed to initialize tool registry", err)
@@ -1045,13 +1178,6 @@ func (r *run) runNative(ctx context.Context, req RunRequest, providerCfg config.
 		}
 	}
 
-	r.persistRunEvent("native.runtime.start", RealtimeStreamKindLifecycle, map[string]any{
-		"provider_type": providerType,
-		"model":         modelName,
-		"max_steps":     maxSteps,
-		"mode":          mode,
-	})
-
 	recoveryCount := 0
 	noToolRounds := 0
 	lastSignature := ""
@@ -1094,14 +1220,21 @@ func (r *run) runNative(ctx context.Context, req RunRequest, providerCfg config.
 		return nil
 	}
 
-	for step := 0; step < maxSteps; step++ {
+	for step := 0; ; step++ {
+		// Safety net — absolute maximum to prevent infinite loop bugs.
+		// The loop is task-driven: it exits via task_complete, ask_user,
+		// or implicit_complete. This cap should never be reached in
+		// normal operation.
+		if step >= nativeHardMaxSteps {
+			break
+		}
 		touchActivity()
 		if r.finalizeIfContextCanceled(execCtx) {
 			return nil
 		}
 
 		activeTools := scheduler.ActiveTools(mode)
-		systemPrompt := r.buildLayeredSystemPrompt(taskObjective, mode, step, isFirstRound, activeTools, state, exceptionOverlay)
+		systemPrompt := r.buildLayeredSystemPrompt(taskObjective, mode, step, maxSteps, isFirstRound, activeTools, state, exceptionOverlay)
 		turnMessages := composeTurnMessages(systemPrompt, messages)
 		turnReq := TurnRequest{
 			Model:            modelName,
@@ -1144,10 +1277,10 @@ func (r *run) runNative(ctx context.Context, req RunRequest, providerCfg config.
 			if r.finalizeIfContextCanceled(execCtx) {
 				return nil
 			}
-			if recoveryCount > 3 {
-				break
+			if recoveryCount > 5 {
+				return endAskUser(step, fmt.Sprintf("I encountered repeated errors from the AI provider and cannot continue. Last error: %s", sanitizeLogText(stepErr.Error(), 200)))
 			}
-			exceptionOverlay = buildRecoveryOverlay(recoveryCount, 3, stepErr, lastSignature)
+			exceptionOverlay = buildRecoveryOverlay(recoveryCount, 5, stepErr, lastSignature)
 			state.RecentErrors = appendLimited(state.RecentErrors, sanitizeLogText(stepErr.Error(), 300), 6)
 			time.Sleep(backoffDuration(recoveryCount))
 			continue
@@ -1237,6 +1370,7 @@ func (r *run) runNative(ctx context.Context, req RunRequest, providerCfg config.
 				}
 			}
 
+			messages = append(messages, buildToolCallMessages(normalCalls)...)
 			messages = append(messages, buildToolResultMessages(toolResults, normalCalls)...)
 			state.PendingToolCalls = nil
 			hasError := false
@@ -1288,7 +1422,7 @@ func (r *run) runNative(ctx context.Context, req RunRequest, providerCfg config.
 				if sawDoomLoopGuard {
 					failure = errors.New("doom-loop guard hit")
 				}
-				exceptionOverlay = buildRecoveryOverlay(recoveryCount, 3, failure, lastSignature)
+				exceptionOverlay = buildRecoveryOverlay(recoveryCount, 5, failure, lastSignature)
 			} else {
 				recoveryCount = 0
 				if hasSuccess {
@@ -1359,16 +1493,20 @@ func (r *run) runNative(ctx context.Context, req RunRequest, providerCfg config.
 		}
 
 		finishReason := strings.ToLower(strings.TrimSpace(stepResult.FinishReason))
-		if finishReason == "tool_calls" || finishReason == "unknown" || finishReason == "length" {
+		if finishReason == "length" {
+			// Genuine truncation — recovery path.
 			recoveryCount++
-			fail := errors.New("provider requires follow up")
-			overlaySig := lastSignature
-			if finishReason == "length" {
-				fail = errors.New("provider output truncated (length)")
-				overlaySig = ""
-			}
-			exceptionOverlay = buildRecoveryOverlay(recoveryCount, 3, fail, overlaySig)
+			fail := errors.New("provider output truncated (length)")
+			exceptionOverlay = buildRecoveryOverlay(recoveryCount, 5, fail, "")
 			messages = append(messages, Message{Role: "user", Content: []ContentPart{{Type: "text", Text: "Continue from where you left off, without repeating previous content."}}})
+			isFirstRound = false
+			continue
+		}
+		if finishReason == "tool_calls" || finishReason == "unknown" {
+			// Model wanted tools but parsing failed, or unknown state — treat as backpressure nudge.
+			noToolRounds++
+			exceptionOverlay = fmt.Sprintf("[BACKPRESSURE] Provider returned finish_reason=%q but no valid tool calls were parsed. You MUST do one of: (1) Call task_complete if done, (2) Use tools to investigate, (3) Call ask_user if stuck.", finishReason)
+			messages = append(messages, Message{Role: "user", Content: []ContentPart{{Type: "text", Text: "Continue from where you left off. Call a tool or task_complete."}}})
 			isFirstRound = false
 			continue
 		}
@@ -1380,10 +1518,10 @@ func (r *run) runNative(ctx context.Context, req RunRequest, providerCfg config.
 				return endAskUser(step, "I am not getting usable output and cannot proceed safely. Please clarify the objective or provide more context.")
 			}
 			recoveryCount++
-			if recoveryCount > 3 {
-				break
+			if recoveryCount > 5 {
+				return endAskUser(step, "I have been unable to produce output after multiple attempts. Please check the AI provider configuration or try rephrasing your request.")
 			}
-			exceptionOverlay = buildRecoveryOverlay(recoveryCount, 3, errors.New("empty output"), lastSignature)
+			exceptionOverlay = buildRecoveryOverlay(recoveryCount, 5, errors.New("empty output"), lastSignature)
 			isFirstRound = false
 			continue
 		}
@@ -1397,18 +1535,17 @@ func (r *run) runNative(ctx context.Context, req RunRequest, providerCfg config.
 		}
 
 		if isFirstRound && step == 0 {
-			// First round must make progress (tool call or ask_user).
-			recoveryCount++
-			exceptionOverlay = "[RECOVERY] First round cannot finish without clear progress. Call tools or ask_user when missing information."
-			messages = append(messages, Message{Role: "user", Content: []ContentPart{{Type: "text", Text: "Continue with concrete evidence before completing."}}})
+			// First round produced text but no tool calls — nudge (not an error, don't burn recovery budget).
+			exceptionOverlay = "[RECOVERY] You must use tools on your first turn. Start by investigating: use fs.list_dir to explore the workspace, or fs.read_file to read relevant files. Do NOT respond with text only."
+			messages = append(messages, Message{Role: "user", Content: []ContentPart{{Type: "text", Text: "You must call a tool now. Use fs.list_dir or fs.read_file to start investigating."}}})
 			isFirstRound = false
 			continue
 		}
 
 		noToolRounds++
 		if noToolRounds < maxNoToolRounds {
-			exceptionOverlay = fmt.Sprintf("[BACKPRESSURE] No tool call used. Round %d/%d. If completion is ready, call task_complete; otherwise continue with tools.", noToolRounds, maxNoToolRounds)
-			messages = append(messages, Message{Role: "user", Content: []ContentPart{{Type: "text", Text: "Continue and either call required tools or provide explicit task_complete."}}})
+			exceptionOverlay = fmt.Sprintf("[BACKPRESSURE] No tool call used (%d/%d). You MUST do one of: (1) Call task_complete if the task is done, (2) Use tools to continue investigating or making changes, (3) Call ask_user if you are stuck and need clarification.", noToolRounds, maxNoToolRounds)
+			messages = append(messages, Message{Role: "user", Content: []ContentPart{{Type: "text", Text: "You must either call task_complete, use a tool, or call ask_user. Do not respond with text only."}}})
 			isFirstRound = false
 			continue
 		}
@@ -1420,10 +1557,157 @@ func (r *run) runNative(ctx context.Context, req RunRequest, providerCfg config.
 		return nil
 	}
 
-	_ = r.appendTextDelta(r.degradedSummary(state, taskObjective))
-	r.setFinalizationReason("degraded_complete")
+	// Safety net reached (nativeHardMaxSteps). This should rarely happen in
+	// normal operation — the loop is task-driven and exits via task_complete,
+	// ask_user, or implicit_complete. Reaching here indicates a bug or a
+	// genuinely very long task.
+	r.persistRunEvent("guard.hard_max_steps", RealtimeStreamKindLifecycle, map[string]any{
+		"hard_max_steps": nativeHardMaxSteps,
+	})
+
+	// Attempt one final LLM turn to produce a summary. Only provide
+	// task_complete — no other tools — to force the LLM to summarize.
+	summaryMsg := "You have reached the absolute step limit. Summarize what you accomplished and what remains, then call task_complete."
+	messages = append(messages, Message{Role: "user", Content: []ContentPart{{Type: "text", Text: summaryMsg}}})
+	summaryOverlay := "[FINAL SUMMARY] You have exhausted the hard step limit. You MUST call task_complete now with a detailed summary of what was done and what remains."
+	summarySystemPrompt := r.buildLayeredSystemPrompt(taskObjective, mode, nativeHardMaxSteps, maxSteps, false, scheduler.ActiveTools(mode), state, summaryOverlay)
+	summaryTurnMessages := composeTurnMessages(summarySystemPrompt, messages)
+
+	signalOnlyTools := make([]ToolDef, 0, 1)
+	for _, t := range scheduler.ActiveTools(mode) {
+		if t.Name == "task_complete" {
+			signalOnlyTools = append(signalOnlyTools, t)
+			break
+		}
+	}
+	summaryReq := TurnRequest{
+		Model:            modelName,
+		Messages:         summaryTurnMessages,
+		Tools:            signalOnlyTools,
+		Budgets:          TurnBudgets{MaxSteps: 1, MaxInputTokens: req.Options.MaxInputTokens, MaxOutputToken: req.Options.MaxOutputTokens, MaxCostUSD: req.Options.MaxCostUSD},
+		ModeFlags:        ModeFlags{Mode: mode},
+		ProviderControls: ProviderControls{ResponseFormat: req.Options.ResponseFormat, Temperature: req.Options.Temperature, TopP: req.Options.TopP},
+	}
+	summaryResult, summaryErr := adapter.StreamTurn(execCtx, summaryReq, func(event StreamEvent) {
+		if event.Type == StreamEventTextDelta && strings.TrimSpace(event.Text) != "" {
+			_ = r.appendTextDelta(event.Text)
+		}
+	})
+
+	if summaryErr != nil || strings.TrimSpace(summaryResult.Text) == "" {
+		// Summary turn failed — tell user via endAskUser with specific error,
+		// rather than producing a mechanical degradedSummary.
+		if !r.hasNonEmptyAssistantText() {
+			errMsg := "The task reached the maximum step limit and the AI provider could not produce a summary."
+			if summaryErr != nil {
+				errMsg = fmt.Sprintf("The task reached the maximum step limit. Summary attempt failed: %s", sanitizeLogText(summaryErr.Error(), 200))
+			}
+			return endAskUser(nativeHardMaxSteps, errMsg)
+		}
+	}
+
+	finReason := "exhausted_summary"
+	r.setFinalizationReason(finReason)
 	r.setEndReason("complete")
-	r.emitLifecyclePhase("ended", map[string]any{"reason": "degraded_complete"})
+	r.emitLifecyclePhase("ended", map[string]any{"reason": finReason})
+	r.sendStreamEvent(streamEventMessageEnd{Type: "message-end", MessageID: r.messageID})
+	return nil
+}
+
+func (r *run) runNativeSocial(
+	execCtx context.Context,
+	adapter Provider,
+	providerType string,
+	modelName string,
+	mode string,
+	req RunRequest,
+) error {
+	if r == nil {
+		return errors.New("nil run")
+	}
+	if adapter == nil {
+		return r.failRun("Failed to initialize provider adapter", errors.New("nil provider adapter"))
+	}
+	if r.finalizeIfContextCanceled(execCtx) {
+		return nil
+	}
+
+	r.emitLifecyclePhase("synthesizing", map[string]any{"intent": RunIntentSocial})
+	messages := buildInitialMessages(req.History, req.Input.Text)
+	if len(req.Input.Attachments) > 0 {
+		for _, it := range req.Input.Attachments {
+			if strings.TrimSpace(it.URL) == "" {
+				continue
+			}
+			messages = append(messages, Message{
+				Role: "user",
+				Content: []ContentPart{{
+					Type:     "file",
+					FileURI:  strings.TrimSpace(it.URL),
+					MimeType: strings.TrimSpace(it.MimeType),
+					Text:     strings.TrimSpace(it.Name),
+				}},
+			})
+		}
+	}
+
+	systemPrompt := r.buildSocialSystemPrompt()
+	turnReq := TurnRequest{
+		Model:            modelName,
+		Messages:         composeTurnMessages(systemPrompt, messages),
+		Tools:            nil,
+		Budgets:          TurnBudgets{MaxSteps: 1, MaxInputTokens: req.Options.MaxInputTokens, MaxOutputToken: req.Options.MaxOutputTokens, MaxCostUSD: req.Options.MaxCostUSD},
+		ModeFlags:        ModeFlags{Mode: mode, ReasoningOnly: true},
+		ProviderControls: ProviderControls{ThinkingBudgetTokens: req.Options.ThinkingBudgetTokens, CacheControl: req.Options.CacheControl, ResponseFormat: req.Options.ResponseFormat, Temperature: req.Options.Temperature, TopP: req.Options.TopP},
+	}
+	estimateTokens, estimateSource := estimateTurnTokens(providerType, turnReq)
+	stepResult, stepErr := adapter.StreamTurn(execCtx, turnReq, func(event StreamEvent) {
+		switch event.Type {
+		case StreamEventTextDelta:
+			if strings.TrimSpace(event.Text) != "" {
+				_ = r.appendTextDelta(event.Text)
+			}
+		case StreamEventThinkingDelta:
+			if strings.TrimSpace(event.Text) != "" {
+				r.persistRunEvent("thinking.delta", RealtimeStreamKindLifecycle, map[string]any{
+					"delta": truncateRunes(event.Text, 2000),
+				})
+			}
+		}
+	})
+	if stepErr != nil {
+		if r.finalizeIfContextCanceled(execCtx) {
+			return nil
+		}
+		return r.failRun("Failed to generate social response", stepErr)
+	}
+
+	r.persistRunEvent("native.turn.result", RealtimeStreamKindLifecycle, map[string]any{
+		"step_index":    0,
+		"finish_reason": strings.TrimSpace(stepResult.FinishReason),
+		"tool_calls":    len(stepResult.ToolCalls),
+		"usage": map[string]any{
+			"input_tokens":     stepResult.Usage.InputTokens,
+			"output_tokens":    stepResult.Usage.OutputTokens,
+			"reasoning_tokens": stepResult.Usage.ReasoningTokens,
+		},
+		"estimate_tokens": estimateTokens,
+		"estimate_source": estimateSource,
+		"intent":          RunIntentSocial,
+	})
+
+	if !r.hasNonEmptyAssistantText() {
+		if txt := strings.TrimSpace(stepResult.Text); txt != "" {
+			_ = r.appendTextDelta(txt)
+		}
+	}
+	if !r.hasNonEmptyAssistantText() {
+		_ = r.appendTextDelta("Hello! I'm here. Tell me what task you want to work on.")
+	}
+
+	r.setFinalizationReason("social_reply")
+	r.setEndReason("complete")
+	r.emitLifecyclePhase("ended", map[string]any{"reason": "social_reply", "step_index": 0})
 	r.sendStreamEvent(streamEventMessageEnd{Type: "message-end", MessageID: r.messageID})
 	return nil
 }
@@ -1595,6 +1879,41 @@ func buildToolResultMessages(results []ToolResult, calls []ToolCall) []Message {
 	return out
 }
 
+func buildToolCallMessages(calls []ToolCall) []Message {
+	if len(calls) == 0 {
+		return nil
+	}
+	out := make([]Message, 0, len(calls))
+	for _, call := range calls {
+		callID := strings.TrimSpace(call.ID)
+		name := strings.TrimSpace(call.Name)
+		if callID == "" || name == "" {
+			continue
+		}
+		args := cloneAnyMap(call.Args)
+		if args == nil {
+			args = map[string]any{}
+		}
+		b, _ := json.Marshal(args)
+		rawArgs := strings.TrimSpace(string(b))
+		if rawArgs == "" || rawArgs == "null" || !json.Valid(b) {
+			rawArgs = "{}"
+			b = []byte(rawArgs)
+		}
+		out = append(out, Message{
+			Role: "assistant",
+			Content: []ContentPart{{
+				Type:       "tool_call",
+				ToolCallID: callID,
+				ToolName:   name,
+				ArgsJSON:   rawArgs,
+				JSON:       b,
+			}},
+		})
+	}
+	return out
+}
+
 func extractSignalText(call ToolCall, key string) string {
 	if call.Args == nil {
 		return ""
@@ -1672,33 +1991,63 @@ func backoffDuration(attempt int) time.Duration {
 	}
 }
 
-func (r *run) buildLayeredSystemPrompt(objective string, mode string, round int, isFirstRound bool, tools []ToolDef, state runtimeState, exceptionOverlay string) string {
+func (r *run) buildLayeredSystemPrompt(objective string, mode string, round int, maxSteps int, isFirstRound bool, tools []ToolDef, state runtimeState, exceptionOverlay string) string {
 	core := []string{
-		"You are Redeven Agent.",
-		"Follow structured tool signals.",
-		"Do not fabricate tool results.",
-		"If information is insufficient, call ask_user.",
-		"Respect cancel, budget, and workspace boundaries.",
-		"When task is complete, prefer calling task_complete with a non-empty result.",
+		"# Identity & Mandate",
+		"You are Redeven Agent, an autonomous AI assistant that completes tasks by using tools.",
+		"Keep going until the user's task is completely resolved before ending your turn.",
+		"Only call task_complete when you are confident the problem is fully solved.",
+		"If you are unsure, use tools to verify your work before completing.",
+		"",
+		"# Tool Usage Strategy",
+		"Follow this workflow for every task:",
+		"1. **Investigate** — Use fs.list_dir and fs.read_file to understand the workspace and gather context.",
+		"2. **Plan** — Identify what needs to be done based on the information gathered.",
+		"3. **Act** — Use fs.write_file, terminal.exec, or other tools to make changes.",
+		"4. **Verify** — Read modified files or run tests/commands to confirm correctness.",
+		"5. **Iterate** — If verification fails, diagnose the issue and repeat from step 1.",
+		"",
+		"# Mandatory Rules",
+		"- ALWAYS prefer using tools over generating text responses.",
+		"- You MUST call task_complete with a detailed result summary when done. Never end without it.",
+		"- You MUST use tools to investigate before answering questions about files, code, or the workspace.",
+		"- If you can answer by reading a file, READ it first. If you can verify by running a command, RUN it first.",
+		"- Do NOT fabricate file contents, command outputs, or tool results. Always use tools to get real data.",
+		"- Do NOT produce an empty first turn. Your first action must be a tool call.",
+		"- If information is insufficient and tools cannot help, call ask_user.",
+		"",
+		"# Anti-Patterns (NEVER do these)",
+		"- Do NOT respond with only text when tools could answer the question.",
+		"- Do NOT call task_complete without first verifying your work.",
+		"- Do NOT give up after a tool error — try a different approach.",
+		"- Do NOT repeat the same tool call with identical arguments.",
+		"",
+		"# Common Workflows",
+		"- **File questions**: fs.list_dir → fs.read_file → analyze → task_complete",
+		"- **Code changes**: fs.read_file → fs.write_file → terminal.exec (verify) → task_complete",
+		"- **Shell tasks**: terminal.exec → check output → task_complete",
+		"- **Debugging**: fs.read_file → terminal.exec (reproduce) → fix → verify → task_complete",
 	}
 	availableSkills := r.listSkills()
 	activeSkills := r.activeSkills()
+
+	cwd := strings.TrimSpace(r.fsRoot)
+	toolNames := joinToolNames(tools)
+	recentErrors := "none"
+	if len(state.RecentErrors) > 0 {
+		recentErrors = strings.Join(state.RecentErrors, " | ")
+	}
 	runtime := []string{
-		fmt.Sprintf("Run=%s Round=%d FirstRound=%t", strings.TrimSpace(r.id), round+1, isFirstRound),
-		fmt.Sprintf("Mode=%s Budget=steps:%d", strings.TrimSpace(mode), round+1),
-		fmt.Sprintf("EnabledTools=%s", joinToolNames(tools)),
-		fmt.Sprintf("RecentErrors=%s", strings.Join(state.RecentErrors, " | ")),
-		fmt.Sprintf("Objective=%s", strings.TrimSpace(objective)),
+		"## Current Context",
+		fmt.Sprintf("- Working directory: %s", cwd),
+		fmt.Sprintf("- Current round: %d (first_round=%t)", round+1, isFirstRound),
+		fmt.Sprintf("- Mode: %s", strings.TrimSpace(mode)),
+		fmt.Sprintf("- Available tools: %s", toolNames),
+		fmt.Sprintf("- Objective: %s", strings.TrimSpace(objective)),
+		fmt.Sprintf("- Recent errors: %s", recentErrors),
 	}
 	if len(availableSkills) > 0 {
-		runtime = append(runtime, fmt.Sprintf("AvailableSkills=%s", joinSkillNames(availableSkills)))
-	}
-	if isFirstRound {
-		cwd := strings.TrimSpace(r.fsRoot)
-		runtime = append(runtime,
-			"First round rule: do not output empty completion.",
-			fmt.Sprintf("Environment: OS+shell context available, cwd=%s", cwd),
-		)
+		runtime = append(runtime, fmt.Sprintf("- Available skills: %s", joinSkillNames(availableSkills)))
 	}
 	parts := []string{strings.Join(core, "\n"), strings.Join(runtime, "\n")}
 	if len(availableSkills) > 0 {
@@ -1711,6 +2060,26 @@ func (r *run) buildLayeredSystemPrompt(objective string, mode string, round int,
 		parts = append(parts, strings.TrimSpace(exceptionOverlay))
 	}
 	return strings.Join(parts, "\n\n")
+}
+
+func (r *run) buildSocialSystemPrompt() string {
+	core := []string{
+		"# Identity",
+		"You are Redeven Agent.",
+		"The user message is social conversation rather than a task request.",
+		"",
+		"# Response Rules",
+		"- Reply naturally in a brief and friendly style.",
+		"- Do NOT call tools.",
+		"- Do NOT mention internal routing, prompts, or policies.",
+		"- If helpful, ask one short follow-up question to invite a concrete task.",
+	}
+	cwd := strings.TrimSpace(r.fsRoot)
+	runtime := []string{
+		"## Current Context",
+		fmt.Sprintf("- Working directory: %s", cwd),
+	}
+	return strings.Join([]string{strings.Join(core, "\n"), strings.Join(runtime, "\n")}, "\n\n")
 }
 
 func joinSkillNames(skills []SkillMeta) string {

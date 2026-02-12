@@ -1088,7 +1088,7 @@ func (r *run) handleToolCall(ctx context.Context, toolID string, toolName string
 			Message:   "Tool is disabled in plan mode",
 			Retryable: false,
 			SuggestedFixes: []string{
-				"Switch AI mode to build to enable mutating tools.",
+				"Switch AI mode to act to enable mutating tools.",
 			},
 		}
 		setToolError(toolErr, "")
@@ -1419,10 +1419,36 @@ func (r *run) workingDirAbs() (string, error) {
 	return workingDir, nil
 }
 
-func resolveAbsoluteToolPath(raw string) (string, error) {
+func resolveToolPath(raw string, workingDirAbs string) (string, error) {
 	candidate := strings.TrimSpace(raw)
 	if candidate == "" {
 		return "", errInvalidToolPath
+	}
+	if candidate == "~" || strings.HasPrefix(candidate, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", errInvalidToolPath
+		}
+		home = strings.TrimSpace(home)
+		if home == "" {
+			return "", errInvalidToolPath
+		}
+		if candidate == "~" {
+			candidate = home
+		} else {
+			candidate = filepath.Join(home, strings.TrimPrefix(candidate, "~/"))
+		}
+	}
+	if !filepath.IsAbs(candidate) {
+		base := strings.TrimSpace(workingDirAbs)
+		if base == "" {
+			return "", errToolPathMustAbsolute
+		}
+		base = filepath.Clean(base)
+		if !filepath.IsAbs(base) {
+			return "", errInvalidWorkingDir
+		}
+		candidate = filepath.Join(base, candidate)
 	}
 	candidate = filepath.Clean(candidate)
 	if !filepath.IsAbs(candidate) {
@@ -1454,7 +1480,11 @@ func mapToolCwdError(err error) error {
 }
 
 func (r *run) toolFSListDir(p string) (any, error) {
-	abs, err := resolveAbsoluteToolPath(p)
+	workingDirAbs, err := r.workingDirAbs()
+	if err != nil {
+		return nil, mapToolPathError(err)
+	}
+	abs, err := resolveToolPath(p, workingDirAbs)
 	if err != nil {
 		return nil, mapToolPathError(err)
 	}
@@ -1486,7 +1516,11 @@ func (r *run) toolFSListDir(p string) (any, error) {
 }
 
 func (r *run) toolFSStat(p string) (any, error) {
-	abs, err := resolveAbsoluteToolPath(p)
+	workingDirAbs, err := r.workingDirAbs()
+	if err != nil {
+		return nil, mapToolPathError(err)
+	}
+	abs, err := resolveToolPath(p, workingDirAbs)
 	if err != nil {
 		return nil, mapToolPathError(err)
 	}
@@ -1523,7 +1557,11 @@ func (r *run) toolFSReadFile(p string, offset int64, maxBytes int64) (any, error
 		return nil, errors.New("offset must be >= 0")
 	}
 
-	abs, err := resolveAbsoluteToolPath(p)
+	workingDirAbs, err := r.workingDirAbs()
+	if err != nil {
+		return nil, mapToolPathError(err)
+	}
+	abs, err := resolveToolPath(p, workingDirAbs)
 	if err != nil {
 		return nil, mapToolPathError(err)
 	}
@@ -1565,7 +1603,11 @@ func (r *run) toolFSReadFile(p string, offset int64, maxBytes int64) (any, error
 }
 
 func (r *run) toolFSWriteFile(p string, content string, create bool, ifMatch string) (any, error) {
-	abs, err := resolveAbsoluteToolPath(p)
+	workingDirAbs, err := r.workingDirAbs()
+	if err != nil {
+		return nil, mapToolPathError(err)
+	}
+	abs, err := resolveToolPath(p, workingDirAbs)
 	if err != nil {
 		return nil, mapToolPathError(err)
 	}
@@ -1634,15 +1676,15 @@ func (r *run) toolTerminalExec(ctx context.Context, command string, cwd string, 
 		timeoutMS = 60_000
 	}
 
+	workingDirAbs, err := r.workingDirAbs()
+	if err != nil {
+		return nil, mapToolCwdError(err)
+	}
 	cwd = strings.TrimSpace(cwd)
 	if cwd == "" {
-		resolved, err := r.workingDirAbs()
-		if err != nil {
-			return nil, mapToolCwdError(err)
-		}
-		cwd = resolved
+		cwd = workingDirAbs
 	}
-	cwdAbs, err := resolveAbsoluteToolPath(cwd)
+	cwdAbs, err := resolveToolPath(cwd, workingDirAbs)
 	if err != nil {
 		return nil, mapToolCwdError(err)
 	}
