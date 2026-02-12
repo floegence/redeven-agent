@@ -711,18 +711,43 @@ func (s *Service) executePreparedRun(ctx context.Context, prepared *preparedRun)
 		history = append(history, RunHistoryMsg{Role: role, Text: text})
 	}
 	rawUserInputText := strings.TrimSpace(req.Input.Text)
-
-	// open_goal is persisted per-thread and updated only from explicit user input,
-	// never from keyword heuristics like "continue".
-	openGoal := strings.TrimSpace(rawUserInputText)
+	existingOpenGoal := ""
 	stateLoadCtx, cancelStateLoad := context.WithTimeout(context.Background(), persistTO)
 	threadState, stateErr := db.GetThreadState(stateLoadCtx, endpointID, threadID)
 	cancelStateLoad()
 	if stateErr != nil {
 		r.log.Warn("load thread state failed", "thread_id", threadID, "error", stateErr)
 	} else if threadState != nil {
-		if openGoal == "" {
-			openGoal = strings.TrimSpace(threadState.OpenGoal)
+		existingOpenGoal = strings.TrimSpace(threadState.OpenGoal)
+	}
+
+	req.Options.Mode = normalizeRunMode(req.Options.Mode, cfg.EffectiveMode())
+	intentDecision := classifyRunIntent(rawUserInputText, req.Input.Attachments, existingOpenGoal)
+	req.Options.Intent = intentDecision.Intent
+	r.persistRunEvent("intent.classified", RealtimeStreamKindLifecycle, map[string]any{
+		"intent":     intentDecision.Intent,
+		"confidence": intentDecision.Confidence,
+		"reason":     intentDecision.Reason,
+		"mode":       req.Options.Mode,
+	})
+	if intentDecision.Intent == RunIntentSocial {
+		r.persistRunEvent("intent.routed", RealtimeStreamKindLifecycle, map[string]any{
+			"path": "social_responder",
+		})
+	} else {
+		r.persistRunEvent("intent.routed", RealtimeStreamKindLifecycle, map[string]any{
+			"path": "task_engine",
+		})
+	}
+
+	// open_goal is only updated by task intent explicit user input.
+	// social intent keeps existing open_goal unchanged.
+	openGoal := strings.TrimSpace(existingOpenGoal)
+	if req.Options.Intent == RunIntentTask && rawUserInputText != "" {
+		if existingOpenGoal != "" && isContinuationMessage(strings.ToLower(rawUserInputText), compactText(rawUserInputText)) {
+			openGoal = strings.TrimSpace(existingOpenGoal)
+		} else {
+			openGoal = rawUserInputText
 		}
 	}
 	effectiveInput := req.Input
@@ -866,7 +891,7 @@ func (s *Service) executePreparedRun(ctx context.Context, prepared *preparedRun)
 	if shouldClearThreadState(finalReason) {
 		_ = db.ClearThreadState(stateCtx, endpointID, threadID)
 	} else {
-		if strings.TrimSpace(openGoal) != "" {
+		if req.Options.Intent == RunIntentTask && strings.TrimSpace(openGoal) != "" {
 			assistantSummary := strings.TrimSpace(assistantText)
 			if len([]rune(assistantSummary)) > 600 {
 				assistantSummary = string([]rune(assistantSummary)[:600])

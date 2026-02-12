@@ -155,7 +155,7 @@ type DefaultModeToolFilter struct{}
 func (f DefaultModeToolFilter) FilterToolsForMode(mode string, all []ToolDef) []ToolDef {
 	mode = strings.ToLower(strings.TrimSpace(mode))
 	if mode == "" {
-		mode = "build"
+		mode = "act"
 	}
 	out := make([]ToolDef, 0, len(all))
 	for _, tool := range all {

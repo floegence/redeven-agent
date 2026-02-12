@@ -13,6 +13,7 @@ export type wire_ai_start_run_req = {
   };
   options: {
     max_steps: number;
+    mode?: string;
   };
 };
 

@@ -111,7 +111,7 @@ function formatActionSecondary(e: AgentAuditEntry): string {
     const reason = String(detail.reason ?? '').trim();
     const dur = typeof detail.duration_ms === 'number' ? detail.duration_ms : null;
     const durText = dur != null ? formatDurationMs(dur) : '';
-    if (reason && durText) return `Reason: ${reason} · ${durText}`;
+    if (reason && durText) return `Reason: ${reason} | ${durText}`;
     if (reason) return `Reason: ${reason}`;
     if (durText) return `Duration: ${durText}`;
     return '';
@@ -130,7 +130,7 @@ function formatActionSecondary(e: AgentAuditEntry): string {
   if (action === 'codespace_create') {
     const cs = String(detail.code_space_id ?? e.code_space_id ?? '').trim();
     const wp = String(detail.workspace_path ?? '').trim();
-    if (cs && wp) return `${cs} · ${wp}`;
+    if (cs && wp) return `${cs} | ${wp}`;
     if (cs) return cs;
     if (wp) return wp;
     return '';
@@ -155,7 +155,7 @@ function formatActionSecondary(e: AgentAuditEntry): string {
   if (action === 'ai_run') {
     const rid = String(detail.run_id ?? '').trim();
     const model = String(detail.model ?? '').trim();
-    if (rid && model) return `${rid} · ${model}`;
+    if (rid && model) return `${rid} | ${model}`;
     return rid || model;
   }
   if (action === 'ai_upload') {

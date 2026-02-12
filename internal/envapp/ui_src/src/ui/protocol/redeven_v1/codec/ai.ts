@@ -47,6 +47,7 @@ export function toWireAIStartRunRequest(req: AIStartRunRequest): wire_ai_start_r
     },
     options: {
       max_steps: Number(req.options?.maxSteps ?? 0),
+      mode: req.options?.mode ? String(req.options.mode).trim() : undefined,
     },
   };
 }

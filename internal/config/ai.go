@@ -23,7 +23,7 @@ type AIConfig struct {
 	// Mode controls the AI runtime behavior.
 	//
 	// Supported values:
-	// - "build": full tool execution flow (default)
+	// - "act": full tool execution flow (default)
 	// - "plan": non-mutating analysis mode
 	Mode string `json:"mode,omitempty"`
 
@@ -77,8 +77,8 @@ type AIProviderModel struct {
 }
 
 const (
-	AIModeBuild = "build"
-	AIModePlan  = "plan"
+	AIModeAct  = "act"
+	AIModePlan = "plan"
 )
 
 const (
@@ -96,10 +96,10 @@ func (c *AIConfig) Validate() error {
 
 	mode := strings.TrimSpace(strings.ToLower(c.Mode))
 	if mode == "" {
-		mode = AIModeBuild
+		mode = AIModeAct
 	}
 	switch mode {
-	case AIModeBuild, AIModePlan:
+	case AIModeAct, AIModePlan:
 	default:
 		return fmt.Errorf("invalid ai mode %q", c.Mode)
 	}
@@ -242,14 +242,14 @@ func (c *AIConfig) IsAllowedModelID(modelID string) bool {
 
 func (c *AIConfig) EffectiveMode() string {
 	if c == nil {
-		return AIModeBuild
+		return AIModeAct
 	}
 	mode := strings.TrimSpace(strings.ToLower(c.Mode))
 	switch mode {
 	case AIModePlan:
 		return AIModePlan
 	default:
-		return AIModeBuild
+		return AIModeAct
 	}
 }
 
