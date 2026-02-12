@@ -49,6 +49,8 @@ type ContentPart struct {
 	MimeType   string `json:"mime_type,omitempty"`
 	ToolCallID string `json:"tool_call_id,omitempty"`
 	ToolUseID  string `json:"tool_use_id,omitempty"`
+	ToolName   string `json:"tool_name,omitempty"`
+	ArgsJSON   string `json:"args_json,omitempty"`
 	JSON       []byte `json:"json,omitempty"`
 }
 

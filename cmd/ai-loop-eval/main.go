@@ -753,7 +753,7 @@ func looksPreambleOnly(text string) bool {
 	if utf8.RuneCountInString(trimmed) > 180 {
 		return false
 	}
-	preambleHints := []string{"我先", "我会先", "let me", "i will", "先快速", "先看一下", "先扫描"}
+	preambleHints := []string{"let me", "i will", "first i", "i'll first", "quick scan", "first pass"}
 	hasPreamble := false
 	for _, hint := range preambleHints {
 		if strings.Contains(trimmed, hint) {
@@ -764,7 +764,7 @@ func looksPreambleOnly(text string) bool {
 	if !hasPreamble {
 		return false
 	}
-	finalHints := []string{"结论", "final", "result", "directory", "建议", "风险"}
+	finalHints := []string{"final", "result", "directory", "conclusion", "recommendation", "risk"}
 	for _, hint := range finalHints {
 		if strings.Contains(trimmed, hint) {
 			return false
@@ -780,7 +780,7 @@ func repetitionPenalty(text string) int {
 	}
 	parts := strings.FieldsFunc(clean, func(r rune) bool {
 		switch r {
-		case '.', '!', '?', ';', '。', '！', '？', '\n':
+		case '.', '!', '?', ';', '\n':
 			return true
 		default:
 			return false

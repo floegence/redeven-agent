@@ -49,10 +49,10 @@ func TestSummarizeVariants_PenalizesStage1OnlyVariant(t *testing.T) {
 func TestMatchesRequirement_WithAlternatives(t *testing.T) {
 	t.Parallel()
 
-	if !matchesRequirement("the project has clear structure", "目录|structure|module") {
+	if !matchesRequirement("the project has clear structure", "structure|module") {
 		t.Fatalf("expected matchesRequirement to match alternative token")
 	}
-	if matchesRequirement("short text", "风险|risk") {
+	if matchesRequirement("short text", "risk") {
 		t.Fatalf("expected matchesRequirement to fail when no alternative matches")
 	}
 }
