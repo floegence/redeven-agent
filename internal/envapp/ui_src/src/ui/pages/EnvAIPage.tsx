@@ -660,7 +660,7 @@ export function EnvAIPage() {
     }
   };
 
-  const loadThreadMessages = async (threadId: string): Promise<void> => {
+  const loadThreadMessages = async (threadId: string, opts?: { scrollToBottom?: boolean }): Promise<void> => {
     if (!chat) return;
     const tid = String(threadId ?? '').trim();
     if (!tid) return;
@@ -678,6 +678,11 @@ export function EnvAIPage() {
       chat.setMessages(messages);
       setHasMessages(messages.length > 0);
       syncThreadReplay(tid, { reset: true });
+      if (opts?.scrollToBottom) {
+        // Switching threads should always land on the latest message.
+        enableAutoFollow();
+        forceScrollToLatest();
+      }
     } catch (e) {
       if (reqNo !== lastMessagesReq) return;
       const msg = e instanceof Error ? e.message : String(e);
@@ -841,7 +846,7 @@ export function EnvAIPage() {
     setTodosError('');
     setTodosLoading(true);
     replayAppliedByThread.delete(String(tid ?? '').trim());
-    void loadThreadMessages(tid);
+    void loadThreadMessages(tid, { scrollToBottom: true });
     void loadThreadTodos(tid, { silent: false, notifyError: false });
   });
 
