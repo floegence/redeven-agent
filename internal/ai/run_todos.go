@@ -38,7 +38,7 @@ func (r *run) toolWriteTodos(ctx context.Context, toolID string, todos []TodoIte
 	}, expectedVersion)
 	if err != nil {
 		if errors.Is(err, threadstore.ErrThreadTodosVersionConflict) {
-			return nil, fmt.Errorf("todo version conflict: refresh and retry")
+			return nil, fmt.Errorf("todo version conflict: refresh and retry: %w", threadstore.ErrThreadTodosVersionConflict)
 		}
 		return nil, err
 	}
