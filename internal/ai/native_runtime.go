@@ -1241,6 +1241,15 @@ func (r *run) runNative(ctx context.Context, req RunRequest, providerCfg config.
 		if question == "" {
 			question = "I need clarification to continue safely."
 		}
+		closeout, closeoutErr := r.closeOpenTodosBeforeWaitingUser(execCtx, step, question, source)
+		if closeoutErr != nil {
+			r.persistRunEvent("todos.closeout.waiting_user_failed", RealtimeStreamKindLifecycle, map[string]any{
+				"step_index": step,
+				"source":     strings.TrimSpace(source),
+				"error":      strings.TrimSpace(closeoutErr.Error()),
+			})
+			return closeoutErr
+		}
 		finalReason := finalizationReasonForAskUserSource(source)
 		r.emitAskUserToolBlock(question, source)
 		appendToMessage := strings.TrimSpace(source) == "model_signal" || !r.hasNonEmptyAssistantText()
@@ -1256,6 +1265,16 @@ func (r *run) runNative(ctx context.Context, req RunRequest, providerCfg config.
 			"source":              strings.TrimSpace(source),
 			"appended_to_message": appendToMessage,
 			"finalization_reason": finalReason,
+			"todo_closeout": map[string]any{
+				"updated":          closeout.Updated,
+				"version_before":   closeout.VersionBefore,
+				"version_after":    closeout.VersionAfter,
+				"open_before":      closeout.OpenBefore,
+				"open_after":       closeout.OpenAfter,
+				"total_before":     closeout.TotalBefore,
+				"total_after":      closeout.TotalAfter,
+				"conflict_retries": closeout.ConflictRetries,
+			},
 		})
 		r.setFinalizationReason(finalReason)
 		r.setEndReason("complete")
