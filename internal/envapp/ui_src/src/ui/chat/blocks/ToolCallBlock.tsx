@@ -4,7 +4,7 @@ import { For, Show, createEffect, createMemo, createSignal } from 'solid-js';
 import type { Component } from 'solid-js';
 import { cn } from '@floegence/floe-webapp-core';
 import { useChatContext } from '../ChatProvider';
-import type { ToolCallBlock as ToolCallBlockType } from '../types';
+import type { Message, ToolCallBlock as ToolCallBlockType } from '../types';
 import { BlockRenderer } from './BlockRenderer';
 
 const ASK_USER_TOOL_NAME = 'ask_user';
@@ -195,8 +195,30 @@ function humanizeAskUserSource(source: string): string {
 
 interface AskUserToolCardProps {
   block: ToolCallBlockType;
+  messageId: string;
   display: AskUserDisplay;
   class?: string;
+}
+
+function extractUserReplyText(message: Message): string {
+  const blocks = Array.isArray(message.blocks) ? message.blocks : [];
+  const textParts: string[] = [];
+  for (const block of blocks) {
+    if (block.type === 'text' || block.type === 'markdown') {
+      const content = asTrimmedString(block.content);
+      if (content) {
+        textParts.push(content);
+      }
+    }
+  }
+  const merged = textParts.join('\n').trim();
+  if (merged) {
+    return merged;
+  }
+  if (blocks.length > 0) {
+    return '[Non-text reply]';
+  }
+  return '';
 }
 
 const AskUserToolCard: Component<AskUserToolCardProps> = (props) => {
@@ -207,15 +229,34 @@ const AskUserToolCard: Component<AskUserToolCardProps> = (props) => {
   const [submitting, setSubmitting] = createSignal(false);
   const [submittedReply, setSubmittedReply] = createSignal('');
 
+  const historicalReply = createMemo(() => {
+    const messages = ctx.messages();
+    const currentIndex = messages.findIndex((message) => message.id === props.messageId);
+    if (currentIndex < 0) {
+      return '';
+    }
+    for (let index = currentIndex + 1; index < messages.length; index += 1) {
+      const message = messages[index];
+      if (message.role !== 'user') {
+        continue;
+      }
+      return extractUserReplyText(message);
+    }
+    return '';
+  });
   const promptKey = createMemo(
     () => `${props.display.question}\u001f${props.display.options.join('\u001f')}`,
   );
   const sourceLabel = createMemo(() => humanizeAskUserSource(props.display.source));
+  const resolvedReply = createMemo(() => submittedReply() || historicalReply());
   const controlsDisabled = createMemo(
-    () => submitting() || ctx.isWorking() || submittedReply().length > 0,
+    () => submitting() || ctx.isWorking() || resolvedReply().length > 0,
   );
   const canSubmitCustomReply = createMemo(
     () => useCustomReply() && customReply().trim().length > 0 && !controlsDisabled(),
+  );
+  const resolvedReplyLabel = createMemo(() =>
+    historicalReply().length > 0 ? 'Selected reply' : 'Reply sent',
   );
 
   createEffect(() => {
@@ -274,7 +315,7 @@ const AskUserToolCard: Component<AskUserToolCardProps> = (props) => {
   };
 
   return (
-    <div class={cn('chat-tool-ask-user-block', submittedReply() && 'chat-tool-ask-user-block-completed', props.class)}>
+    <div class={cn('chat-tool-ask-user-block', resolvedReply() && 'chat-tool-ask-user-block-completed', props.class)}>
       <div class="chat-tool-ask-user-head">
         <span class="chat-tool-ask-user-badge">Input Requested</span>
         <Show when={sourceLabel()}>
@@ -284,7 +325,7 @@ const AskUserToolCard: Component<AskUserToolCardProps> = (props) => {
 
       <p class="chat-tool-ask-user-question">{props.display.question}</p>
 
-      <Show when={submittedReply()} fallback={
+      <Show when={resolvedReply()} fallback={
         <>
           <div class="chat-tool-ask-user-options" role="radiogroup" aria-label="Ask user reply options">
             <For each={props.display.options}>
@@ -355,8 +396,8 @@ const AskUserToolCard: Component<AskUserToolCardProps> = (props) => {
         </>
       }>
         <div class="chat-tool-ask-user-submitted">
-          <span class="chat-tool-ask-user-submitted-label">Reply sent</span>
-          <p class="chat-tool-ask-user-submitted-text">{submittedReply()}</p>
+          <span class="chat-tool-ask-user-submitted-label">{resolvedReplyLabel()}</span>
+          <p class="chat-tool-ask-user-submitted-text">{resolvedReply()}</p>
         </div>
       </Show>
 
@@ -400,6 +441,7 @@ export const ToolCallBlock: Component<ToolCallBlockProps> = (props) => {
     return (
       <AskUserToolCard
         block={props.block}
+        messageId={props.messageId}
         display={askUserDisplay() as AskUserDisplay}
         class={props.class}
       />
