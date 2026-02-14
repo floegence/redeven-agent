@@ -86,3 +86,24 @@ export type wire_ai_list_messages_resp = {
   next_after_row_id?: number;
   has_more?: boolean;
 };
+
+export type wire_ai_get_active_run_snapshot_req = {
+  thread_id: string;
+};
+
+export type wire_ai_get_active_run_snapshot_resp = {
+  ok: boolean;
+  run_id?: string;
+  message_json?: any;
+};
+
+export type wire_ai_set_tool_collapsed_req = {
+  thread_id: string;
+  message_id: string;
+  tool_id: string;
+  collapsed: boolean;
+};
+
+export type wire_ai_set_tool_collapsed_resp = {
+  ok: boolean;
+};
