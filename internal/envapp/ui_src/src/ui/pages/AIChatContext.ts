@@ -10,7 +10,7 @@ import {
   type Resource,
 } from 'solid-js';
 import { useNotification } from '@floegence/floe-webapp-core';
-import type { Message, StreamEvent } from '@floegence/floe-webapp-core/chat';
+import type { Message, StreamEvent } from '../chat';
 import { useProtocol } from '@floegence/floe-webapp-protocol';
 import { useRedevenRpc, type AIRealtimeEvent } from '../protocol/redeven_v1';
 import { useEnvContext } from './EnvContext';
