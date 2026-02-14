@@ -160,7 +160,7 @@ PRAGMA user_version=1;
 		t.Fatalf("rows err: %v", err)
 	}
 
-	for _, col := range []string{"model_id", "run_status", "run_updated_at_unix_ms", "run_error"} {
+	for _, col := range []string{"model_id", "working_dir", "run_status", "run_updated_at_unix_ms", "run_error"} {
 		if !cols[col] {
 			t.Fatalf("missing migrated column %q", col)
 		}
@@ -184,8 +184,8 @@ WHERE type = 'table' AND name = ?
 	if err := s.db.QueryRowContext(ctx, `PRAGMA user_version;`).Scan(&version); err != nil {
 		t.Fatalf("read user_version: %v", err)
 	}
-	if version != 7 {
-		t.Fatalf("user_version=%d, want 7", version)
+	if version != 8 {
+		t.Fatalf("user_version=%d, want 8", version)
 	}
 }
 

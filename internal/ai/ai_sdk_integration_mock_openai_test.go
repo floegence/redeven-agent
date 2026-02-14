@@ -466,7 +466,7 @@ func TestIntegration_NativeSDK_OpenAI_ResponsesStream_GPT5_Succeeds(t *testing.T
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	th, err := svc.CreateThread(ctx, &meta, "hello", "")
+	th, err := svc.CreateThread(ctx, &meta, "hello", "", "")
 	if err != nil {
 		t.Fatalf("CreateThread: %v", err)
 	}
@@ -579,7 +579,7 @@ func TestIntegration_NativeSDK_OpenAI_ResponsesStream_GPT4o_Succeeds(t *testing.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	th, err := svc.CreateThread(ctx, &meta, "hello", "")
+	th, err := svc.CreateThread(ctx, &meta, "hello", "", "")
 	if err != nil {
 		t.Fatalf("CreateThread: %v", err)
 	}

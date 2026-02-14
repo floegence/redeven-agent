@@ -32,6 +32,7 @@ type ThreadView struct {
 	ThreadID            string `json:"thread_id"`
 	Title               string `json:"title"`
 	ModelID             string `json:"model_id"`
+	WorkingDir          string `json:"working_dir"`
 	RunStatus           string `json:"run_status"`
 	RunUpdatedAtUnixMs  int64  `json:"run_updated_at_unix_ms"`
 	RunError            string `json:"run_error,omitempty"`
@@ -47,8 +48,9 @@ type ListThreadsResponse struct {
 }
 
 type CreateThreadRequest struct {
-	Title   string `json:"title"`
-	ModelID string `json:"model_id,omitempty"`
+	Title      string `json:"title"`
+	ModelID    string `json:"model_id,omitempty"`
+	WorkingDir string `json:"working_dir,omitempty"`
 }
 
 type CreateThreadResponse struct {

@@ -16,10 +16,10 @@ import {
 } from '@floegence/floe-webapp-core/icons';
 import { FlowerIcon } from '../icons/FlowerIcon';
 import { LoadingOverlay, SnakeLoader } from '@floegence/floe-webapp-core/loading';
-import { Button, ConfirmDialog, Dialog, Input, Select, Tooltip } from '@floegence/floe-webapp-core/ui';
+import type { FileItem } from '@floegence/floe-webapp-core/file-browser';
+import { Button, ConfirmDialog, Dialog, DirectoryPicker, Input, Select, Tooltip } from '@floegence/floe-webapp-core/ui';
 import {
   AttachmentPreview,
-  ChatInput,
   ChatProvider,
   VirtualMessageList,
   useChatContext,
@@ -32,7 +32,7 @@ import {
 import { useProtocol } from '@floegence/floe-webapp-protocol';
 import { useEnvContext } from './EnvContext';
 import { useAIChatContext } from './AIChatContext';
-import { useRedevenRpc } from '../protocol/redeven_v1';
+import { useRedevenRpc, type FsFileInfo } from '../protocol/redeven_v1';
 import { fetchGatewayJSON } from '../services/gatewayApi';
 import { decorateMessageForTerminalExec, decorateStreamEventForTerminalExec } from './aiTerminalExecPresentation';
 import { hasRWXPermissions } from './aiPermissions';
@@ -45,6 +45,93 @@ function createUserMarkdownMessage(markdown: string): Message {
     status: 'complete',
     timestamp: Date.now(),
   };
+}
+
+// ---- Working dir picker (directory tree utilities) ----
+
+type DirCache = Map<string, FileItem[]>;
+
+function normalizeVirtualPath(path: string): string {
+  const raw = String(path ?? '').trim();
+  if (!raw) return '/';
+  const p = raw.startsWith('/') ? raw : `/${raw}`;
+  if (p === '/') return '/';
+  return p.endsWith('/') ? p.replace(/\/+$/, '') || '/' : p;
+}
+
+function toFolderFileItem(entry: FsFileInfo): FileItem {
+  const name = String(entry.name ?? '');
+  const p = normalizeVirtualPath(String(entry.path ?? ''));
+  const modifiedAtMs = Number(entry.modifiedAt ?? 0);
+  return {
+    id: p,
+    name,
+    type: 'folder',
+    path: p,
+    modifiedAt: Number.isFinite(modifiedAtMs) && modifiedAtMs > 0 ? new Date(modifiedAtMs) : undefined,
+  };
+}
+
+function sortFileItems(items: FileItem[]): FileItem[] {
+  return [...items].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function withChildren(tree: FileItem[], folderPath: string, children: FileItem[]): FileItem[] {
+  const target = folderPath.trim() || '/';
+  if (target === '/' || target === '') {
+    return children;
+  }
+
+  const visit = (items: FileItem[]): [FileItem[], boolean] => {
+    let changed = false;
+    const next = items.map((it) => {
+      if (it.type !== 'folder') return it;
+      if (it.path === target) {
+        changed = true;
+        return { ...it, children };
+      }
+      if (!it.children || it.children.length === 0) return it;
+      const [nextChildren, hit] = visit(it.children);
+      if (!hit) return it;
+      changed = true;
+      return { ...it, children: nextChildren };
+    });
+    return [changed ? next : items, changed];
+  };
+
+  const [next] = visit(tree);
+  return next;
+}
+
+function virtualToRealPath(virtualPath: string, rootAbs?: string): string {
+  const vp = normalizeVirtualPath(virtualPath);
+  const root = String(rootAbs ?? '').trim().replace(/\/+$/, '') || '';
+  if (!root) return vp;
+  if (vp === '/') return root;
+  if (root === '/') return vp;
+  return root + vp;
+}
+
+function realToVirtualPath(realPath: string, rootAbs?: string): string {
+  const root = String(rootAbs ?? '').trim().replace(/\/+$/, '') || '';
+  const p = String(realPath ?? '').trim();
+  if (!p) return '/';
+  if (!root) return '/';
+  if (root === '/') return normalizeVirtualPath(p);
+  if (p === root) return '/';
+  if (p.startsWith(root + '/')) {
+    return normalizeVirtualPath(p.slice(root.length));
+  }
+  return '/';
+}
+
+function toUserDisplayPath(realPath: string, rootAbs?: string): string {
+  const p = String(realPath ?? '').trim();
+  if (!p) return '';
+  const root = String(rootAbs ?? '').trim().replace(/\/+$/, '') || '';
+  if (!root || root === '/' || !p.startsWith(root)) return p;
+  const rel = p.slice(root.length);
+  return '~' + (rel || '');
 }
 
 type ExecutionMode = 'act' | 'plan';
@@ -158,7 +245,11 @@ const AIChatInput: Component<{
   class?: string;
   placeholder?: string;
   disabled?: boolean;
-  onSend: (content: string, attachments: Attachment[]) => Promise<void> | void;
+  workingDirLabel?: string;
+  workingDirTitle?: string;
+  workingDirLocked?: boolean;
+  workingDirDisabled?: boolean;
+  onPickWorkingDir?: () => void;
 }> = (props) => {
   const ctx = useChatContext();
   const [text, setText] = createSignal('');
@@ -209,7 +300,7 @@ const AIChatInput: Component<{
     attachments.clearAttachments();
     if (textareaRef) textareaRef.style.height = 'auto';
 
-    await props.onSend(content, files);
+    await ctx.sendMessage(content, files);
   };
 
   const handleKeyDown = (e: KeyboardEvent) => {
@@ -226,6 +317,8 @@ const AIChatInput: Component<{
     if (!ctx.config().allowAttachments) return;
     await attachments.handlePaste(e);
   };
+
+  const canPickWorkingDir = () => !!props.onPickWorkingDir && !props.disabled && !props.workingDirDisabled && !props.workingDirLocked;
 
   onCleanup(() => {
     if (rafId !== null && typeof cancelAnimationFrame !== 'undefined') {
@@ -282,16 +375,41 @@ const AIChatInput: Component<{
 
       <div class="chat-input-toolbar">
         <div class="chat-input-toolbar-left">
-          <Show when={ctx.config().allowAttachments}>
-            <button
-              type="button"
-              class="chat-input-attachment-btn"
-              onClick={attachments.openFilePicker}
-              title="Add attachments"
-            >
-              <PaperclipIcon />
-            </button>
-          </Show>
+          <div class="flex items-center gap-2 min-w-0">
+            <Show when={props.onPickWorkingDir}>
+              <button
+                type="button"
+                class={cn(
+                  'inline-flex items-center gap-1.5 px-2 py-1 rounded-md border border-border bg-muted/40 text-[11px] font-medium text-muted-foreground transition-colors duration-150 max-w-[220px]',
+                  canPickWorkingDir()
+                    ? 'hover:text-foreground hover:bg-muted/60 cursor-pointer'
+                    : 'opacity-60 cursor-not-allowed',
+                )}
+                onClick={() => {
+                  if (!canPickWorkingDir()) return;
+                  props.onPickWorkingDir?.();
+                }}
+                title={String(props.workingDirTitle ?? '').trim() || String(props.workingDirLabel ?? '').trim() || 'Working dir'}
+              >
+                <FolderIcon />
+                <span class="truncate font-mono">{String(props.workingDirLabel ?? '').trim() || 'Working dir'}</span>
+                <Show when={!!props.workingDirLocked}>
+                  <LockIcon />
+                </Show>
+              </button>
+            </Show>
+
+            <Show when={ctx.config().allowAttachments}>
+              <button
+                type="button"
+                class="chat-input-attachment-btn"
+                onClick={attachments.openFilePicker}
+                title="Add attachments"
+              >
+                <PaperclipIcon />
+              </button>
+            </Show>
+          </div>
         </div>
 
         <div class="chat-input-toolbar-right">
@@ -317,6 +435,19 @@ const AIChatInput: Component<{
 const PaperclipIcon: Component = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
     <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+  </svg>
+);
+
+const FolderIcon: Component = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+    <path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+  </svg>
+);
+
+const LockIcon: Component = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+    <rect x="4" y="11" width="16" height="10" rx="2" />
+    <path d="M8 11V7a4 4 0 1 1 8 0v4" />
   </svg>
 );
 
@@ -807,11 +938,38 @@ export function EnvAIPage() {
   let chat: ChatContextValue | null = null;
   const [chatReady, setChatReady] = createSignal(false);
 
+  // Working dir (draft-only; locked after thread creation)
+  const [homePath, setHomePath] = createSignal<string | undefined>(undefined);
+  const [workingDirPickerOpen, setWorkingDirPickerOpen] = createSignal(false);
+  const [workingDirFiles, setWorkingDirFiles] = createSignal<FileItem[]>([]);
+  let workingDirCache: DirCache = new Map();
+
   const FOLLOW_BOTTOM_THRESHOLD_PX = 24;
   let autoFollowEnabled = true;
   let followScrollRafPending = false;
   let scrollerListenerEl: HTMLElement | null = null;
   let scrollerListenerCleanup: (() => void) | null = null;
+
+  createEffect(() => {
+    if (!protocol.client()) return;
+    void (async () => {
+      try {
+        const resp = await rpc.fs.getHome();
+        const home = String(resp?.path ?? '').trim();
+        if (home) setHomePath(home);
+      } catch {
+        // ignore
+      }
+    })();
+  });
+
+  createEffect(() => {
+    const hp = String(homePath() ?? '').trim();
+    if (!hp) return;
+    const current = String(ai.draftWorkingDir() ?? '').trim();
+    if (current) return;
+    ai.setDraftWorkingDir(hp);
+  });
 
   const getMessageListScroller = () =>
     document.querySelector<HTMLElement>('.chat-message-list-scroll') ??
@@ -1005,6 +1163,84 @@ export function EnvAIPage() {
     }
     return 'Type a message...';
   });
+
+  const activeWorkingDir = createMemo(() => {
+    const tid = String(ai.activeThreadId() ?? '').trim();
+    if (tid) {
+      return String(ai.activeThread()?.working_dir ?? '').trim();
+    }
+    return String(ai.draftWorkingDir() ?? '').trim();
+  });
+  const workingDirLabel = createMemo(() => toUserDisplayPath(activeWorkingDir(), homePath()));
+  const workingDirLocked = createMemo(() => !!String(ai.activeThreadId() ?? '').trim());
+  const workingDirDisabled = createMemo(
+    () =>
+      !canInteract() ||
+      sendPending() ||
+      ai.creatingThread() ||
+      !String(homePath() ?? '').trim(),
+  );
+  const workingDirPickerInitialPath = createMemo(() => realToVirtualPath(activeWorkingDir(), homePath()));
+
+  const loadWorkingDirRoot = async () => {
+    if (!protocol.client()) return;
+    const p = '/';
+    if (workingDirCache.has(p)) {
+      setWorkingDirFiles(workingDirCache.get(p)!);
+      return;
+    }
+    try {
+      const resp = await rpc.fs.list({ path: p, showHidden: false });
+      const entries = resp?.entries ?? [];
+      const items = sortFileItems(
+        entries
+          .filter((e) => !!e?.isDirectory)
+          .map((e) => toFolderFileItem(e as FsFileInfo)),
+      );
+      workingDirCache.set(p, items);
+      setWorkingDirFiles(items);
+    } catch {
+      // ignore
+    }
+  };
+
+  const loadWorkingDirDir = async (path: string) => {
+    if (!protocol.client()) return;
+    const p = normalizeVirtualPath(path);
+    if (workingDirCache.has(p)) {
+      setWorkingDirFiles((prev) => withChildren(prev, p, workingDirCache.get(p)!));
+      return;
+    }
+    try {
+      const resp = await rpc.fs.list({ path: p, showHidden: false });
+      const entries = resp?.entries ?? [];
+      const items = sortFileItems(
+        entries
+          .filter((e) => !!e?.isDirectory)
+          .map((e) => toFolderFileItem(e as FsFileInfo)),
+      );
+      workingDirCache.set(p, items);
+      setWorkingDirFiles((prev) => withChildren(prev, p, items));
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleWorkingDirExpand = (path: string) => {
+    const p = normalizeVirtualPath(path);
+    if (p === '/') {
+      void loadWorkingDirRoot();
+      return;
+    }
+    void loadWorkingDirDir(p);
+  };
+
+  createEffect(() => {
+    if (!workingDirPickerOpen()) return;
+    if (workingDirFiles().length > 0) return;
+    void loadWorkingDirRoot();
+  });
+
   const updateExecutionMode = (nextMode: ExecutionMode) => {
     const next = normalizeExecutionMode(nextMode);
     setExecutionMode(next);
@@ -2008,9 +2244,33 @@ export function EnvAIPage() {
             </div>
 
             {/* Input area */}
-            <ChatInput
+            <DirectoryPicker
+              open={workingDirPickerOpen()}
+              onOpenChange={(open) => {
+                if (!open) setWorkingDirPickerOpen(false);
+              }}
+              files={workingDirFiles()}
+              initialPath={workingDirPickerInitialPath()}
+              homeLabel="Home"
+              homePath={homePath()}
+              title="Select Working Directory"
+              confirmText="Select"
+              onExpand={handleWorkingDirExpand}
+              onSelect={(virtualPath) => {
+                if (workingDirLocked()) return;
+                const realPath = virtualToRealPath(virtualPath, homePath());
+                ai.setDraftWorkingDir(realPath);
+              }}
+            />
+
+            <AIChatInput
               disabled={!canInteract()}
               placeholder={chatInputPlaceholder()}
+              workingDirLabel={workingDirLabel() || 'Working dir'}
+              workingDirTitle={activeWorkingDir() || workingDirLabel() || 'Working dir'}
+              workingDirLocked={workingDirLocked()}
+              workingDirDisabled={workingDirDisabled()}
+              onPickWorkingDir={() => setWorkingDirPickerOpen(true)}
             />
           </div>
         </Show>
