@@ -78,4 +78,20 @@ func TestEvaluateTaskCompletionGate(t *testing.T) {
 	}, TaskComplexityComplex, config.AIModeAct); pass || reason != "missing_todos_for_complex_task" {
 		t.Fatalf("complex task without todos after multi-step execution => pass=%v reason=%q", pass, reason)
 	}
+
+	if pass, reason := evaluateTaskCompletionGate("Everything is done.", runtimeState{
+		RequireStructuredTodos: true,
+		MinimumTodoItems:       3,
+	}, TaskComplexityStandard, config.AIModeAct); pass || reason != "missing_todos_for_explicit_plan_request" {
+		t.Fatalf("explicit todo plan without snapshot => pass=%v reason=%q", pass, reason)
+	}
+
+	if pass, reason := evaluateTaskCompletionGate("Everything is done.", runtimeState{
+		RequireStructuredTodos: true,
+		MinimumTodoItems:       3,
+		TodoTrackingEnabled:    true,
+		TodoTotalCount:         2,
+	}, TaskComplexityStandard, config.AIModeAct); pass || reason != "insufficient_todos_for_explicit_plan_request" {
+		t.Fatalf("explicit todo plan with too few todos => pass=%v reason=%q", pass, reason)
+	}
 }

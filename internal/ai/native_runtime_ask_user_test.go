@@ -59,6 +59,22 @@ func TestEvaluateAskUserGate(t *testing.T) {
 		t.Fatalf("complex multi-step task without todos => pass=%v reason=%q", pass, reason)
 	}
 
+	if pass, reason := evaluateAskUserGate("Need your decision on deployment order.", runtimeState{
+		RequireStructuredTodos: true,
+		MinimumTodoItems:       3,
+	}, TaskComplexityStandard); pass || reason != "missing_todos_for_explicit_plan_request" {
+		t.Fatalf("explicit plan request without todos => pass=%v reason=%q", pass, reason)
+	}
+
+	if pass, reason := evaluateAskUserGate("Need your decision on deployment order.", runtimeState{
+		RequireStructuredTodos: true,
+		MinimumTodoItems:       3,
+		TodoTrackingEnabled:    true,
+		TodoTotalCount:         2,
+	}, TaskComplexityStandard); pass || reason != "insufficient_todos_for_explicit_plan_request" {
+		t.Fatalf("explicit plan request with too few todos => pass=%v reason=%q", pass, reason)
+	}
+
 	pendingTodos := runtimeState{
 		TodoTrackingEnabled: true,
 		TodoOpenCount:       2,
@@ -103,5 +119,12 @@ func TestEvaluateGuardAskUserGate(t *testing.T) {
 		CompletedActionFacts: []string{"terminal.exec: checked logs", "apply_patch: patched config"},
 	}, TaskComplexityComplex); pass || reason != "missing_todos_for_complex_task" {
 		t.Fatalf("complex multi-step guard ask_user without todos => pass=%v reason=%q", pass, reason)
+	}
+
+	if pass, reason := evaluateGuardAskUserGate("missing_explicit_completion", runtimeState{
+		RequireStructuredTodos: true,
+		MinimumTodoItems:       3,
+	}, TaskComplexityStandard); pass || reason != "missing_todos_for_explicit_plan_request" {
+		t.Fatalf("explicit plan guard ask_user without todos => pass=%v reason=%q", pass, reason)
 	}
 }
