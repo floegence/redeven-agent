@@ -2,6 +2,7 @@ package ai
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -15,12 +16,14 @@ import (
 const (
 	// Type IDs must stay in sync with
 	// internal/envapp/ui_src/src/ui/protocol/redeven_v1/typeIds.ts.
-	TypeID_AI_RUN_START     uint32 = 6001
-	TypeID_AI_RUN_CANCEL    uint32 = 6002
-	TypeID_AI_SUBSCRIBE     uint32 = 6003
-	TypeID_AI_EVENT_NOTIFY  uint32 = 6004 // notify (agent -> client)
-	TypeID_AI_TOOL_APPROVAL uint32 = 6005
-	TypeID_AI_MESSAGES_LIST uint32 = 6006
+	TypeID_AI_RUN_START           uint32 = 6001
+	TypeID_AI_RUN_CANCEL          uint32 = 6002
+	TypeID_AI_SUBSCRIBE           uint32 = 6003
+	TypeID_AI_EVENT_NOTIFY        uint32 = 6004 // notify (agent -> client)
+	TypeID_AI_TOOL_APPROVAL       uint32 = 6005
+	TypeID_AI_MESSAGES_LIST       uint32 = 6006
+	TypeID_AI_ACTIVE_RUN_SNAPSHOT uint32 = 6007
+	TypeID_AI_SET_TOOL_COLLAPSED  uint32 = 6008
 )
 
 type aiRunStartReq struct {
@@ -75,6 +78,27 @@ type aiToolApprovalReq struct {
 }
 
 type aiToolApprovalResp struct {
+	OK bool `json:"ok"`
+}
+
+type aiGetActiveRunSnapshotReq struct {
+	ThreadID string `json:"thread_id"`
+}
+
+type aiGetActiveRunSnapshotResp struct {
+	OK          bool            `json:"ok"`
+	RunID       string          `json:"run_id,omitempty"`
+	MessageJSON json.RawMessage `json:"message_json,omitempty"`
+}
+
+type aiSetToolCollapsedReq struct {
+	ThreadID  string `json:"thread_id"`
+	MessageID string `json:"message_id"`
+	ToolID    string `json:"tool_id"`
+	Collapsed bool   `json:"collapsed"`
+}
+
+type aiSetToolCollapsedResp struct {
 	OK bool `json:"ok"`
 }
 
@@ -239,6 +263,89 @@ func (s *Service) RegisterRPC(r *rpc.Router, meta *session.Meta, streamServer *r
 			})
 		}
 		return out, nil
+	})
+
+	rpctyped.Register[aiGetActiveRunSnapshotReq, aiGetActiveRunSnapshotResp](r, TypeID_AI_ACTIVE_RUN_SNAPSHOT, func(ctx context.Context, req *aiGetActiveRunSnapshotReq) (*aiGetActiveRunSnapshotResp, error) {
+		if meta == nil || !meta.CanRead {
+			return nil, &rpc.Error{Code: 403, Message: "read permission denied"}
+		}
+		if req == nil {
+			return nil, &rpc.Error{Code: 400, Message: "invalid payload"}
+		}
+		threadID := strings.TrimSpace(req.ThreadID)
+		if threadID == "" {
+			return nil, &rpc.Error{Code: 400, Message: "missing thread_id"}
+		}
+
+		s.mu.Lock()
+		db := s.threadsDB
+		s.mu.Unlock()
+		if db == nil {
+			return nil, &rpc.Error{Code: 503, Message: "threads store not ready"}
+		}
+
+		// Ensure thread exists (consistent with other endpoints).
+		if th, err := db.GetThread(ctx, strings.TrimSpace(meta.EndpointID), threadID); err != nil {
+			return nil, &rpc.Error{Code: 400, Message: err.Error()}
+		} else if th == nil {
+			return nil, &rpc.Error{Code: 404, Message: "thread not found"}
+		}
+
+		runID, msgJSON, err := s.GetActiveRunSnapshot(meta, threadID)
+		if err != nil {
+			return nil, toAIRPCError(err)
+		}
+		if strings.TrimSpace(runID) == "" || strings.TrimSpace(msgJSON) == "" {
+			return &aiGetActiveRunSnapshotResp{OK: false}, nil
+		}
+		return &aiGetActiveRunSnapshotResp{
+			OK:          true,
+			RunID:       runID,
+			MessageJSON: json.RawMessage(strings.TrimSpace(msgJSON)),
+		}, nil
+	})
+
+	rpctyped.Register[aiSetToolCollapsedReq, aiSetToolCollapsedResp](r, TypeID_AI_SET_TOOL_COLLAPSED, func(ctx context.Context, req *aiSetToolCollapsedReq) (*aiSetToolCollapsedResp, error) {
+		if meta == nil || !meta.CanRead {
+			return nil, &rpc.Error{Code: 403, Message: "read permission denied"}
+		}
+		if req == nil {
+			return nil, &rpc.Error{Code: 400, Message: "invalid payload"}
+		}
+		threadID := strings.TrimSpace(req.ThreadID)
+		messageID := strings.TrimSpace(req.MessageID)
+		toolID := strings.TrimSpace(req.ToolID)
+		if threadID == "" {
+			return nil, &rpc.Error{Code: 400, Message: "missing thread_id"}
+		}
+		if messageID == "" {
+			return nil, &rpc.Error{Code: 400, Message: "missing message_id"}
+		}
+		if toolID == "" {
+			return nil, &rpc.Error{Code: 400, Message: "missing tool_id"}
+		}
+
+		s.mu.Lock()
+		db := s.threadsDB
+		s.mu.Unlock()
+		if db == nil {
+			return nil, &rpc.Error{Code: 503, Message: "threads store not ready"}
+		}
+
+		// Ensure thread exists (consistent with other endpoints).
+		if th, err := db.GetThread(ctx, strings.TrimSpace(meta.EndpointID), threadID); err != nil {
+			return nil, &rpc.Error{Code: 400, Message: err.Error()}
+		} else if th == nil {
+			return nil, &rpc.Error{Code: 404, Message: "thread not found"}
+		}
+
+		if err := s.SetToolCollapsed(meta, threadID, messageID, toolID, req.Collapsed); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, &rpc.Error{Code: 404, Message: "message not found"}
+			}
+			return nil, toAIRPCError(err)
+		}
+		return &aiSetToolCollapsedResp{OK: true}, nil
 	})
 }
 

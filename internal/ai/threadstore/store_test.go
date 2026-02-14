@@ -234,6 +234,76 @@ func TestStore_UpdateThreadModelID_DoesNotTouchUpdatedAt(t *testing.T) {
 	}
 }
 
+func TestStore_UpdateTranscriptMessageJSONByRowID_DoesNotTouchThreadUpdatedAt(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "threads.sqlite")
+	s, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = s.Close() }()
+
+	ctx := context.Background()
+	if err := s.CreateThread(ctx, Thread{ThreadID: "th_1", EndpointID: "env_1", Title: "chat"}); err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+
+	rowID, err := s.AppendMessage(ctx, "env_1", "th_1", Message{
+		ThreadID:        "th_1",
+		EndpointID:      "env_1",
+		MessageID:       "msg_1",
+		Role:            "assistant",
+		Status:          "complete",
+		CreatedAtUnixMs: 123,
+		UpdatedAtUnixMs: 123,
+		TextContent:     "hello",
+		MessageJSON:     `{"id":"msg_1","role":"assistant","blocks":[{"type":"tool-call","toolName":"terminal.exec","toolId":"tool_1","args":{},"status":"success"}],"status":"complete","timestamp":123}`,
+	}, "u1", "u1@example.com")
+	if err != nil {
+		t.Fatalf("AppendMessage: %v", err)
+	}
+	if rowID <= 0 {
+		t.Fatalf("rowID=%d, want > 0", rowID)
+	}
+
+	th, err := s.GetThread(ctx, "env_1", "th_1")
+	if err != nil {
+		t.Fatalf("GetThread: %v", err)
+	}
+	if th == nil {
+		t.Fatalf("thread missing")
+	}
+	updatedAt := th.UpdatedAtUnixMs
+	if updatedAt <= 0 {
+		t.Fatalf("UpdatedAtUnixMs=%d, want > 0", updatedAt)
+	}
+
+	nextJSON := `{"id":"msg_1","role":"assistant","blocks":[{"type":"tool-call","toolName":"terminal.exec","toolId":"tool_1","args":{},"status":"success","collapsed":false}],"status":"complete","timestamp":123}`
+	if err := s.UpdateTranscriptMessageJSONByRowID(ctx, "env_1", rowID, nextJSON, 0); err != nil {
+		t.Fatalf("UpdateTranscriptMessageJSONByRowID: %v", err)
+	}
+
+	th2, err := s.GetThread(ctx, "env_1", "th_1")
+	if err != nil {
+		t.Fatalf("GetThread after update: %v", err)
+	}
+	if th2 == nil {
+		t.Fatalf("thread missing after update")
+	}
+	if th2.UpdatedAtUnixMs != updatedAt {
+		t.Fatalf("UpdatedAtUnixMs changed: got=%d want=%d", th2.UpdatedAtUnixMs, updatedAt)
+	}
+
+	_, gotJSON, err := s.GetTranscriptMessageRowIDAndJSONByMessageID(ctx, "env_1", "th_1", "msg_1")
+	if err != nil {
+		t.Fatalf("GetTranscriptMessageRowIDAndJSONByMessageID: %v", err)
+	}
+	if gotJSON != nextJSON {
+		t.Fatalf("message_json=%q, want %q", gotJSON, nextJSON)
+	}
+}
+
 func TestStore_ListRecentThreadToolCalls(t *testing.T) {
 	t.Parallel()
 

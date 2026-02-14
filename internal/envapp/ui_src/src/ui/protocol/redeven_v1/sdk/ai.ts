@@ -63,6 +63,27 @@ export type AIListMessagesResponse = {
   hasMore?: boolean;
 };
 
+export type AIGetActiveRunSnapshotRequest = {
+  threadId: string;
+};
+
+export type AIGetActiveRunSnapshotResponse = {
+  ok: boolean;
+  runId?: string;
+  messageJson?: any;
+};
+
+export type AISetToolCollapsedRequest = {
+  threadId: string;
+  messageId: string;
+  toolId: string;
+  collapsed: boolean;
+};
+
+export type AISetToolCollapsedResponse = {
+  ok: boolean;
+};
+
 export type AIToolApprovalRequest = {
   runId: string;
   toolId: string;

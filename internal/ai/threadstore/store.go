@@ -870,6 +870,66 @@ LIMIT ?
 	return out, nil
 }
 
+// GetTranscriptMessageRowIDAndJSONByMessageID returns (row_id, message_json) for a transcript message.
+func (s *Store) GetTranscriptMessageRowIDAndJSONByMessageID(ctx context.Context, endpointID string, threadID string, messageID string) (int64, string, error) {
+	if s == nil || s.db == nil {
+		return 0, "", errors.New("store not initialized")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	endpointID = strings.TrimSpace(endpointID)
+	threadID = strings.TrimSpace(threadID)
+	messageID = strings.TrimSpace(messageID)
+	if endpointID == "" || threadID == "" || messageID == "" {
+		return 0, "", errors.New("invalid request")
+	}
+
+	var rowID int64
+	var raw string
+	if err := s.db.QueryRowContext(ctx, `
+SELECT id, message_json
+FROM transcript_messages
+WHERE endpoint_id = ? AND thread_id = ? AND message_id = ?
+`, endpointID, threadID, messageID).Scan(&rowID, &raw); err != nil {
+		return 0, "", err
+	}
+	return rowID, strings.TrimSpace(raw), nil
+}
+
+// UpdateTranscriptMessageJSONByRowID updates transcript_messages.message_json without mutating thread metadata.
+func (s *Store) UpdateTranscriptMessageJSONByRowID(ctx context.Context, endpointID string, rowID int64, messageJSON string, updatedAtUnixMs int64) error {
+	if s == nil || s.db == nil {
+		return errors.New("store not initialized")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	endpointID = strings.TrimSpace(endpointID)
+	messageJSON = strings.TrimSpace(messageJSON)
+	if endpointID == "" || rowID <= 0 || messageJSON == "" {
+		return errors.New("invalid request")
+	}
+	if updatedAtUnixMs <= 0 {
+		updatedAtUnixMs = time.Now().UnixMilli()
+	}
+
+	res, err := s.db.ExecContext(ctx, `
+UPDATE transcript_messages
+SET message_json = ?,
+    updated_at_unix_ms = ?
+WHERE endpoint_id = ? AND id = ?
+`, messageJSON, updatedAtUnixMs, endpointID, rowID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 type RunRecord struct {
 	RunID           string `json:"run_id"`
 	EndpointID      string `json:"endpoint_id"`
