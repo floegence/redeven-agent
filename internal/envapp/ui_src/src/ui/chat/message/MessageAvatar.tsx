@@ -8,6 +8,7 @@ import type { MessageRole } from '../types';
 export interface MessageAvatarProps {
   role: MessageRole;
   src?: string;
+  isStreaming?: boolean;
 }
 
 export const MessageAvatar: Component<MessageAvatarProps> = (props) => {
@@ -17,6 +18,7 @@ export const MessageAvatar: Component<MessageAvatarProps> = (props) => {
         'chat-message-avatar',
         props.role === 'user' && 'chat-message-avatar-user',
         props.role === 'assistant' && 'chat-message-avatar-assistant',
+        props.isStreaming && props.role === 'assistant' && 'chat-message-avatar-streaming',
       )}
     >
       <Show

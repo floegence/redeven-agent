@@ -1,0 +1,315 @@
+// Block presentation decorators — transforms raw tool-call blocks into rich typed blocks
+// before they are rendered by the chat UI.
+//
+// Extends the original terminal.exec → ShellBlock decorator with:
+//   - write_todos → TodosBlock
+//   - sources → SourcesBlock
+
+import type { Message, MessageBlock, StreamEvent } from '../chat/types';
+import type { TodosBlock as TodosBlockType, SourcesBlock as SourcesBlockType } from '../chat/types';
+import { normalizeThreadTodosView } from './aiDataNormalizers';
+
+const TERMINAL_EXEC_TOOL_NAME = 'terminal.exec';
+const WRITE_TODOS_TOOL_NAME = 'write_todos';
+const SOURCES_TOOL_NAME = 'sources';
+
+type AnyRecord = Record<string, unknown>;
+type ChatToolCallBlock = Extract<MessageBlock, { type: 'tool-call' }>;
+
+// ---- Public API ----
+
+export function decorateMessageBlocks(message: Message): Message {
+  if (!message || !Array.isArray(message.blocks) || message.blocks.length === 0) {
+    return message;
+  }
+
+  let changed = false;
+  const nextBlocks = message.blocks.map((block) => {
+    const next = decorateBlock(block);
+    if (next !== block) {
+      changed = true;
+    }
+    return next;
+  });
+
+  if (!changed) {
+    return message;
+  }
+  return { ...message, blocks: nextBlocks };
+}
+
+export function decorateStreamEvent(event: StreamEvent): StreamEvent {
+  if (event.type !== 'block-set') {
+    return event;
+  }
+  const nextBlock = decorateBlock(event.block);
+  if (nextBlock === event.block) {
+    return event;
+  }
+  return {
+    ...event,
+    block: nextBlock,
+  };
+}
+
+// Backward-compatible aliases
+export const decorateMessageForTerminalExec = decorateMessageBlocks;
+export const decorateStreamEventForTerminalExec = decorateStreamEvent;
+
+// ---- Internal decorator dispatch ----
+
+function decorateBlock(block: MessageBlock): MessageBlock {
+  if (block.type !== 'tool-call') {
+    return block;
+  }
+
+  // Try each decorator in order
+  const decorated =
+    buildTerminalExecShellBlock(block) ??
+    buildTodosBlock(block) ??
+    buildSourcesBlock(block);
+  if (decorated) {
+    return decorated;
+  }
+
+  // Recurse into children
+  const childBlocks = Array.isArray(block.children) ? block.children : [];
+  if (childBlocks.length === 0) {
+    return block;
+  }
+
+  let changed = false;
+  const nextChildren = childBlocks.map((child) => {
+    const next = decorateBlock(child);
+    if (next !== child) {
+      changed = true;
+    }
+    return next;
+  });
+
+  if (!changed) {
+    return block;
+  }
+  return {
+    ...block,
+    children: nextChildren,
+  };
+}
+
+// ---- terminal.exec → ShellBlock ----
+
+function buildTerminalExecShellBlock(block: ChatToolCallBlock): MessageBlock | null {
+  if (String(block.toolName ?? '').trim() !== TERMINAL_EXEC_TOOL_NAME) {
+    return null;
+  }
+
+  const args = asRecord(block.args);
+  const result = asRecord(block.result);
+
+  const command = readString(args, ['command']) || '(empty command)';
+  const cwd = readString(args, ['cwd', 'workdir']);
+  const timeoutMs = readNumber(args, ['timeout_ms', 'timeoutMs']);
+
+  const stdout = readString(result, ['stdout']);
+  const stderr = readString(result, ['stderr']);
+  const exitCode = readNumber(result, ['exit_code', 'exitCode']);
+  const durationMs = readNumber(result, ['duration_ms', 'durationMs']);
+  const timedOut = readBoolean(result, ['timed_out', 'timedOut']);
+  const truncated = readBoolean(result, ['truncated']);
+  const output = composeTerminalOutput({
+    stdout,
+    stderr,
+    cwd,
+    timeoutMs,
+    durationMs,
+    timedOut,
+    truncated,
+    toolError: String(block.error ?? '').trim(),
+  });
+
+  return {
+    type: 'shell',
+    command,
+    output: output || undefined,
+    exitCode: typeof exitCode === 'number' && Number.isFinite(exitCode) ? Math.round(exitCode) : undefined,
+    status: toShellStatus(block.status),
+  };
+}
+
+// ---- write_todos → TodosBlock ----
+
+function buildTodosBlock(block: ChatToolCallBlock): TodosBlockType | null {
+  if (String(block.toolName ?? '').trim() !== WRITE_TODOS_TOOL_NAME) {
+    return null;
+  }
+  // Only convert when the tool has finished successfully; while running, keep the ToolCallBlock
+  // so the spinner is shown.
+  if (block.status !== 'success') {
+    return null;
+  }
+
+  const normalized = normalizeThreadTodosView(block.result);
+  return {
+    type: 'todos',
+    version: normalized.version,
+    updatedAtUnixMs: normalized.updated_at_unix_ms,
+    todos: normalized.todos.map((t) => ({
+      id: t.id,
+      content: t.content,
+      status: t.status,
+      note: t.note,
+    })),
+  };
+}
+
+// ---- sources → SourcesBlock ----
+
+function buildSourcesBlock(block: ChatToolCallBlock): SourcesBlockType | null {
+  if (String(block.toolName ?? '').trim() !== SOURCES_TOOL_NAME) {
+    return null;
+  }
+
+  const result = asRecord(block.result);
+  const rawSources = Array.isArray(result.sources) ? result.sources : [];
+  const sources: SourcesBlockType['sources'] = [];
+
+  for (const entry of rawSources) {
+    if (!entry || typeof entry !== 'object') continue;
+    const rec = entry as Record<string, unknown>;
+    const title = String(rec.title ?? '').trim();
+    const url = String(rec.url ?? '').trim();
+    if (url) {
+      sources.push({ title: title || url, url });
+    }
+  }
+
+  if (sources.length === 0) {
+    return null;
+  }
+
+  return {
+    type: 'sources',
+    sources,
+  };
+}
+
+// ---- Shared helpers ----
+
+function asRecord(value: unknown): AnyRecord {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+  return value as AnyRecord;
+}
+
+function readString(from: AnyRecord, keys: string[]): string {
+  for (const key of keys) {
+    const value = from[key];
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (trimmed) {
+        return value;
+      }
+    }
+  }
+  return '';
+}
+
+function readNumber(from: AnyRecord, keys: string[]): number | undefined {
+  for (const key of keys) {
+    const value = from[key];
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === 'string') {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) {
+        return parsed;
+      }
+    }
+  }
+  return undefined;
+}
+
+function readBoolean(from: AnyRecord, keys: string[]): boolean {
+  for (const key of keys) {
+    const value = from[key];
+    if (typeof value === 'boolean') {
+      return value;
+    }
+    if (typeof value === 'number') {
+      if (value === 1) return true;
+      if (value === 0) return false;
+    }
+    if (typeof value === 'string') {
+      const normalized = value.trim().toLowerCase();
+      if (normalized === 'true' || normalized === '1') {
+        return true;
+      }
+      if (normalized === 'false' || normalized === '0') {
+        return false;
+      }
+    }
+  }
+  return false;
+}
+
+function toShellStatus(status: ChatToolCallBlock['status']): 'running' | 'success' | 'error' {
+  if (status === 'success') {
+    return 'success';
+  }
+  if (status === 'error') {
+    return 'error';
+  }
+  return 'running';
+}
+
+type TerminalOutputParts = Readonly<{
+  stdout: string;
+  stderr: string;
+  cwd: string;
+  timeoutMs?: number;
+  durationMs?: number;
+  timedOut: boolean;
+  truncated: boolean;
+  toolError: string;
+}>;
+
+function composeTerminalOutput(parts: TerminalOutputParts): string {
+  const info: string[] = [];
+  if (parts.cwd) {
+    info.push(`[cwd] ${parts.cwd}`);
+  }
+  if (typeof parts.timeoutMs === 'number' && Number.isFinite(parts.timeoutMs) && parts.timeoutMs > 0) {
+    info.push(`[timeout] ${Math.max(0, Math.round(parts.timeoutMs))}ms`);
+  }
+  if (typeof parts.durationMs === 'number' && Number.isFinite(parts.durationMs) && parts.durationMs >= 0) {
+    info.push(`[duration] ${Math.round(parts.durationMs)}ms`);
+  }
+  if (parts.timedOut) {
+    info.push('[status] timed out');
+  }
+  if (parts.truncated) {
+    info.push('[notice] output truncated');
+  }
+
+  const sections: string[] = [];
+  if (info.length > 0) {
+    sections.push(info.join('\n'));
+  }
+  const stdout = String(parts.stdout ?? '').trimEnd();
+  const stderr = String(parts.stderr ?? '').trimEnd();
+  const toolError = String(parts.toolError ?? '').trim();
+
+  if (stdout) {
+    sections.push(stdout);
+  }
+  if (stderr) {
+    sections.push(stdout ? `[stderr]\n${stderr}` : stderr);
+  }
+  if (toolError && !stderr.includes(toolError)) {
+    sections.push(`[error] ${toolError}`);
+  }
+
+  return sections.join('\n\n').trim();
+}
