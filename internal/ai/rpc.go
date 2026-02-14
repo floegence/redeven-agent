@@ -16,25 +16,28 @@ import (
 const (
 	// Type IDs must stay in sync with
 	// internal/envapp/ui_src/src/ui/protocol/redeven_v1/typeIds.ts.
-	TypeID_AI_RUN_START           uint32 = 6001
+	TypeID_AI_SEND_USER_TURN      uint32 = 6001
 	TypeID_AI_RUN_CANCEL          uint32 = 6002
-	TypeID_AI_SUBSCRIBE           uint32 = 6003
+	TypeID_AI_SUBSCRIBE_SUMMARY   uint32 = 6003
 	TypeID_AI_EVENT_NOTIFY        uint32 = 6004 // notify (agent -> client)
 	TypeID_AI_TOOL_APPROVAL       uint32 = 6005
 	TypeID_AI_MESSAGES_LIST       uint32 = 6006
 	TypeID_AI_ACTIVE_RUN_SNAPSHOT uint32 = 6007
 	TypeID_AI_SET_TOOL_COLLAPSED  uint32 = 6008
+	TypeID_AI_SUBSCRIBE_THREAD    uint32 = 6009
 )
 
-type aiRunStartReq struct {
-	ThreadID string     `json:"thread_id"`
-	Model    string     `json:"model,omitempty"`
-	Input    RunInput   `json:"input"`
-	Options  RunOptions `json:"options"`
+type aiSendUserTurnReq struct {
+	ThreadID      string     `json:"thread_id"`
+	Model         string     `json:"model,omitempty"`
+	Input         RunInput   `json:"input"`
+	Options       RunOptions `json:"options"`
+	ExpectedRunID string     `json:"expected_run_id,omitempty"`
 }
 
-type aiRunStartResp struct {
+type aiSendUserTurnResp struct {
 	RunID string `json:"run_id"`
+	Kind  string `json:"kind"`
 }
 
 type aiRunCancelReq struct {
@@ -46,10 +49,18 @@ type aiRunCancelResp struct {
 	OK bool `json:"ok"`
 }
 
-type aiSubscribeReq struct{}
+type aiSubscribeSummaryReq struct{}
 
-type aiSubscribeResp struct {
+type aiSubscribeSummaryResp struct {
 	ActiveRuns []ActiveThreadRun `json:"active_runs"`
+}
+
+type aiSubscribeThreadReq struct {
+	ThreadID string `json:"thread_id"`
+}
+
+type aiSubscribeThreadResp struct {
+	RunID string `json:"run_id,omitempty"`
 }
 
 type aiListMessagesReq struct {
@@ -107,7 +118,7 @@ func (s *Service) RegisterRPC(r *rpc.Router, meta *session.Meta, streamServer *r
 		return
 	}
 
-	rpctyped.Register[aiRunStartReq, aiRunStartResp](r, TypeID_AI_RUN_START, func(_ context.Context, req *aiRunStartReq) (*aiRunStartResp, error) {
+	rpctyped.Register[aiSendUserTurnReq, aiSendUserTurnResp](r, TypeID_AI_SEND_USER_TURN, func(ctx context.Context, req *aiSendUserTurnReq) (*aiSendUserTurnResp, error) {
 		if meta == nil || !meta.CanRead || !meta.CanWrite || !meta.CanExecute {
 			return nil, &rpc.Error{Code: 403, Message: "read/write/execute permission denied"}
 		}
@@ -117,22 +128,17 @@ func (s *Service) RegisterRPC(r *rpc.Router, meta *session.Meta, streamServer *r
 		if req == nil {
 			return nil, &rpc.Error{Code: 400, Message: "invalid payload"}
 		}
-
-		runID, err := NewRunID()
+		resp, err := s.SendUserTurn(ctx, meta, SendUserTurnRequest{
+			ThreadID:      strings.TrimSpace(req.ThreadID),
+			Model:         strings.TrimSpace(req.Model),
+			Input:         req.Input,
+			Options:       req.Options,
+			ExpectedRunID: strings.TrimSpace(req.ExpectedRunID),
+		})
 		if err != nil {
-			return nil, &rpc.Error{Code: 500, Message: "failed to allocate run id"}
-		}
-
-		startReq := RunStartRequest{
-			ThreadID: strings.TrimSpace(req.ThreadID),
-			Model:    strings.TrimSpace(req.Model),
-			Input:    req.Input,
-			Options:  req.Options,
-		}
-		if err := s.StartRunDetached(meta, runID, startReq); err != nil {
 			return nil, toAIRPCError(err)
 		}
-		return &aiRunStartResp{RunID: runID}, nil
+		return &aiSendUserTurnResp{RunID: strings.TrimSpace(resp.RunID), Kind: strings.TrimSpace(resp.Kind)}, nil
 	})
 
 	rpctyped.Register[aiRunCancelReq, aiRunCancelResp](r, TypeID_AI_RUN_CANCEL, func(_ context.Context, req *aiRunCancelReq) (*aiRunCancelResp, error) {
@@ -173,18 +179,39 @@ func (s *Service) RegisterRPC(r *rpc.Router, meta *session.Meta, streamServer *r
 		return &aiToolApprovalResp{OK: true}, nil
 	})
 
-	rpctyped.Register[aiSubscribeReq, aiSubscribeResp](r, TypeID_AI_SUBSCRIBE, func(_ context.Context, _ *aiSubscribeReq) (*aiSubscribeResp, error) {
+	rpctyped.Register[aiSubscribeSummaryReq, aiSubscribeSummaryResp](r, TypeID_AI_SUBSCRIBE_SUMMARY, func(_ context.Context, _ *aiSubscribeSummaryReq) (*aiSubscribeSummaryResp, error) {
 		if meta == nil || !meta.CanRead || !meta.CanWrite || !meta.CanExecute {
 			return nil, &rpc.Error{Code: 403, Message: "read/write/execute permission denied"}
 		}
 		if streamServer == nil {
 			return nil, &rpc.Error{Code: 500, Message: "stream not ready"}
 		}
-		activeRuns, err := s.SubscribeEndpoint(strings.TrimSpace(meta.EndpointID), streamServer)
+		activeRuns, err := s.SubscribeSummary(strings.TrimSpace(meta.EndpointID), streamServer)
 		if err != nil {
 			return nil, toAIRPCError(err)
 		}
-		return &aiSubscribeResp{ActiveRuns: activeRuns}, nil
+		return &aiSubscribeSummaryResp{ActiveRuns: activeRuns}, nil
+	})
+
+	rpctyped.Register[aiSubscribeThreadReq, aiSubscribeThreadResp](r, TypeID_AI_SUBSCRIBE_THREAD, func(_ context.Context, req *aiSubscribeThreadReq) (*aiSubscribeThreadResp, error) {
+		if meta == nil || !meta.CanRead || !meta.CanWrite || !meta.CanExecute {
+			return nil, &rpc.Error{Code: 403, Message: "read/write/execute permission denied"}
+		}
+		if streamServer == nil {
+			return nil, &rpc.Error{Code: 500, Message: "stream not ready"}
+		}
+		if req == nil {
+			return nil, &rpc.Error{Code: 400, Message: "invalid payload"}
+		}
+		threadID := strings.TrimSpace(req.ThreadID)
+		if threadID == "" {
+			return nil, &rpc.Error{Code: 400, Message: "missing thread_id"}
+		}
+		runID, err := s.SubscribeThread(strings.TrimSpace(meta.EndpointID), threadID, streamServer)
+		if err != nil {
+			return nil, toAIRPCError(err)
+		}
+		return &aiSubscribeThreadResp{RunID: strings.TrimSpace(runID)}, nil
 	})
 
 	rpctyped.Register[aiListMessagesReq, aiListMessagesResp](r, TypeID_AI_MESSAGES_LIST, func(ctx context.Context, req *aiListMessagesReq) (*aiListMessagesResp, error) {
@@ -361,7 +388,7 @@ func toAIRPCError(err error) *rpc.Error {
 	switch {
 	case errors.Is(err, ErrNotConfigured):
 		return &rpc.Error{Code: 503, Message: "ai not configured"}
-	case errors.Is(err, ErrRunActive), errors.Is(err, ErrThreadBusy):
+	case errors.Is(err, ErrThreadBusy), errors.Is(err, ErrRunChanged):
 		return &rpc.Error{Code: 409, Message: msg}
 	}
 
