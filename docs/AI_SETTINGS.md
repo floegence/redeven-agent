@@ -137,10 +137,10 @@ Key points:
 
 ## 6. Permissions (Current Policy)
 
-- Running AI: requires `read` permission (normal members can use it).
+- Running AI: requires `read + write + execute` permission (RWX / "full").
 - Editing settings or updating keys: requires `admin` permission (local endpoint owner / admin only).
 
-This keeps usage accessible while protecting local secret writes.
+This keeps local secret writes protected while ensuring Flower only runs in fully-privileged (RWX) sessions.
 
 ---
 

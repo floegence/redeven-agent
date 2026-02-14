@@ -490,7 +490,7 @@ func TestSubagentManager_TaskIDResumeContract(t *testing.T) {
 	}
 }
 
-func TestUseSkillToolHandler_Execute(t *testing.T) {
+func TestUseSkillTool_ExecTool(t *testing.T) {
 	t.Parallel()
 
 	workspace := t.TempDir()
@@ -512,17 +512,14 @@ Use this handler skill.`, skillName)
 	}
 
 	r := newRun(runOptions{Log: slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{})), FSRoot: workspace})
-	h := &useSkillToolHandler{r: r}
-	res, err := h.Execute(context.Background(), ToolCall{ID: "tool_1", Name: "use_skill", Args: map[string]any{"name": skillName}})
+	meta := &session.Meta{CanRead: true, CanWrite: true, CanExecute: true}
+	out, err := r.execTool(context.Background(), meta, "tool_1", "use_skill", map[string]any{"name": skillName})
 	if err != nil {
-		t.Fatalf("Execute error: %v", err)
+		t.Fatalf("execTool error: %v", err)
 	}
-	if res.Status != toolResultStatusSuccess {
-		t.Fatalf("unexpected status: %+v", res)
-	}
-	data, ok := res.Data.(map[string]any)
+	data, ok := out.(map[string]any)
 	if !ok {
-		t.Fatalf("unexpected data type: %T", res.Data)
+		t.Fatalf("unexpected data type: %T", out)
 	}
 	if strings.TrimSpace(anyToString(data["name"])) != skillName {
 		t.Fatalf("unexpected skill data: %#v", data)
