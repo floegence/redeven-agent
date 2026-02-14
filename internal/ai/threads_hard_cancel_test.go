@@ -44,7 +44,7 @@ func TestService_DeleteThreadForce_DoesNotWaitForRunExit(t *testing.T) {
 		CanExecute:        true,
 	}
 
-	th, err := svc.CreateThread(ctx, meta, "hello", "")
+	th, err := svc.CreateThread(ctx, meta, "hello", "", "")
 	if err != nil {
 		t.Fatalf("CreateThread: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestService_CancelRun_DetachesStaleActiveMapping(t *testing.T) {
 		CanExecute:        true,
 	}
 
-	th, err := svc.CreateThread(ctx, meta, "hello", "")
+	th, err := svc.CreateThread(ctx, meta, "hello", "", "")
 	if err != nil {
 		t.Fatalf("CreateThread: %v", err)
 	}
