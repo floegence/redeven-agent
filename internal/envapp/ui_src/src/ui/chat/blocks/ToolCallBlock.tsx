@@ -249,14 +249,30 @@ const AskUserToolCard: Component<AskUserToolCardProps> = (props) => {
   );
   const sourceLabel = createMemo(() => humanizeAskUserSource(props.display.source));
   const resolvedReply = createMemo(() => submittedReply() || historicalReply());
+  const isTailMessage = createMemo(() => {
+    const messages = ctx.messages();
+    if (messages.length === 0) {
+      return false;
+    }
+    return messages[messages.length - 1]?.id === props.messageId;
+  });
+  const interactiveAllowed = createMemo(
+    () => isTailMessage() && resolvedReply().length === 0,
+  );
   const controlsDisabled = createMemo(
-    () => submitting() || ctx.isWorking() || resolvedReply().length > 0,
+    () => submitting() || ctx.isWorking() || !interactiveAllowed(),
   );
   const canSubmitCustomReply = createMemo(
     () => useCustomReply() && customReply().trim().length > 0 && !controlsDisabled(),
   );
-  const resolvedReplyLabel = createMemo(() =>
-    historicalReply().length > 0 ? 'Selected reply' : 'Reply sent',
+  const resolvedReplyLabel = createMemo(() => {
+    if (!resolvedReply()) {
+      return 'Historical request';
+    }
+    return historicalReply().length > 0 ? 'Selected reply' : 'Reply sent';
+  });
+  const resolvedReplyText = createMemo(
+    () => resolvedReply() || 'This ask_user interaction is already closed.',
   );
 
   createEffect(() => {
@@ -325,7 +341,12 @@ const AskUserToolCard: Component<AskUserToolCardProps> = (props) => {
 
       <p class="chat-tool-ask-user-question">{props.display.question}</p>
 
-      <Show when={resolvedReply()} fallback={
+      <Show when={interactiveAllowed()} fallback={
+        <div class="chat-tool-ask-user-submitted">
+          <span class="chat-tool-ask-user-submitted-label">{resolvedReplyLabel()}</span>
+          <p class="chat-tool-ask-user-submitted-text">{resolvedReplyText()}</p>
+        </div>
+      }>
         <>
           <div class="chat-tool-ask-user-options" role="radiogroup" aria-label="Ask user reply options">
             <For each={props.display.options}>
@@ -394,11 +415,6 @@ const AskUserToolCard: Component<AskUserToolCardProps> = (props) => {
           </div>
           <p class="chat-tool-ask-user-hint">Select one reply, or type your own and send.</p>
         </>
-      }>
-        <div class="chat-tool-ask-user-submitted">
-          <span class="chat-tool-ask-user-submitted-label">{resolvedReplyLabel()}</span>
-          <p class="chat-tool-ask-user-submitted-text">{resolvedReply()}</p>
-        </div>
       </Show>
 
       <Show when={props.block.error}>
