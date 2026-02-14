@@ -8,7 +8,6 @@ import {
   FileText,
   Pencil,
   Settings,
-  Sparkles,
   Stop,
   Terminal,
   Trash,
@@ -185,61 +184,10 @@ const ChatCapture: Component<{ onReady: (ctx: ChatContextValue) => void }> = (pr
   return null;
 };
 
-type AskUserPromptView = Readonly<{
-  question: string;
-  options: string[];
-}>;
-
-function asRecord(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return {};
-  }
-  return value as Record<string, unknown>;
-}
-
-function normalizeAskUserOptions(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const entry of value) {
-    const text = String(entry ?? '').trim();
-    if (!text) continue;
-    const key = text.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(text);
-    if (out.length >= 4) break;
-  }
-  return out;
-}
-
-function extractLatestAskUserPrompt(messages: Message[]): AskUserPromptView | null {
-  for (let i = messages.length - 1; i >= 0; i -= 1) {
-    const message = messages[i];
-    if (message?.role !== 'assistant') continue;
-    const blocks = Array.isArray(message?.blocks) ? message.blocks : [];
-    for (let j = blocks.length - 1; j >= 0; j -= 1) {
-      const block = blocks[j] as any;
-      if (!block || block.type !== 'tool-call') continue;
-      if (String(block.toolName ?? '').trim() !== 'ask_user') continue;
-
-      const args = asRecord(block.args);
-      const result = asRecord(block.result);
-      const question = String(result.question ?? args.question ?? '').trim();
-      if (!question) continue;
-
-      const options = normalizeAskUserOptions(result.options ?? args.options);
-      return { question, options };
-    }
-  }
-  return null;
-}
-
 const AIChatInput: Component<{
   class?: string;
   placeholder?: string;
   disabled?: boolean;
-  showAskUserPrompt?: boolean;
   workingDirLabel?: string;
   workingDirTitle?: string;
   workingDirLocked?: boolean;
@@ -249,9 +197,6 @@ const AIChatInput: Component<{
 }> = (props) => {
   const ctx = useChatContext();
   const [text, setText] = createSignal('');
-  const [quickReplyText, setQuickReplyText] = createSignal('');
-  const [selectedQuickReplyIndex, setSelectedQuickReplyIndex] = createSignal<number>(-1);
-  const [useCustomQuickReply, setUseCustomQuickReply] = createSignal(false);
   const [isFocused, setIsFocused] = createSignal(false);
 
   let textareaRef: HTMLTextAreaElement | undefined;
@@ -265,39 +210,9 @@ const AIChatInput: Component<{
   });
 
   const placeholder = () => props.placeholder || ctx.config().placeholder || 'Type a message...';
-  const askUserPrompt = createMemo<AskUserPromptView | null>(() => {
-    if (!props.showAskUserPrompt) return null;
-    return extractLatestAskUserPrompt(ctx.messages() ?? []);
-  });
-  const askUserPromptKey = createMemo(() => {
-    const prompt = askUserPrompt();
-    if (!prompt) return '';
-    return `${prompt.question}\u001f${prompt.options.join('\u001f')}`;
-  });
-  const selectedQuickReply = createMemo(() => {
-    if (useCustomQuickReply()) {
-      return quickReplyText().trim();
-    }
-    const prompt = askUserPrompt();
-    if (!prompt) return '';
-    const idx = selectedQuickReplyIndex();
-    if (!Number.isInteger(idx) || idx < 0 || idx >= prompt.options.length) {
-      return '';
-    }
-    return String(prompt.options[idx] ?? '').trim();
-  });
 
   const canSend = () =>
     (text().trim() || attachments.attachments().length > 0) && !props.disabled;
-
-  const canSubmitQuickReply = () => selectedQuickReply().length > 0 && !props.disabled;
-
-  createEffect(() => {
-    askUserPromptKey();
-    setQuickReplyText('');
-    setSelectedQuickReplyIndex(-1);
-    setUseCustomQuickReply(false);
-  });
 
   // Auto-resize textarea height (coalesce to at most once per frame).
   const adjustHeight = () => {
@@ -330,32 +245,6 @@ const AIChatInput: Component<{
     if (textareaRef) textareaRef.style.height = 'auto';
 
     await ctx.sendMessage(content, files);
-  };
-
-  const handleSelectQuickReplyOption = (index: number) => {
-    if (props.disabled) return;
-    setSelectedQuickReplyIndex(index);
-    setUseCustomQuickReply(false);
-  };
-
-  const handleCustomQuickReplyInput = (value: string) => {
-    setQuickReplyText(value);
-    setUseCustomQuickReply(true);
-    setSelectedQuickReplyIndex(-1);
-  };
-
-  const handleCustomQuickReplyFocus = () => {
-    setUseCustomQuickReply(true);
-    setSelectedQuickReplyIndex(-1);
-  };
-
-  const handleQuickReplySubmit = async () => {
-    const content = selectedQuickReply();
-    if (!content || props.disabled) return;
-    setQuickReplyText('');
-    setSelectedQuickReplyIndex(-1);
-    setUseCustomQuickReply(false);
-    await ctx.sendMessage(content, []);
   };
 
   const handleKeyDown = (e: KeyboardEvent) => {
@@ -408,94 +297,6 @@ const AIChatInput: Component<{
           attachments={attachments.attachments()}
           onRemove={attachments.removeAttachment}
         />
-      </Show>
-
-      <Show when={askUserPrompt()}>
-        {(promptValue) => {
-          const options = () => promptValue().options;
-          const hasOptions = () => options().length > 0;
-          return (
-            <div class="chat-ask-user-panel">
-              <div class="chat-ask-user-header">
-                <span class="chat-ask-user-header-icon-wrap">
-                  <Sparkles class="chat-ask-user-header-icon" />
-                </span>
-                <div class="chat-ask-user-header-copy">
-                  <span class="chat-ask-user-header-title">Assistant needs your input</span>
-                  <span class="chat-ask-user-header-subtitle">Choose a suggested reply or type your own.</span>
-                </div>
-              </div>
-              <p class="chat-ask-user-question">{promptValue().question}</p>
-
-              <form
-                class="chat-ask-user-form"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void handleQuickReplySubmit();
-                }}
-              >
-                <div class="chat-ask-user-option-list-wrap">
-                  <p class="chat-ask-user-section-label">Suggested replies</p>
-                  <div class="chat-ask-user-options" role="radiogroup" aria-label="Suggested replies">
-                    <For each={options()}>
-                      {(option, index) => (
-                        <label class="chat-ask-user-option-item">
-                          <input
-                            type="radio"
-                            class="chat-ask-user-option-radio"
-                            name="ask-user-reply-choice"
-                            checked={!useCustomQuickReply() && selectedQuickReplyIndex() === index()}
-                            onChange={() => handleSelectQuickReplyOption(index())}
-                            disabled={!!props.disabled}
-                          />
-                          <span class="chat-ask-user-option-text">{option}</span>
-                        </label>
-                      )}
-                    </For>
-
-                    <label
-                      class={cn(
-                        'chat-ask-user-option-item',
-                        useCustomQuickReply() && 'chat-ask-user-option-item-custom-active',
-                      )}
-                    >
-                      <input
-                        type="radio"
-                        class="chat-ask-user-option-radio"
-                        name="ask-user-reply-choice"
-                        checked={useCustomQuickReply()}
-                        onChange={() => handleCustomQuickReplyFocus()}
-                        disabled={!!props.disabled}
-                      />
-                      <input
-                        class="chat-ask-user-custom-input"
-                        value={quickReplyText()}
-                        onInput={(event) => handleCustomQuickReplyInput(event.currentTarget.value)}
-                        onFocus={() => handleCustomQuickReplyFocus()}
-                        placeholder="None of above"
-                        aria-label="Custom reply"
-                        disabled={!!props.disabled}
-                      />
-                    </label>
-                  </div>
-                </div>
-
-                <div class="chat-ask-user-actions">
-                  <button
-                    type="submit"
-                    class="chat-ask-user-custom-submit"
-                    disabled={!canSubmitQuickReply()}
-                  >
-                    Send reply
-                  </button>
-                  <Show when={!hasOptions()}>
-                    <span class="chat-ask-user-actions-hint">Enter your reply in the input above.</span>
-                  </Show>
-                </div>
-              </form>
-            </div>
-          );
-        }}
       </Show>
 
       <div class="chat-input-body">
@@ -2581,7 +2382,6 @@ export function EnvAIPage() {
             <AIChatInput
               disabled={!canInteract()}
               placeholder={chatInputPlaceholder()}
-              showAskUserPrompt={activeThreadWaitingUser()}
               workingDirLabel={workingDirLabel() || 'Working dir'}
               workingDirTitle={activeWorkingDir() || workingDirLabel() || 'Working dir'}
               workingDirLocked={workingDirLocked()}
