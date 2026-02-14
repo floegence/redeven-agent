@@ -396,6 +396,28 @@ export function createAIChatContextValue(): AIChatContextValue {
     const rid = String(event.runId ?? '').trim();
     if (!tid) return;
 
+    if (event.eventType === 'thread_summary') {
+      const status = normalizeThreadRunStatus(event.runStatus);
+      const activeRunId = String(event.activeRunId ?? '').trim();
+
+      if (activeRunId && isActiveRunStatus(status)) {
+        setActiveRunByThread((prev) => ({ ...prev, [tid]: activeRunId }));
+        clearThreadPendingRun(tid);
+      } else {
+        setActiveRunByThread((prev) => {
+          if (!prev[tid]) return prev;
+          const next = { ...prev };
+          delete next[tid];
+          return next;
+        });
+        clearThreadPendingRun(tid);
+      }
+
+      bumpThreadsSeq();
+      emitRealtimeEvent(event);
+      return;
+    }
+
     if (event.eventType === 'transcript_message') {
       // Transcript messages update thread metadata (last message preview / timestamps).
       // Refresh the thread list so sidebar stays in sync without relying on polling.
@@ -403,12 +425,13 @@ export function createAIChatContextValue(): AIChatContextValue {
       emitRealtimeEvent(event);
       return;
     }
-    if (!rid) return;
 
     if (event.eventType === 'stream_event') {
       emitRealtimeEvent(event);
       return;
     }
+
+    if (!rid) return;
 
     const nextStatus = normalizeThreadRunStatus(event.runStatus);
     if (isActiveRunStatus(nextStatus)) {
@@ -440,7 +463,7 @@ export function createAIChatContextValue(): AIChatContextValue {
     });
 
     void rpc.ai
-      .subscribe()
+      .subscribeSummary()
       .then((resp) => {
         if (disposed) return;
         const nextRuns: Record<string, string> = {};
@@ -557,6 +580,41 @@ export function createAIChatContextValue(): AIChatContextValue {
     setDraftMode(true);
     setActiveThreadId(null);
   };
+
+  // Subscribe to full-fidelity events for the currently active thread only.
+  //
+  // Background threads are tracked via subscribeSummary + thread_summary events to avoid
+  // flooding the client with assistant delta frames for threads the user is not viewing.
+  let lastSubscribeThreadReq = 0;
+  createEffect(() => {
+    if (protocol.status() !== 'connected' || !canUseFlower() || !aiEnabled()) return;
+
+    const tid = String(activeThreadId() ?? '').trim();
+    if (!tid) return;
+
+    const reqNo = ++lastSubscribeThreadReq;
+    void rpc.ai
+      .subscribeThread({ threadId: tid })
+      .then((resp) => {
+        if (reqNo !== lastSubscribeThreadReq) return;
+        const rid = String(resp.runId ?? '').trim();
+        if (rid) {
+          confirmThreadRun(tid, rid);
+          return;
+        }
+
+        setActiveRunByThread((prev) => {
+          if (!prev[tid]) return prev;
+          const next = { ...prev };
+          delete next[tid];
+          return next;
+        });
+        clearThreadPendingRun(tid);
+      })
+      .catch(() => {
+        // Best-effort: reconnect flow will retry subscription.
+      });
+  });
 
   const clearActiveThreadPersistence = () => {
     clearPersistedActiveThreadId();

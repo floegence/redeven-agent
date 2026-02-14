@@ -58,7 +58,7 @@ func (s *Service) ListActiveThreadRuns(endpointID string) []ActiveThreadRun {
 	return out
 }
 
-func (s *Service) SubscribeEndpoint(endpointID string, streamServer *rpc.Server) ([]ActiveThreadRun, error) {
+func (s *Service) SubscribeSummary(endpointID string, streamServer *rpc.Server) ([]ActiveThreadRun, error) {
 	endpointID = strings.TrimSpace(endpointID)
 	if s == nil {
 		return nil, errors.New("nil service")
@@ -68,27 +68,66 @@ func (s *Service) SubscribeEndpoint(endpointID string, streamServer *rpc.Server)
 	}
 
 	s.mu.Lock()
-	if prev := strings.TrimSpace(s.realtimeEndpointBySRV[streamServer]); prev != "" && prev != endpointID {
-		if bySrv := s.realtimeByEndpoint[prev]; bySrv != nil {
+	if prev := strings.TrimSpace(s.realtimeSummaryEndpointBySRV[streamServer]); prev != "" && prev != endpointID {
+		if bySrv := s.realtimeSummaryByEndpoint[prev]; bySrv != nil {
 			delete(bySrv, streamServer)
 			if len(bySrv) == 0 {
-				delete(s.realtimeByEndpoint, prev)
+				delete(s.realtimeSummaryByEndpoint, prev)
 			}
 		}
 	}
 	if s.realtimeWriters[streamServer] == nil {
 		s.realtimeWriters[streamServer] = newAISinkWriter(streamServer)
 	}
-	bySrv := s.realtimeByEndpoint[endpointID]
+	bySrv := s.realtimeSummaryByEndpoint[endpointID]
 	if bySrv == nil {
 		bySrv = make(map[*rpc.Server]struct{})
-		s.realtimeByEndpoint[endpointID] = bySrv
+		s.realtimeSummaryByEndpoint[endpointID] = bySrv
 	}
 	bySrv[streamServer] = struct{}{}
-	s.realtimeEndpointBySRV[streamServer] = endpointID
+	s.realtimeSummaryEndpointBySRV[streamServer] = endpointID
 	s.mu.Unlock()
 
 	return s.ListActiveThreadRuns(endpointID), nil
+}
+
+func (s *Service) SubscribeThread(endpointID string, threadID string, streamServer *rpc.Server) (string, error) {
+	endpointID = strings.TrimSpace(endpointID)
+	threadID = strings.TrimSpace(threadID)
+	if s == nil {
+		return "", errors.New("nil service")
+	}
+	if endpointID == "" || threadID == "" || streamServer == nil {
+		return "", errors.New("invalid subscribe request")
+	}
+	threadKey := runThreadKey(endpointID, threadID)
+	if threadKey == "" {
+		return "", errors.New("invalid subscribe request")
+	}
+
+	s.mu.Lock()
+	if prev := strings.TrimSpace(s.realtimeThreadBySRV[streamServer]); prev != "" && prev != threadKey {
+		if bySrv := s.realtimeByThread[prev]; bySrv != nil {
+			delete(bySrv, streamServer)
+			if len(bySrv) == 0 {
+				delete(s.realtimeByThread, prev)
+			}
+		}
+	}
+	if s.realtimeWriters[streamServer] == nil {
+		s.realtimeWriters[streamServer] = newAISinkWriter(streamServer)
+	}
+	bySrv := s.realtimeByThread[threadKey]
+	if bySrv == nil {
+		bySrv = make(map[*rpc.Server]struct{})
+		s.realtimeByThread[threadKey] = bySrv
+	}
+	bySrv[streamServer] = struct{}{}
+	s.realtimeThreadBySRV[streamServer] = threadKey
+
+	runID := strings.TrimSpace(s.activeRunByTh[threadKey])
+	s.mu.Unlock()
+	return runID, nil
 }
 
 func (s *Service) DetachRealtimeSink(streamServer *rpc.Server) {
@@ -98,15 +137,24 @@ func (s *Service) DetachRealtimeSink(streamServer *rpc.Server) {
 
 	var writer *aiSinkWriter
 	s.mu.Lock()
-	if endpointID := strings.TrimSpace(s.realtimeEndpointBySRV[streamServer]); endpointID != "" {
-		if bySrv := s.realtimeByEndpoint[endpointID]; bySrv != nil {
+	if endpointID := strings.TrimSpace(s.realtimeSummaryEndpointBySRV[streamServer]); endpointID != "" {
+		if bySrv := s.realtimeSummaryByEndpoint[endpointID]; bySrv != nil {
 			delete(bySrv, streamServer)
 			if len(bySrv) == 0 {
-				delete(s.realtimeByEndpoint, endpointID)
+				delete(s.realtimeSummaryByEndpoint, endpointID)
 			}
 		}
 	}
-	delete(s.realtimeEndpointBySRV, streamServer)
+	delete(s.realtimeSummaryEndpointBySRV, streamServer)
+	if threadKey := strings.TrimSpace(s.realtimeThreadBySRV[streamServer]); threadKey != "" {
+		if bySrv := s.realtimeByThread[threadKey]; bySrv != nil {
+			delete(bySrv, streamServer)
+			if len(bySrv) == 0 {
+				delete(s.realtimeByThread, threadKey)
+			}
+		}
+	}
+	delete(s.realtimeThreadBySRV, streamServer)
 	writer = s.realtimeWriters[streamServer]
 	delete(s.realtimeWriters, streamServer)
 	s.mu.Unlock()
@@ -119,6 +167,9 @@ func (s *Service) DetachRealtimeSink(streamServer *rpc.Server) {
 func shouldPersistRealtimeEvent(ev RealtimeEvent) bool {
 	if ev.EventType == RealtimeEventTypeTranscript {
 		// Transcript messages are already persisted in transcript_messages and can be backfilled directly.
+		return false
+	}
+	if ev.EventType == RealtimeEventTypeThreadSummary {
 		return false
 	}
 	if ev.EventType == RealtimeEventTypeThreadState {
@@ -177,7 +228,7 @@ func (s *Service) broadcastRealtimeEvent(ev RealtimeEvent) {
 		return
 	}
 	// run_id is required for run-scoped events, but transcript messages may be appended outside a run.
-	if ev.EventType != RealtimeEventTypeTranscript && ev.RunID == "" {
+	if ev.EventType != RealtimeEventTypeTranscript && ev.EventType != RealtimeEventTypeThreadSummary && ev.RunID == "" {
 		return
 	}
 	if ev.AtUnixMs <= 0 {
@@ -192,11 +243,24 @@ func (s *Service) broadcastRealtimeEvent(ev RealtimeEvent) {
 
 	writers := make([]*aiSinkWriter, 0)
 	s.mu.Lock()
-	if bySrv := s.realtimeByEndpoint[ev.EndpointID]; bySrv != nil {
-		writers = make([]*aiSinkWriter, 0, len(bySrv))
-		for srv := range bySrv {
-			if w := s.realtimeWriters[srv]; w != nil {
-				writers = append(writers, w)
+	switch ev.EventType {
+	case RealtimeEventTypeThreadSummary:
+		if bySrv := s.realtimeSummaryByEndpoint[ev.EndpointID]; bySrv != nil {
+			writers = make([]*aiSinkWriter, 0, len(bySrv))
+			for srv := range bySrv {
+				if w := s.realtimeWriters[srv]; w != nil {
+					writers = append(writers, w)
+				}
+			}
+		}
+	default:
+		threadKey := runThreadKey(ev.EndpointID, ev.ThreadID)
+		if bySrv := s.realtimeByThread[threadKey]; bySrv != nil {
+			writers = make([]*aiSinkWriter, 0, len(bySrv))
+			for srv := range bySrv {
+				if w := s.realtimeWriters[srv]; w != nil {
+					writers = append(writers, w)
+				}
 			}
 		}
 	}
@@ -338,6 +402,58 @@ func (s *Service) broadcastTranscriptMessage(endpointID string, threadID string,
 		AtUnixMs:     atUnixMs,
 		MessageRowID: rowID,
 		MessageJSON:  json.RawMessage(raw),
+	}
+	s.broadcastRealtimeEvent(ev)
+}
+
+func (s *Service) broadcastThreadSummary(endpointID string, threadID string) {
+	if s == nil {
+		return
+	}
+	endpointID = strings.TrimSpace(endpointID)
+	threadID = strings.TrimSpace(threadID)
+	if endpointID == "" || threadID == "" {
+		return
+	}
+
+	s.mu.Lock()
+	db := s.threadsDB
+	persistTO := s.persistOpTO
+	activeRunID := strings.TrimSpace(s.activeRunByTh[runThreadKey(endpointID, threadID)])
+	s.mu.Unlock()
+	if db == nil {
+		return
+	}
+	if persistTO <= 0 {
+		persistTO = defaultPersistOpTimeout
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), persistTO)
+	th, err := db.GetThread(ctx, endpointID, threadID)
+	cancel()
+	if err != nil || th == nil {
+		return
+	}
+
+	runStatus, runError := normalizeThreadRunState(th.RunStatus, th.RunError)
+	if activeRunID != "" {
+		runStatus = "running"
+		runError = ""
+	}
+
+	ev := RealtimeEvent{
+		EventType:           RealtimeEventTypeThreadSummary,
+		EndpointID:          endpointID,
+		ThreadID:            threadID,
+		RunID:               "",
+		AtUnixMs:            time.Now().UnixMilli(),
+		RunStatus:           runStatus,
+		RunError:            runError,
+		Title:               strings.TrimSpace(th.Title),
+		UpdatedAtUnixMs:     th.UpdatedAtUnixMs,
+		LastMessagePreview:  strings.TrimSpace(th.LastMessagePreview),
+		LastMessageAtUnixMs: th.LastMessageAtUnixMs,
+		ActiveRunID:         activeRunID,
 	}
 	s.broadcastRealtimeEvent(ev)
 }
