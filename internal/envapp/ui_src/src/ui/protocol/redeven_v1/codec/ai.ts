@@ -2,9 +2,13 @@ import type {
   AIActiveRun,
   AICancelRunRequest,
   AICancelRunResponse,
+  AIGetActiveRunSnapshotRequest,
+  AIGetActiveRunSnapshotResponse,
   AIListMessagesRequest,
   AIListMessagesResponse,
   AIRealtimeEvent,
+  AISetToolCollapsedRequest,
+  AISetToolCollapsedResponse,
   AIStartRunRequest,
   AIStartRunResponse,
   AISubscribeResponse,
@@ -18,8 +22,12 @@ import type {
   wire_ai_cancel_run_req,
   wire_ai_cancel_run_resp,
   wire_ai_event_notify,
+  wire_ai_get_active_run_snapshot_req,
+  wire_ai_get_active_run_snapshot_resp,
   wire_ai_list_messages_req,
   wire_ai_list_messages_resp,
+  wire_ai_set_tool_collapsed_req,
+  wire_ai_set_tool_collapsed_resp,
   wire_ai_start_run_req,
   wire_ai_start_run_resp,
   wire_ai_subscribe_resp,
@@ -94,6 +102,35 @@ export function toWireAIToolApprovalRequest(req: AIToolApprovalRequest): wire_ai
 }
 
 export function fromWireAIToolApprovalResponse(resp: wire_ai_tool_approval_resp): AIToolApprovalResponse {
+  return { ok: Boolean(resp?.ok ?? false) };
+}
+
+export function toWireAIGetActiveRunSnapshotRequest(req: AIGetActiveRunSnapshotRequest): wire_ai_get_active_run_snapshot_req {
+  return {
+    thread_id: String(req.threadId ?? '').trim(),
+  };
+}
+
+export function fromWireAIGetActiveRunSnapshotResponse(resp: wire_ai_get_active_run_snapshot_resp): AIGetActiveRunSnapshotResponse {
+  const ok = Boolean(resp?.ok ?? false);
+  const runId = String(resp?.run_id ?? '').trim();
+  return {
+    ok,
+    runId: ok && runId ? runId : undefined,
+    messageJson: ok ? resp?.message_json : undefined,
+  };
+}
+
+export function toWireAISetToolCollapsedRequest(req: AISetToolCollapsedRequest): wire_ai_set_tool_collapsed_req {
+  return {
+    thread_id: String(req.threadId ?? '').trim(),
+    message_id: String(req.messageId ?? '').trim(),
+    tool_id: String(req.toolId ?? '').trim(),
+    collapsed: Boolean(req.collapsed),
+  };
+}
+
+export function fromWireAISetToolCollapsedResponse(resp: wire_ai_set_tool_collapsed_resp): AISetToolCollapsedResponse {
   return { ok: Boolean(resp?.ok ?? false) };
 }
 

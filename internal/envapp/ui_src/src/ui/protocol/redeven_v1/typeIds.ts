@@ -34,6 +34,8 @@ export const redevenV1TypeIds = {
     event: 6004, // notify (agent -> client)
     toolApproval: 6005,
     listMessages: 6006,
+    getActiveRunSnapshot: 6007,
+    setToolCollapsed: 6008,
   },
   sessions: {
     listActive: 5001,
