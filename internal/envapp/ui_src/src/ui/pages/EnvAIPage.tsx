@@ -372,51 +372,71 @@ const AIChatInput: Component<{
       </Show>
 
       <Show when={askUserPrompt()}>
-        {(prompt) => (
-          <div class="chat-ask-user-panel">
-            <div class="chat-ask-user-header">
-              <Sparkles class="w-3.5 h-3.5" />
-              <span>Assistant needs your input</span>
-            </div>
-            <p class="chat-ask-user-question">{prompt().question}</p>
-            <div class="chat-ask-user-options">
-              <For each={prompt().options}>
-                {(option) => (
-                  <button
-                    type="button"
-                    class="chat-ask-user-option-btn"
-                    disabled={!!props.disabled}
-                    onClick={() => void handleQuickReplyClick(option)}
-                  >
-                    {option}
-                  </button>
-                )}
-              </For>
-              <form
-                class="chat-ask-user-custom"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void handleQuickReplySubmit();
-                }}
-              >
-                <input
-                  class="chat-ask-user-custom-input"
-                  value={quickReplyText()}
-                  onInput={(event) => setQuickReplyText(event.currentTarget.value)}
-                  placeholder="None of above"
-                  disabled={!!props.disabled}
-                />
-                <button
-                  type="submit"
-                  class="chat-ask-user-custom-submit"
-                  disabled={!canSendQuickReplyText()}
+        {(promptValue) => {
+          const options = () => promptValue().options;
+          return (
+            <div class="chat-ask-user-panel">
+              <div class="chat-ask-user-header">
+                <span class="chat-ask-user-header-icon-wrap">
+                  <Sparkles class="chat-ask-user-header-icon" />
+                </span>
+                <div class="chat-ask-user-header-copy">
+                  <span class="chat-ask-user-header-title">Assistant needs your input</span>
+                  <span class="chat-ask-user-header-subtitle">Choose a suggested reply or type your own.</span>
+                </div>
+              </div>
+              <p class="chat-ask-user-question">{promptValue().question}</p>
+
+              <Show when={options().length > 0}>
+                <div class="chat-ask-user-option-list-wrap">
+                  <p class="chat-ask-user-section-label">Suggested replies</p>
+                  <div class="chat-ask-user-options">
+                    <For each={options()}>
+                      {(option, index) => (
+                        <button
+                          type="button"
+                          class="chat-ask-user-option-btn"
+                          disabled={!!props.disabled}
+                          onClick={() => void handleQuickReplyClick(option)}
+                        >
+                          <span class="chat-ask-user-option-index">{index() + 1}</span>
+                          <span class="chat-ask-user-option-text">{option}</span>
+                        </button>
+                      )}
+                    </For>
+                  </div>
+                </div>
+              </Show>
+
+              <div class="chat-ask-user-custom-wrap">
+                <p class="chat-ask-user-section-label">Custom reply</p>
+                <form
+                  class="chat-ask-user-custom"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void handleQuickReplySubmit();
+                  }}
                 >
-                  Send
-                </button>
-              </form>
+                  <input
+                    class="chat-ask-user-custom-input"
+                    value={quickReplyText()}
+                    onInput={(event) => setQuickReplyText(event.currentTarget.value)}
+                    placeholder="None of above"
+                    aria-label="Custom reply"
+                    disabled={!!props.disabled}
+                  />
+                  <button
+                    type="submit"
+                    class="chat-ask-user-custom-submit"
+                    disabled={!canSendQuickReplyText()}
+                  >
+                    Send
+                  </button>
+                </form>
+              </div>
             </div>
-          </div>
-        )}
+          );
+        }}
       </Show>
 
       <div class="chat-input-body">
