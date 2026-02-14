@@ -1,6 +1,6 @@
-// ToolCallBlock — tool call display with approval workflow and collapsible body.
+// ToolCallBlock — tool call display with approval workflow and ask_user interaction.
 
-import { Show, For } from 'solid-js';
+import { For, Show, createEffect, createMemo, createSignal } from 'solid-js';
 import type { Component } from 'solid-js';
 import { cn } from '@floegence/floe-webapp-core';
 import { useChatContext } from '../ChatProvider';
@@ -15,6 +15,12 @@ export interface ToolCallBlockProps {
   blockIndex: number;
   class?: string;
 }
+
+type AskUserDisplay = {
+  question: string;
+  source: string;
+  options: string[];
+};
 
 // Chevron icon for collapse toggle (rotatable)
 const ChevronIcon: Component<{ collapsed: boolean }> = (props) => (
@@ -44,7 +50,6 @@ const StatusIcon: Component<{ status: ToolCallBlockType['status'] }> = (props) =
   return (
     <>
       {props.status === 'pending' && (
-        // Clock icon
         <svg
           xmlns="http://www.w3.org/2000/svg"
           width="14"
@@ -63,7 +68,6 @@ const StatusIcon: Component<{ status: ToolCallBlockType['status'] }> = (props) =
         </svg>
       )}
       {props.status === 'running' && (
-        // Spinner icon
         <svg
           xmlns="http://www.w3.org/2000/svg"
           width="14"
@@ -81,7 +85,6 @@ const StatusIcon: Component<{ status: ToolCallBlockType['status'] }> = (props) =
         </svg>
       )}
       {props.status === 'success' && (
-        // Check icon
         <svg
           xmlns="http://www.w3.org/2000/svg"
           width="14"
@@ -99,7 +102,6 @@ const StatusIcon: Component<{ status: ToolCallBlockType['status'] }> = (props) =
         </svg>
       )}
       {props.status === 'error' && (
-        // X icon
         <svg
           xmlns="http://www.w3.org/2000/svg"
           width="14"
@@ -121,19 +123,11 @@ const StatusIcon: Component<{ status: ToolCallBlockType['status'] }> = (props) =
   );
 };
 
-/**
- * Summarize arguments into a short preview string (max 50 chars).
- */
 function summarizeArgs(args: Record<string, unknown>): string {
   const text = JSON.stringify(args);
   if (text.length <= 50) return text;
   return text.slice(0, 47) + '...';
 }
-
-type AskUserDisplay = {
-  question: string;
-  source: string;
-};
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -149,6 +143,24 @@ function asTrimmedString(value: unknown): string {
   return value.trim();
 }
 
+function normalizeAskUserOptions(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const seen = new Set<string>();
+  const options: string[] = [];
+  for (const item of value) {
+    const text = asTrimmedString(item);
+    if (!text) continue;
+    const key = text.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    options.push(text);
+    if (options.length >= 4) break;
+  }
+  return options;
+}
+
 function buildAskUserDisplay(block: ToolCallBlockType): AskUserDisplay | null {
   if (String(block.toolName ?? '').trim() !== ASK_USER_TOOL_NAME) {
     return null;
@@ -159,8 +171,14 @@ function buildAskUserDisplay(block: ToolCallBlockType): AskUserDisplay | null {
   if (!question) {
     return null;
   }
+  const optionsFromResult = normalizeAskUserOptions(result?.options);
+  const optionsFromArgs = normalizeAskUserOptions(args?.options);
   const source = asTrimmedString(result?.source);
-  return { question, source };
+  return {
+    question,
+    source,
+    options: optionsFromResult.length > 0 ? optionsFromResult : optionsFromArgs,
+  };
 }
 
 function humanizeAskUserSource(source: string): string {
@@ -175,10 +193,179 @@ function humanizeAskUserSource(source: string): string {
     .join(' ');
 }
 
-function summarizeAskUserQuestion(question: string): string {
-  if (question.length <= 50) return question;
-  return question.slice(0, 47) + '...';
+interface AskUserToolCardProps {
+  block: ToolCallBlockType;
+  display: AskUserDisplay;
+  class?: string;
 }
+
+const AskUserToolCard: Component<AskUserToolCardProps> = (props) => {
+  const ctx = useChatContext();
+  const [selectedOptionIndex, setSelectedOptionIndex] = createSignal<number>(-1);
+  const [useCustomReply, setUseCustomReply] = createSignal(false);
+  const [customReply, setCustomReply] = createSignal('');
+  const [submitting, setSubmitting] = createSignal(false);
+  const [submittedReply, setSubmittedReply] = createSignal('');
+
+  const promptKey = createMemo(
+    () => `${props.display.question}\u001f${props.display.options.join('\u001f')}`,
+  );
+  const sourceLabel = createMemo(() => humanizeAskUserSource(props.display.source));
+  const controlsDisabled = createMemo(
+    () => submitting() || ctx.isWorking() || submittedReply().length > 0,
+  );
+  const canSubmitCustomReply = createMemo(
+    () => useCustomReply() && customReply().trim().length > 0 && !controlsDisabled(),
+  );
+
+  createEffect(() => {
+    promptKey();
+    setSelectedOptionIndex(-1);
+    setUseCustomReply(false);
+    setCustomReply('');
+    setSubmitting(false);
+    setSubmittedReply('');
+  });
+
+  const submitReply = async (value: string) => {
+    const content = asTrimmedString(value);
+    if (!content || controlsDisabled()) {
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await ctx.sendMessage(content, []);
+      setSubmittedReply(content);
+    } catch (error) {
+      console.error('ask_user reply submit failed', error);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleOptionSelect = (index: number) => {
+    if (controlsDisabled()) return;
+    const option = props.display.options[index];
+    if (!option) return;
+    setSelectedOptionIndex(index);
+    setUseCustomReply(false);
+    void submitReply(option);
+  };
+
+  const handleCustomFocus = () => {
+    if (controlsDisabled()) return;
+    setUseCustomReply(true);
+    setSelectedOptionIndex(-1);
+  };
+
+  const handleCustomInput = (value: string) => {
+    setCustomReply(value);
+    if (!useCustomReply()) {
+      setUseCustomReply(true);
+      setSelectedOptionIndex(-1);
+    }
+  };
+
+  const handleCustomSubmit = async () => {
+    if (!canSubmitCustomReply()) {
+      return;
+    }
+    await submitReply(customReply());
+  };
+
+  return (
+    <div class={cn('chat-tool-ask-user-block', submittedReply() && 'chat-tool-ask-user-block-completed', props.class)}>
+      <div class="chat-tool-ask-user-head">
+        <span class="chat-tool-ask-user-badge">Input Requested</span>
+        <Show when={sourceLabel()}>
+          <span class="chat-tool-ask-user-source-tag">{sourceLabel()}</span>
+        </Show>
+      </div>
+
+      <p class="chat-tool-ask-user-question">{props.display.question}</p>
+
+      <Show when={submittedReply()} fallback={
+        <>
+          <div class="chat-tool-ask-user-options" role="radiogroup" aria-label="Ask user reply options">
+            <For each={props.display.options}>
+              {(option, index) => (
+                <label
+                  class={cn(
+                    'chat-tool-ask-user-option-row',
+                    !useCustomReply() &&
+                      selectedOptionIndex() === index() &&
+                      'chat-tool-ask-user-option-row-selected',
+                  )}
+                >
+                  <input
+                    type="radio"
+                    class="chat-tool-ask-user-option-radio"
+                    name={`ask-user-reply-${props.block.toolId}`}
+                    checked={!useCustomReply() && selectedOptionIndex() === index()}
+                    onChange={() => handleOptionSelect(index())}
+                    disabled={controlsDisabled()}
+                  />
+                  <span class="chat-tool-ask-user-option-text">{option}</span>
+                </label>
+              )}
+            </For>
+
+            <label
+              class={cn(
+                'chat-tool-ask-user-option-row chat-tool-ask-user-custom-row',
+                useCustomReply() && 'chat-tool-ask-user-custom-row-active',
+              )}
+            >
+              <input
+                type="radio"
+                class="chat-tool-ask-user-option-radio"
+                name={`ask-user-reply-${props.block.toolId}`}
+                checked={useCustomReply()}
+                onChange={() => handleCustomFocus()}
+                disabled={controlsDisabled()}
+              />
+              <div class="chat-tool-ask-user-custom-main">
+                <input
+                  class="chat-tool-ask-user-custom-input"
+                  value={customReply()}
+                  onFocus={() => handleCustomFocus()}
+                  onInput={(event) => handleCustomInput(event.currentTarget.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      void handleCustomSubmit();
+                    }
+                  }}
+                  placeholder="None of above"
+                  aria-label="Custom ask user reply"
+                  disabled={controlsDisabled()}
+                />
+                <button
+                  type="button"
+                  class="chat-tool-ask-user-custom-submit"
+                  disabled={!canSubmitCustomReply()}
+                  onClick={() => void handleCustomSubmit()}
+                >
+                  Send
+                </button>
+              </div>
+            </label>
+          </div>
+          <p class="chat-tool-ask-user-hint">Select one reply, or type your own and send.</p>
+        </>
+      }>
+        <div class="chat-tool-ask-user-submitted">
+          <span class="chat-tool-ask-user-submitted-label">Reply sent</span>
+          <p class="chat-tool-ask-user-submitted-text">{submittedReply()}</p>
+        </div>
+      </Show>
+
+      <Show when={props.block.error}>
+        <div class="chat-tool-ask-user-error">{props.block.error}</div>
+      </Show>
+    </div>
+  );
+};
 
 /**
  * Renders a tool call block with collapsible body, status indicators,
@@ -186,6 +373,7 @@ function summarizeAskUserQuestion(question: string): string {
  */
 export const ToolCallBlock: Component<ToolCallBlockProps> = (props) => {
   const ctx = useChatContext();
+  const askUserDisplay = createMemo(() => buildAskUserDisplay(props.block));
 
   const isCollapsed = () => props.block.collapsed ?? false;
   const showApproval = () =>
@@ -196,27 +384,30 @@ export const ToolCallBlock: Component<ToolCallBlockProps> = (props) => {
     ctx.toggleToolCollapse(props.messageId, props.block.toolId);
   };
 
-  const handleApprove = (e: MouseEvent) => {
-    e.stopPropagation();
+  const handleApprove = (event: MouseEvent) => {
+    event.stopPropagation();
     ctx.approveToolCall(props.messageId, props.block.toolId, true);
   };
 
-  const handleReject = (e: MouseEvent) => {
-    e.stopPropagation();
+  const handleReject = (event: MouseEvent) => {
+    event.stopPropagation();
     ctx.approveToolCall(props.messageId, props.block.toolId, false);
   };
-  const askUserDisplay = () => buildAskUserDisplay(props.block);
-  const collapsedSummary = () => {
-    const askUser = askUserDisplay();
-    if (askUser) {
-      return summarizeAskUserQuestion(askUser.question);
-    }
-    return summarizeArgs(props.block.args);
-  };
+
+  const collapsedSummary = () => summarizeArgs(props.block.args);
+
+  if (askUserDisplay()) {
+    return (
+      <AskUserToolCard
+        block={props.block}
+        display={askUserDisplay() as AskUserDisplay}
+        class={props.class}
+      />
+    );
+  }
 
   return (
     <div class={cn('chat-tool-call-block', props.class)}>
-      {/* Header row — click to toggle collapse */}
       <div class="chat-tool-call-header" onClick={handleToggle}>
         <button
           class="chat-tool-collapse-btn"
@@ -229,7 +420,6 @@ export const ToolCallBlock: Component<ToolCallBlockProps> = (props) => {
 
         <span class="chat-tool-name">{props.block.toolName}</span>
 
-        {/* Approval action buttons */}
         <Show when={showApproval()}>
           <div class="chat-tool-approval-actions">
             <button
@@ -247,51 +437,29 @@ export const ToolCallBlock: Component<ToolCallBlockProps> = (props) => {
           </div>
         </Show>
 
-        {/* Collapsed summary */}
         <Show when={isCollapsed()}>
           <span class="chat-tool-summary">{collapsedSummary()}</span>
         </Show>
       </div>
 
-      {/* Expandable body */}
       <Show when={!isCollapsed()}>
         <div class="chat-tool-call-body">
-          <Show when={askUserDisplay()} fallback={
-            <>
-              {/* Arguments section */}
-              <div class="chat-tool-section">
-                <div class="chat-tool-section-label">Arguments</div>
-                <pre class="chat-tool-args">
-                  {JSON.stringify(props.block.args, null, 2)}
-                </pre>
-              </div>
+          <div class="chat-tool-section">
+            <div class="chat-tool-section-label">Arguments</div>
+            <pre class="chat-tool-args">
+              {JSON.stringify(props.block.args, null, 2)}
+            </pre>
+          </div>
 
-              {/* Result section */}
-              <Show when={props.block.result !== undefined}>
-                <div class="chat-tool-section">
-                  <div class="chat-tool-section-label">Result</div>
-                  <pre class="chat-tool-result">
-                    {JSON.stringify(props.block.result, null, 2)}
-                  </pre>
-                </div>
-              </Show>
-            </>
-          }>
-            {(askUser) => (
-              <div class="chat-tool-section">
-                <div class="chat-tool-section-label">Question</div>
-                <div class="chat-tool-ask-user-question">{askUser().question}</div>
-                <div class="chat-tool-ask-user-hint">Flower is waiting for your reply.</div>
-                <Show when={askUser().source}>
-                  <div class="chat-tool-ask-user-source">
-                    Source: {humanizeAskUserSource(askUser().source)}
-                  </div>
-                </Show>
-              </div>
-            )}
+          <Show when={props.block.result !== undefined}>
+            <div class="chat-tool-section">
+              <div class="chat-tool-section-label">Result</div>
+              <pre class="chat-tool-result">
+                {JSON.stringify(props.block.result, null, 2)}
+              </pre>
+            </div>
           </Show>
 
-          {/* Error section */}
           <Show when={props.block.error}>
             <div class="chat-tool-section chat-tool-error-section">
               <div class="chat-tool-section-label">Error</div>
@@ -299,7 +467,6 @@ export const ToolCallBlock: Component<ToolCallBlockProps> = (props) => {
             </div>
           </Show>
 
-          {/* Nested child blocks */}
           <Show when={props.block.children && props.block.children.length > 0}>
             <div class="chat-tool-children">
               <For each={props.block.children}>
@@ -318,5 +485,3 @@ export const ToolCallBlock: Component<ToolCallBlockProps> = (props) => {
     </div>
   );
 };
-
-export default ToolCallBlock;
