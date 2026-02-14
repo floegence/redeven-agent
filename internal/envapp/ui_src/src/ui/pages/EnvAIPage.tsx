@@ -675,9 +675,9 @@ const EmptyChat: Component<EmptyChatProps> = (props) => {
       >
         {/* Animated flower icon */}
         <div class="relative inline-flex items-center justify-center mb-6">
-          <div class="absolute -inset-2 rounded-full bg-pink-500/8 animate-[pulse_3s_ease-in-out_infinite]" />
-          <div class="relative w-16 h-16 rounded-full bg-gradient-to-br from-pink-500/15 to-amber-500/10 flex items-center justify-center shadow-sm">
-            <FlowerIcon class="w-9 h-9 text-pink-600" />
+          <div class="absolute -inset-2 rounded-full bg-primary/8 animate-[pulse_3s_ease-in-out_infinite]" />
+          <div class="relative w-16 h-16 rounded-full bg-gradient-to-br from-primary/15 to-amber-500/10 flex items-center justify-center shadow-sm">
+            <FlowerIcon class="w-9 h-9 text-primary" />
           </div>
         </div>
 
@@ -1824,9 +1824,6 @@ export function EnvAIPage() {
             {/* Header */}
             <div class="chat-header border-b border-border/80 bg-background/95 backdrop-blur-md max-sm:flex-col max-sm:items-stretch max-sm:gap-2">
               <div class="chat-header-title flex items-center gap-2 min-w-0 w-full sm:w-auto">
-                <div class="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-                  <FlowerIcon class="w-4 h-4" />
-                </div>
                 <span class="truncate font-medium">{ai.activeThreadTitle()}</span>
               </div>
               <div class="w-full sm:w-auto flex items-center justify-between gap-2 sm:justify-start sm:gap-1.5">
@@ -2012,9 +2009,9 @@ export function EnvAIPage() {
             transition={{ duration: 0.4, easing: 'ease-out' }}
           >
             <div class="relative inline-flex items-center justify-center mb-6">
-              <div class="absolute -inset-2 rounded-2xl bg-pink-500/8 animate-[pulse_3s_ease-in-out_infinite]" />
-              <div class="relative w-16 h-16 rounded-2xl bg-gradient-to-br from-pink-500/15 to-amber-500/10 flex items-center justify-center border border-pink-500/15 shadow-sm">
-                <FlowerIcon class="w-9 h-9" />
+              <div class="absolute -inset-2 rounded-2xl bg-primary/8 animate-[pulse_3s_ease-in-out_infinite]" />
+              <div class="relative w-16 h-16 rounded-2xl bg-gradient-to-br from-primary/15 to-amber-500/10 flex items-center justify-center border border-primary/20 shadow-sm">
+                <FlowerIcon class="w-9 h-9 text-primary" />
               </div>
             </div>
             <div class="text-lg font-semibold text-foreground mb-2">Flower is not configured</div>
