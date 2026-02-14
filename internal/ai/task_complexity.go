@@ -130,6 +130,57 @@ func classifyTaskComplexity(userInput string, attachments []RunAttachmentIn, ope
 	}
 }
 
+func requiresStructuredTodoPlan(userInput string) bool {
+	raw := strings.TrimSpace(userInput)
+	if raw == "" {
+		return false
+	}
+	lower := strings.ToLower(raw)
+	containsAny := func(text string, parts []string) bool {
+		for _, part := range parts {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			if strings.Contains(text, part) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Strong direct phrases first.
+	if containsAny(raw, []string{
+		"划分任务", "任务拆解", "拆解任务", "规划步骤", "分步计划", "按步骤执行",
+		"划分todo", "列出todo", "使用todo", "todo工具", "按todo执行",
+	}) {
+		return true
+	}
+	if containsAny(lower, []string{
+		"break down the task", "task breakdown", "split into tasks", "plan the steps",
+		"step-by-step plan", "todo list", "use todos", "use todo tool", "use write_todos",
+	}) {
+		return true
+	}
+
+	hasTodoSignal := containsAny(raw, []string{
+		"todo", "todos", "待办", "任务清单", "任务列表",
+	}) || containsAny(lower, []string{
+		"todo", "todos", "write_todos", "task list",
+	})
+	hasPlanSignal := containsAny(raw, []string{
+		"计划", "规划", "步骤", "分步", "拆解", "划分", "按步骤", "执行顺序",
+	}) || containsAny(lower, []string{
+		"plan", "planning", "steps", "step-by-step", "break down", "split", "execute by",
+	})
+	hasImperativeSignal := containsAny(raw, []string{
+		"请", "需要", "帮我", "务必", "必须", "一定", "要求",
+	}) || containsAny(lower, []string{
+		"please", "need", "must", "require", "should",
+	})
+	return hasTodoSignal && hasPlanSignal && hasImperativeSignal
+}
+
 func maybeEscalateTaskComplexity(current string, state runtimeState, normalCalls []ToolCall, step int) string {
 	level := normalizeTaskComplexity(current)
 	if level == TaskComplexityComplex {
