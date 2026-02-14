@@ -36,7 +36,11 @@ export const MessageItem: Component<MessageItemProps> = (props) => {
       )}
     >
       <Show when={props.showAvatar !== false}>
-        <MessageAvatar role={props.message.role} src={avatarSrc()} />
+        <MessageAvatar
+          role={props.message.role}
+          src={avatarSrc()}
+          isStreaming={props.message.status === 'streaming'}
+        />
       </Show>
 
       <div class="chat-message-content-wrapper">
