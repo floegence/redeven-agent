@@ -33,6 +33,7 @@ export type ThreadView = Readonly<{
   thread_id: string;
   title: string;
   model_id?: string;
+  working_dir?: string;
   run_status?: ThreadRunStatus;
   run_updated_at_unix_ms?: number;
   run_error?: string;
@@ -62,6 +63,7 @@ export type ListThreadMessagesResponse = Readonly<{
 
 const ACTIVE_THREAD_STORAGE_KEY = 'redeven_ai_active_thread_id';
 const DRAFT_MODEL_STORAGE_KEY = 'redeven_ai_draft_model_id';
+const DRAFT_WORKING_DIR_STORAGE_KEY = 'redeven_ai_draft_working_dir';
 
 function readPersistedActiveThreadId(): string | null {
   try {
@@ -102,6 +104,25 @@ function persistDraftModelId(modelId: string): void {
     const v = String(modelId ?? '').trim();
     if (!v) return;
     localStorage.setItem(DRAFT_MODEL_STORAGE_KEY, v);
+  } catch {
+    // ignore
+  }
+}
+
+function readPersistedDraftWorkingDir(): string | null {
+  try {
+    const v = String(localStorage.getItem(DRAFT_WORKING_DIR_STORAGE_KEY) ?? '').trim();
+    return v || null;
+  } catch {
+    return null;
+  }
+}
+
+function persistDraftWorkingDir(path: string): void {
+  try {
+    const v = String(path ?? '').trim();
+    if (!v) return;
+    localStorage.setItem(DRAFT_WORKING_DIR_STORAGE_KEY, v);
   } catch {
     // ignore
   }
@@ -156,6 +177,10 @@ export interface AIChatContextValue {
   // Thread creation (only create on-demand; never create an empty thread on navigation)
   creatingThread: Accessor<boolean>;
   ensureThreadForSend: () => Promise<string | null>;
+
+  // Draft working dir (applies to new chats; locked after thread creation)
+  draftWorkingDir: Accessor<string>;
+  setDraftWorkingDir: (path: string) => void;
 
   // Run state (global realtime source of truth)
   runIdForThread: (threadId: string | null | undefined) => string | null;
@@ -212,6 +237,13 @@ export function createAIChatContextValue(): AIChatContextValue {
 
   const [draftModelId, setDraftModelId] = createSignal<string>(readPersistedDraftModelId() ?? '');
   const [threadModelOverride, setThreadModelOverride] = createSignal<Record<string, string>>({});
+
+  const [draftWorkingDir, setDraftWorkingDirRaw] = createSignal<string>(readPersistedDraftWorkingDir() ?? '');
+  const setDraftWorkingDir = (path: string) => {
+    const v = String(path ?? '').trim();
+    setDraftWorkingDirRaw(v);
+    if (v) persistDraftWorkingDir(v);
+  };
 
   const allowedModelIDs = createMemo(() => {
     const m = models();
@@ -836,6 +868,8 @@ export function createAIChatContextValue(): AIChatContextValue {
     const modelID = String(draftModelId() ?? '').trim();
     const body: any = { title: '' };
     if (modelID) body.model_id = modelID;
+    const workingDir = String(draftWorkingDir() ?? '').trim();
+    if (workingDir) body.working_dir = workingDir;
     const resp = await fetchGatewayJSON<CreateThreadResponse>('/_redeven_proxy/api/ai/threads', {
       method: 'POST',
       body: JSON.stringify(body),
@@ -929,6 +963,8 @@ export function createAIChatContextValue(): AIChatContextValue {
     activeThreadTitle,
     creatingThread,
     ensureThreadForSend,
+    draftWorkingDir,
+    setDraftWorkingDir,
     runIdForThread,
     markThreadPendingRun,
     confirmThreadRun,

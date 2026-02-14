@@ -593,6 +593,11 @@ func (s *Service) prepareRun(meta *session.Meta, runID string, req RunStartReque
 		return nil, errors.New("thread not found")
 	}
 
+	runWorkingDir := strings.TrimSpace(th.WorkingDir)
+	if runWorkingDir == "" {
+		runWorkingDir = strings.TrimSpace(s.fsRoot)
+	}
+
 	s.mu.Lock()
 	if s.cfg == nil {
 		s.mu.Unlock()
@@ -622,7 +627,7 @@ func (s *Service) prepareRun(meta *session.Meta, runID string, req RunStartReque
 	r := newRun(runOptions{
 		Log:                 s.log,
 		StateDir:            s.stateDir,
-		FSRoot:              s.fsRoot,
+		FSRoot:              runWorkingDir,
 		Shell:               s.shell,
 		AIConfig:            cfg,
 		SessionMeta:         metaRef,

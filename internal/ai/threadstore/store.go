@@ -61,6 +61,7 @@ type Thread struct {
 	EndpointID         string `json:"endpoint_id"`
 	NamespacePublicID  string `json:"namespace_public_id"`
 	ModelID            string `json:"model_id"`
+	WorkingDir         string `json:"working_dir"`
 	Title              string `json:"title"`
 	RunStatus          string `json:"run_status"`
 	RunUpdatedAtUnixMs int64  `json:"run_updated_at_unix_ms"`
@@ -171,7 +172,7 @@ func (s *Store) ListThreads(ctx context.Context, endpointID string, limit int, c
 
 	q := fmt.Sprintf(`
 SELECT
-  thread_id, endpoint_id, namespace_public_id, model_id, title,
+  thread_id, endpoint_id, namespace_public_id, model_id, working_dir, title,
   run_status, run_updated_at_unix_ms, run_error,
   created_by_user_public_id, created_by_user_email,
   updated_by_user_public_id, updated_by_user_email,
@@ -197,6 +198,7 @@ LIMIT ?
 			&t.EndpointID,
 			&t.NamespacePublicID,
 			&t.ModelID,
+			&t.WorkingDir,
 			&t.Title,
 			&t.RunStatus,
 			&t.RunUpdatedAtUnixMs,
@@ -241,7 +243,7 @@ func (s *Store) GetThread(ctx context.Context, endpointID string, threadID strin
 	var t Thread
 	err := s.db.QueryRowContext(ctx, `
 SELECT
-  thread_id, endpoint_id, namespace_public_id, model_id, title,
+  thread_id, endpoint_id, namespace_public_id, model_id, working_dir, title,
   run_status, run_updated_at_unix_ms, run_error,
   created_by_user_public_id, created_by_user_email,
   updated_by_user_public_id, updated_by_user_email,
@@ -253,6 +255,7 @@ WHERE endpoint_id = ? AND thread_id = ?
 		&t.EndpointID,
 		&t.NamespacePublicID,
 		&t.ModelID,
+		&t.WorkingDir,
 		&t.Title,
 		&t.RunStatus,
 		&t.RunUpdatedAtUnixMs,
@@ -287,6 +290,7 @@ func (s *Store) CreateThread(ctx context.Context, t Thread) error {
 	t.EndpointID = strings.TrimSpace(t.EndpointID)
 	t.NamespacePublicID = strings.TrimSpace(t.NamespacePublicID)
 	t.ModelID = strings.TrimSpace(t.ModelID)
+	t.WorkingDir = strings.TrimSpace(t.WorkingDir)
 	t.Title = strings.TrimSpace(t.Title)
 	t.RunStatus = normalizeRunStatus(t.RunStatus)
 	t.RunError = strings.TrimSpace(t.RunError)
@@ -312,18 +316,19 @@ func (s *Store) CreateThread(ctx context.Context, t Thread) error {
 
 	_, err := s.db.ExecContext(ctx, `
 INSERT INTO ai_threads(
-  thread_id, endpoint_id, namespace_public_id, model_id, title,
+  thread_id, endpoint_id, namespace_public_id, model_id, working_dir, title,
   run_status, run_updated_at_unix_ms, run_error,
   created_by_user_public_id, created_by_user_email,
   updated_by_user_public_id, updated_by_user_email,
   created_at_unix_ms, updated_at_unix_ms,
   last_message_at_unix_ms, last_message_preview
-) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `,
 		t.ThreadID,
 		t.EndpointID,
 		t.NamespacePublicID,
 		t.ModelID,
+		t.WorkingDir,
 		t.Title,
 		t.RunStatus,
 		t.RunUpdatedAtUnixMs,
@@ -1252,7 +1257,7 @@ func migrateSchema(db *sql.DB) error {
 	if db == nil {
 		return errors.New("nil db")
 	}
-	const targetVersion = 7
+	const targetVersion = 8
 
 	var v int
 	if err := db.QueryRow(`PRAGMA user_version;`).Scan(&v); err != nil {
@@ -1284,6 +1289,7 @@ CREATE TABLE IF NOT EXISTS ai_threads (
   endpoint_id TEXT NOT NULL,
   namespace_public_id TEXT NOT NULL DEFAULT '',
   model_id TEXT NOT NULL DEFAULT '',
+  working_dir TEXT NOT NULL DEFAULT '',
   title TEXT NOT NULL DEFAULT '',
   run_status TEXT NOT NULL DEFAULT 'idle',
   run_updated_at_unix_ms INTEGER NOT NULL DEFAULT 0,
@@ -1307,6 +1313,15 @@ CREATE INDEX IF NOT EXISTS idx_ai_threads_endpoint_updated ON ai_threads(endpoin
 		return err
 	} else if !has {
 		if _, err := tx.Exec(`ALTER TABLE ai_threads ADD COLUMN model_id TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
+
+	// v8: Thread-level working directory (used as the base for relative tool paths).
+	if has, err := columnExists(tx, "ai_threads", "working_dir"); err != nil {
+		return err
+	} else if !has {
+		if _, err := tx.Exec(`ALTER TABLE ai_threads ADD COLUMN working_dir TEXT NOT NULL DEFAULT ''`); err != nil {
 			return err
 		}
 	}

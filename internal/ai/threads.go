@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -103,10 +105,16 @@ func (s *Service) GetThread(ctx context.Context, meta *session.Meta, threadID st
 		runError = ""
 	}
 
+	workingDir := strings.TrimSpace(th.WorkingDir)
+	if workingDir == "" {
+		workingDir = strings.TrimSpace(s.fsRoot)
+	}
+
 	return &ThreadView{
 		ThreadID:            strings.TrimSpace(th.ThreadID),
 		Title:               strings.TrimSpace(th.Title),
 		ModelID:             strings.TrimSpace(th.ModelID),
+		WorkingDir:          workingDir,
 		RunStatus:           runStatus,
 		RunUpdatedAtUnixMs:  th.RunUpdatedAtUnixMs,
 		RunError:            runError,
@@ -148,10 +156,15 @@ func (s *Service) ListThreads(ctx context.Context, meta *session.Meta, limit int
 			runStatus = "running"
 			runError = ""
 		}
+		workingDir := strings.TrimSpace(t.WorkingDir)
+		if workingDir == "" {
+			workingDir = strings.TrimSpace(s.fsRoot)
+		}
 		out.Threads = append(out.Threads, ThreadView{
 			ThreadID:            strings.TrimSpace(t.ThreadID),
 			Title:               strings.TrimSpace(t.Title),
 			ModelID:             strings.TrimSpace(t.ModelID),
+			WorkingDir:          workingDir,
 			RunStatus:           runStatus,
 			RunUpdatedAtUnixMs:  t.RunUpdatedAtUnixMs,
 			RunError:            runError,
@@ -164,7 +177,7 @@ func (s *Service) ListThreads(ctx context.Context, meta *session.Meta, limit int
 	return out, nil
 }
 
-func (s *Service) CreateThread(ctx context.Context, meta *session.Meta, title string, modelID string) (*ThreadView, error) {
+func (s *Service) CreateThread(ctx context.Context, meta *session.Meta, title string, modelID string, workingDir string) (*ThreadView, error) {
 	if s == nil {
 		return nil, errors.New("nil service")
 	}
@@ -199,12 +212,23 @@ func (s *Service) CreateThread(ctx context.Context, meta *session.Meta, title st
 		}
 	}
 
+	fallbackWorkingDir := strings.TrimSpace(s.fsRoot)
+	workingDir = strings.TrimSpace(workingDir)
+	if workingDir == "" {
+		workingDir = fallbackWorkingDir
+	}
+	workingDirClean, err := validateThreadWorkingDir(workingDir, fallbackWorkingDir)
+	if err != nil {
+		return nil, err
+	}
+
 	now := time.Now().UnixMilli()
 	t := threadstore.Thread{
 		ThreadID:              id,
 		EndpointID:            strings.TrimSpace(meta.EndpointID),
 		NamespacePublicID:     strings.TrimSpace(meta.NamespacePublicID),
 		ModelID:               modelID,
+		WorkingDir:            workingDirClean,
 		Title:                 strings.TrimSpace(title),
 		RunStatus:             "idle",
 		RunUpdatedAtUnixMs:    0,
@@ -226,6 +250,7 @@ func (s *Service) CreateThread(ctx context.Context, meta *session.Meta, title st
 		ThreadID:            id,
 		Title:               strings.TrimSpace(t.Title),
 		ModelID:             modelID,
+		WorkingDir:          workingDirClean,
 		RunStatus:           "idle",
 		RunUpdatedAtUnixMs:  0,
 		RunError:            "",
@@ -234,6 +259,51 @@ func (s *Service) CreateThread(ctx context.Context, meta *session.Meta, title st
 		LastMessageAtUnixMs: 0,
 		LastMessagePreview:  "",
 	}, nil
+}
+
+func validateThreadWorkingDir(workingDir string, fsRoot string) (string, error) {
+	workingDir = strings.TrimSpace(workingDir)
+	if workingDir == "" {
+		return "", errors.New("missing working_dir")
+	}
+	workingDir = filepath.Clean(workingDir)
+	if !filepath.IsAbs(workingDir) {
+		return "", errors.New("working_dir must be absolute")
+	}
+
+	fsRoot = strings.TrimSpace(fsRoot)
+	if fsRoot == "" {
+		return "", errors.New("working_dir root is not configured")
+	}
+	fsRoot = filepath.Clean(fsRoot)
+	if !filepath.IsAbs(fsRoot) {
+		abs, err := filepath.Abs(fsRoot)
+		if err != nil {
+			return "", errors.New("working_dir root is invalid")
+		}
+		fsRoot = filepath.Clean(abs)
+	}
+
+	rel, err := filepath.Rel(fsRoot, workingDir)
+	if err != nil {
+		return "", errors.New("working_dir is invalid")
+	}
+	rel = filepath.Clean(rel)
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", errors.New("working_dir must be within root_dir")
+	}
+
+	info, err := os.Stat(workingDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", errors.New("working_dir does not exist")
+		}
+		return "", errors.New("working_dir is not accessible")
+	}
+	if !info.IsDir() {
+		return "", errors.New("working_dir must be a directory")
+	}
+	return workingDir, nil
 }
 
 func (s *Service) RenameThread(ctx context.Context, meta *session.Meta, threadID string, title string) error {
