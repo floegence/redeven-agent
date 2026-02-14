@@ -34,7 +34,8 @@ import { useEnvContext } from './EnvContext';
 import { useAIChatContext } from './AIChatContext';
 import { useRedevenRpc, type FsFileInfo } from '../protocol/redeven_v1';
 import { fetchGatewayJSON } from '../services/gatewayApi';
-import { decorateMessageForTerminalExec, decorateStreamEventForTerminalExec } from './aiTerminalExecPresentation';
+import { decorateMessageBlocks, decorateStreamEvent } from './aiBlockPresentation';
+import { normalizeThreadTodosView, todoStatusLabel, todoStatusBadgeClass, type TodoStatus, type ThreadTodoItem, type ThreadTodosView } from './aiDataNormalizers';
 import { hasRWXPermissions } from './aiPermissions';
 
 function createUserMarkdownMessage(markdown: string): Message {
@@ -153,21 +154,6 @@ function normalizeWorkingDirInputText(input: string, rootAbs?: string): string {
 
 type ExecutionMode = 'act' | 'plan';
 
-type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled';
-
-type ThreadTodoItem = Readonly<{
-  id: string;
-  content: string;
-  status: TodoStatus;
-  note?: string;
-}>;
-
-type ThreadTodosView = Readonly<{
-  version: number;
-  updated_at_unix_ms: number;
-  todos: ThreadTodoItem[];
-}>;
-
 const EXECUTION_MODE_STORAGE_KEY = 'redeven_ai_execution_mode';
 
 function normalizeExecutionMode(raw: unknown): ExecutionMode {
@@ -191,65 +177,6 @@ function persistExecutionMode(mode: ExecutionMode): void {
   } catch {
     // ignore
   }
-}
-
-function normalizeTodoStatus(raw: unknown): TodoStatus {
-  const value = String(raw ?? '').trim().toLowerCase();
-  if (value === 'in_progress' || value === 'completed' || value === 'cancelled') {
-    return value;
-  }
-  return 'pending';
-}
-
-function todoStatusLabel(status: TodoStatus): string {
-  switch (status) {
-    case 'in_progress':
-      return 'In progress';
-    case 'completed':
-      return 'Completed';
-    case 'cancelled':
-      return 'Cancelled';
-    default:
-      return 'Pending';
-  }
-}
-
-function todoStatusBadgeClass(status: TodoStatus): string {
-  switch (status) {
-    case 'in_progress':
-      return 'bg-primary/10 text-primary border-primary/20';
-    case 'completed':
-      return 'bg-success/10 text-success border-success/20';
-    case 'cancelled':
-      return 'bg-muted text-muted-foreground border-border';
-    default:
-      return 'bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/20';
-  }
-}
-
-function normalizeThreadTodosView(raw: unknown): ThreadTodosView {
-  const source = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
-  const listRaw = Array.isArray(source.todos) ? source.todos : [];
-  const todos: ThreadTodoItem[] = [];
-  listRaw.forEach((entry, index) => {
-    const item = entry && typeof entry === 'object' ? (entry as Record<string, unknown>) : {};
-    const content = String(item.content ?? '').trim();
-    if (!content) return;
-    const id = String(item.id ?? '').trim() || `todo_${index + 1}`;
-    const note = String(item.note ?? '').trim();
-    todos.push({
-      id,
-      content,
-      status: normalizeTodoStatus(item.status),
-      note: note || undefined,
-    });
-  });
-
-  return {
-    version: Math.max(0, Number(source.version ?? 0) || 0),
-    updated_at_unix_ms: Math.max(0, Number(source.updated_at_unix_ms ?? 0) || 0),
-    todos,
-  };
 }
 
 const ChatCapture: Component<{ onReady: (ctx: ChatContextValue) => void }> = (props) => {
@@ -729,67 +656,67 @@ function CompactTasksSummary(props: {
         <ChevronUp class={cn('w-3 h-3 transition-transform duration-200', expanded() ? '' : 'rotate-180')} />
       </button>
 
-      {/* Expanded panel */}
-      <Show when={expanded()}>
-        <div class={cn(
-          'absolute bottom-full left-0 mb-1.5 z-50',
-          'w-80 max-sm:w-[calc(100vw-2rem)]',
-          'rounded-xl border border-border/70 bg-card shadow-lg shadow-black/10',
-          'backdrop-blur-md',
-        )}>
-          <div class="px-3 py-2.5">
-            <div class="flex items-center justify-between gap-2 mb-2">
-              <div class="text-xs font-medium text-foreground">Tasks</div>
-              <div class="text-[11px] text-muted-foreground">
-                {props.unresolvedCount} open
-              </div>
+      {/* Expanded panel — persistently mounted, visibility controlled by CSS transitions */}
+      <div class={cn(
+        'absolute bottom-full left-0 mb-1.5 z-50',
+        'w-80 max-sm:w-[calc(100vw-2rem)]',
+        'rounded-xl border border-border/70 bg-card shadow-lg shadow-black/10',
+        'backdrop-blur-md',
+        'chat-tasks-panel',
+        expanded() ? 'chat-tasks-panel-open' : 'chat-tasks-panel-closed',
+      )}>
+        <div class="px-3 py-2.5">
+          <div class="flex items-center justify-between gap-2 mb-2">
+            <div class="text-xs font-medium text-foreground">Tasks</div>
+            <div class="text-[11px] text-muted-foreground">
+              {props.unresolvedCount} open
             </div>
+          </div>
 
-            <Show when={props.executionMode === 'plan' && props.unresolvedCount > 0}>
-              <div class="text-[11px] text-muted-foreground mb-2">
-                Switch to Act to execute these tasks
-              </div>
-            </Show>
+          <Show when={props.executionMode === 'plan' && props.unresolvedCount > 0}>
+            <div class="text-[11px] text-muted-foreground mb-2">
+              Switch to Act to execute these tasks
+            </div>
+          </Show>
 
-            <Show when={!props.todosLoading || props.todos.length > 0} fallback={
-              <div class="text-[11px] text-muted-foreground py-2">Loading tasks...</div>
+          <Show when={!props.todosLoading || props.todos.length > 0} fallback={
+            <div class="text-[11px] text-muted-foreground py-2">Loading tasks...</div>
+          }>
+            <Show when={!props.todosError} fallback={
+              <div class="text-[11px] text-error py-2">{props.todosError}</div>
             }>
-              <Show when={!props.todosError} fallback={
-                <div class="text-[11px] text-error py-2">{props.todosError}</div>
+              <Show when={props.todos.length > 0} fallback={
+                <div class="text-[11px] text-muted-foreground py-2">No tasks yet.</div>
               }>
-                <Show when={props.todos.length > 0} fallback={
-                  <div class="text-[11px] text-muted-foreground py-2">No tasks yet.</div>
-                }>
-                  <div class="space-y-1.5 max-h-52 overflow-auto pr-1">
-                    <For each={props.todos}>
-                      {(item) => (
-                        <div class="rounded-md border border-border/60 bg-background/70 px-2 py-1.5">
-                          <div class="flex items-center gap-2">
-                            <span class={cn('inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium shrink-0', todoStatusBadgeClass(item.status))}>
-                              {todoStatusLabel(item.status)}
-                            </span>
-                            <span class="text-xs text-foreground leading-relaxed break-words">{item.content}</span>
-                          </div>
-                          <Show when={item.note}>
-                            <div class="mt-1 text-[11px] text-muted-foreground leading-relaxed break-words">
-                              {item.note}
-                            </div>
-                          </Show>
+                <div class="space-y-1.5 max-h-52 overflow-auto pr-1">
+                  <For each={props.todos}>
+                    {(item) => (
+                      <div class="rounded-md border border-border/60 bg-background/70 px-2 py-1.5">
+                        <div class="flex items-center gap-2">
+                          <span class={cn('inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium shrink-0', todoStatusBadgeClass(item.status))}>
+                            {todoStatusLabel(item.status)}
+                          </span>
+                          <span class="text-xs text-foreground leading-relaxed break-words">{item.content}</span>
                         </div>
-                      )}
-                    </For>
-                  </div>
-                </Show>
-
-                <div class="mt-2 flex items-center justify-between text-[10px] text-muted-foreground">
-                  <span>Version {props.todosView?.version ?? 0}</span>
-                  <span>{props.todoUpdatedLabel ? `Updated ${props.todoUpdatedLabel}` : ''}</span>
+                        <Show when={item.note}>
+                          <div class="mt-1 text-[11px] text-muted-foreground leading-relaxed break-words">
+                            {item.note}
+                          </div>
+                        </Show>
+                      </div>
+                    )}
+                  </For>
                 </div>
               </Show>
+
+              <div class="mt-2 flex items-center justify-between text-[10px] text-muted-foreground">
+                <span>Version {props.todosView?.version ?? 0}</span>
+                <span>{props.todoUpdatedLabel ? `Updated ${props.todoUpdatedLabel}` : ''}</span>
+              </div>
             </Show>
-          </div>
+          </Show>
         </div>
-      </Show>
+      </div>
     </div>
   );
 }
@@ -1419,7 +1346,7 @@ export function EnvAIPage() {
 
       const items = Array.isArray((resp as any)?.messages) ? (resp as any).messages : [];
       const loaded = items
-        .map((it: any) => decorateMessageForTerminalExec((it?.messageJson ?? it?.message_json) as Message))
+        .map((it: any) => decorateMessageBlocks((it?.messageJson ?? it?.message_json) as Message))
         .filter((m: any) => !!String(m?.id ?? '').trim());
 
       const isActiveTid = tid === String(ai.activeThreadId() ?? '').trim();
@@ -1474,7 +1401,7 @@ export function EnvAIPage() {
 
       if (tid !== String(ai.activeThreadId() ?? '').trim()) return;
 
-      const decorated = decorateMessageForTerminalExec(resp.messageJson as Message);
+      const decorated = decorateMessageBlocks(resp.messageJson as Message);
       const current = chat.messages() ?? [];
       const next = upsertMessageById(current, decorated);
       chat.setMessages(next);
@@ -1667,7 +1594,7 @@ export function EnvAIPage() {
         const messageID = String(messageJson?.id ?? '').trim();
         if (!messageID) return;
 
-        const decorated = decorateMessageForTerminalExec(messageJson as Message);
+        const decorated = decorateMessageBlocks(messageJson as Message);
 
         const isActiveTid = tid === String(ai.activeThreadId() ?? '').trim();
         if (isActiveTid) {
@@ -1717,7 +1644,7 @@ export function EnvAIPage() {
           }
         }
         if (tid === String(ai.activeThreadId() ?? '').trim()) {
-          chat?.handleStreamEvent(decorateStreamEventForTerminalExec(streamEvent) as any);
+          chat?.handleStreamEvent(decorateStreamEvent(streamEvent) as any);
           setHasMessages(true);
           scheduleFollowScrollToLatest();
         }

@@ -99,4 +99,19 @@
     animation: none !important;
     transform: none !important;
   }
+
+  .chat-message-avatar-streaming .chat-message-avatar-image {
+    animation: none !important;
+  }
+}
+
+/* Flower avatar breathe animation while streaming */
+@keyframes redeven-flower-avatar-breathe {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.08); opacity: 0.85; }
+}
+
+.chat-message-avatar-streaming .chat-message-avatar-image {
+  animation: redeven-flower-avatar-breathe 2s ease-in-out infinite;
+  will-change: transform, opacity;
 }
