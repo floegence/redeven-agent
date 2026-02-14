@@ -9,9 +9,11 @@ import type {
   AIRealtimeEvent,
   AISetToolCollapsedRequest,
   AISetToolCollapsedResponse,
-  AIStartRunRequest,
-  AIStartRunResponse,
-  AISubscribeResponse,
+  AISendUserTurnRequest,
+  AISendUserTurnResponse,
+  AISubscribeSummaryResponse,
+  AISubscribeThreadRequest,
+  AISubscribeThreadResponse,
   AIToolApprovalRequest,
   AIToolApprovalResponse,
   AITranscriptMessageItem,
@@ -28,9 +30,11 @@ import type {
   wire_ai_list_messages_resp,
   wire_ai_set_tool_collapsed_req,
   wire_ai_set_tool_collapsed_resp,
-  wire_ai_start_run_req,
-  wire_ai_start_run_resp,
-  wire_ai_subscribe_resp,
+  wire_ai_send_user_turn_req,
+  wire_ai_send_user_turn_resp,
+  wire_ai_subscribe_summary_resp,
+  wire_ai_subscribe_thread_req,
+  wire_ai_subscribe_thread_resp,
   wire_ai_transcript_message_item,
   wire_ai_tool_approval_req,
   wire_ai_tool_approval_resp,
@@ -43,7 +47,7 @@ function toAIActiveRun(raw: wire_ai_active_run): AIActiveRun {
   };
 }
 
-export function toWireAIStartRunRequest(req: AIStartRunRequest): wire_ai_start_run_req {
+export function toWireAISendUserTurnRequest(req: AISendUserTurnRequest): wire_ai_send_user_turn_req {
   return {
     thread_id: String(req.threadId ?? '').trim(),
     model: req.model?.trim() ? req.model.trim() : undefined,
@@ -64,12 +68,14 @@ export function toWireAIStartRunRequest(req: AIStartRunRequest): wire_ai_start_r
       max_steps: Number(req.options?.maxSteps ?? 0),
       mode: req.options?.mode ? String(req.options.mode).trim() : undefined,
     },
+    expected_run_id: req.expectedRunId?.trim() ? String(req.expectedRunId).trim() : undefined,
   };
 }
 
-export function fromWireAIStartRunResponse(resp: wire_ai_start_run_resp): AIStartRunResponse {
+export function fromWireAISendUserTurnResponse(resp: wire_ai_send_user_turn_resp): AISendUserTurnResponse {
   return {
     runId: String(resp?.run_id ?? '').trim(),
+    kind: String(resp?.kind ?? '').trim(),
   };
 }
 
@@ -86,11 +92,22 @@ export function fromWireAICancelRunResponse(resp: wire_ai_cancel_run_resp): AICa
   return { ok: Boolean(resp?.ok ?? false) };
 }
 
-export function fromWireAISubscribeResponse(resp: wire_ai_subscribe_resp): AISubscribeResponse {
+export function fromWireAISubscribeSummaryResponse(resp: wire_ai_subscribe_summary_resp): AISubscribeSummaryResponse {
   const activeRuns = Array.isArray(resp?.active_runs) ? resp.active_runs.map(toAIActiveRun) : [];
   return {
     activeRuns: activeRuns.filter((it) => !!it.threadId && !!it.runId),
   };
+}
+
+export function toWireAISubscribeThreadRequest(req: AISubscribeThreadRequest): wire_ai_subscribe_thread_req {
+  return {
+    thread_id: String(req.threadId ?? '').trim(),
+  };
+}
+
+export function fromWireAISubscribeThreadResponse(resp: wire_ai_subscribe_thread_resp): AISubscribeThreadResponse {
+  const runId = String(resp?.run_id ?? '').trim();
+  return { runId: runId ? runId : undefined };
 }
 
 export function toWireAIToolApprovalRequest(req: AIToolApprovalRequest): wire_ai_tool_approval_req {
@@ -136,7 +153,7 @@ export function fromWireAISetToolCollapsedResponse(resp: wire_ai_set_tool_collap
 
 export function fromWireAIEventNotify(payload: wire_ai_event_notify): AIRealtimeEvent | null {
   const eventType = String(payload?.event_type ?? '').trim();
-  if (eventType !== 'stream_event' && eventType !== 'thread_state' && eventType !== 'transcript_message') {
+  if (eventType !== 'stream_event' && eventType !== 'thread_state' && eventType !== 'transcript_message' && eventType !== 'thread_summary') {
     return null;
   }
 
@@ -146,7 +163,7 @@ export function fromWireAIEventNotify(payload: wire_ai_event_notify): AIRealtime
   if (!threadId || !endpointId) {
     return null;
   }
-  if (eventType !== 'transcript_message' && !runId) {
+  if (eventType !== 'transcript_message' && eventType !== 'thread_summary' && !runId) {
     return null;
   }
 
@@ -193,6 +210,12 @@ export function fromWireAIEventNotify(payload: wire_ai_event_notify): AIRealtime
 
     messageRowId: Number(payload?.message_row_id ?? 0) || undefined,
     messageJson: payload?.message_json,
+
+    title: typeof payload?.title === 'string' ? payload.title : undefined,
+    updatedAtUnixMs: typeof payload?.updated_at_unix_ms === 'number' ? payload.updated_at_unix_ms : undefined,
+    lastMessagePreview: typeof payload?.last_message_preview === 'string' ? payload.last_message_preview : undefined,
+    lastMessageAtUnixMs: typeof payload?.last_message_at_unix_ms === 'number' ? payload.last_message_at_unix_ms : undefined,
+    activeRunId: typeof payload?.active_run_id === 'string' ? payload.active_run_id : undefined,
   };
 }
 

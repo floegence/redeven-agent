@@ -55,7 +55,8 @@ func TestRPC_Permissions_RequireRWX(t *testing.T) {
 		}
 	}
 
-	assertRWXDenied(TypeID_AI_SUBSCRIBE)
+	assertRWXDenied(TypeID_AI_SUBSCRIBE_SUMMARY)
+	assertRWXDenied(TypeID_AI_SUBSCRIBE_THREAD)
 	assertRWXDenied(TypeID_AI_MESSAGES_LIST)
 	assertRWXDenied(TypeID_AI_ACTIVE_RUN_SNAPSHOT)
 	assertRWXDenied(TypeID_AI_SET_TOOL_COLLAPSED)

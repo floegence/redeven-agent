@@ -1,0 +1,308 @@
+package ai
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/floegence/redeven-agent/internal/session"
+)
+
+// threadManager provides per-thread serialization without blocking unrelated threads.
+//
+// It intentionally does not cap the number of concurrent threads. Actors are created on demand and
+// are garbage-collected after an idle timeout.
+type threadManager struct {
+	svc *Service
+
+	mu     sync.Mutex
+	actors map[string]*threadActor // thread_key -> actor
+	closed bool
+}
+
+func newThreadManager(svc *Service) *threadManager {
+	return &threadManager{
+		svc:    svc,
+		actors: make(map[string]*threadActor),
+	}
+}
+
+func (m *threadManager) Get(endpointID string, threadID string) *threadActor {
+	if m == nil {
+		return nil
+	}
+	endpointID = strings.TrimSpace(endpointID)
+	threadID = strings.TrimSpace(threadID)
+	key := runThreadKey(endpointID, threadID)
+	if key == "" {
+		return nil
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return nil
+	}
+
+	if a := m.actors[key]; a != nil && a.alive() {
+		return a
+	}
+
+	a := newThreadActor(m, key, endpointID, threadID)
+	m.actors[key] = a
+	a.start()
+	return a
+}
+
+func (m *threadManager) remove(key string, actor *threadActor) {
+	if m == nil || strings.TrimSpace(key) == "" || actor == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if existing := m.actors[key]; existing == actor {
+		delete(m.actors, key)
+	}
+}
+
+func (m *threadManager) Close() {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		return
+	}
+	m.closed = true
+
+	actors := make([]*threadActor, 0, len(m.actors))
+	for _, a := range m.actors {
+		if a != nil {
+			actors = append(actors, a)
+		}
+	}
+	m.actors = make(map[string]*threadActor)
+	m.mu.Unlock()
+
+	for _, a := range actors {
+		a.stop()
+	}
+}
+
+type cmdSendUserTurn struct {
+	ctx  context.Context
+	meta *session.Meta
+	req  SendUserTurnRequest
+	resp chan sendUserTurnResult
+}
+
+type sendUserTurnResult struct {
+	resp SendUserTurnResponse
+	err  error
+}
+
+type threadActor struct {
+	mgr *threadManager
+	key string
+
+	endpointID string
+	threadID   string
+
+	inbox  chan any
+	stopCh chan struct{}
+	doneCh chan struct{}
+
+	once sync.Once
+}
+
+func newThreadActor(mgr *threadManager, key string, endpointID string, threadID string) *threadActor {
+	return &threadActor{
+		mgr:        mgr,
+		key:        strings.TrimSpace(key),
+		endpointID: strings.TrimSpace(endpointID),
+		threadID:   strings.TrimSpace(threadID),
+		inbox:      make(chan any, 128),
+		stopCh:     make(chan struct{}),
+		doneCh:     make(chan struct{}),
+	}
+}
+
+func (a *threadActor) alive() bool {
+	if a == nil {
+		return false
+	}
+	select {
+	case <-a.doneCh:
+		return false
+	default:
+		return true
+	}
+}
+
+func (a *threadActor) start() {
+	if a == nil {
+		return
+	}
+	go a.loop()
+}
+
+func (a *threadActor) stop() {
+	if a == nil {
+		return
+	}
+	a.once.Do(func() {
+		close(a.stopCh)
+	})
+	<-a.doneCh
+}
+
+func (a *threadActor) SendUserTurn(ctx context.Context, meta *session.Meta, req SendUserTurnRequest) (SendUserTurnResponse, error) {
+	if a == nil {
+		return SendUserTurnResponse{}, errors.New("thread actor not ready")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ch := make(chan sendUserTurnResult, 1)
+	cmd := cmdSendUserTurn{ctx: ctx, meta: meta, req: req, resp: ch}
+
+	select {
+	case <-a.stopCh:
+		return SendUserTurnResponse{}, errors.New("thread actor closed")
+	case <-ctx.Done():
+		return SendUserTurnResponse{}, ctx.Err()
+	case a.inbox <- cmd:
+	}
+
+	select {
+	case <-a.stopCh:
+		return SendUserTurnResponse{}, errors.New("thread actor closed")
+	case <-ctx.Done():
+		return SendUserTurnResponse{}, ctx.Err()
+	case res := <-ch:
+		return res.resp, res.err
+	}
+}
+
+func (a *threadActor) loop() {
+	defer close(a.doneCh)
+	defer func() {
+		if a.mgr != nil && strings.TrimSpace(a.key) != "" {
+			a.mgr.remove(a.key, a)
+		}
+	}()
+
+	idleTO := 10 * time.Minute
+	idleTimer := time.NewTimer(idleTO)
+	defer idleTimer.Stop()
+
+	resetIdle := func() {
+		if !idleTimer.Stop() {
+			select {
+			case <-idleTimer.C:
+			default:
+			}
+		}
+		idleTimer.Reset(idleTO)
+	}
+
+	for {
+		select {
+		case <-a.stopCh:
+			return
+		case <-idleTimer.C:
+			// Stop idle actors to avoid leaking goroutines when users create many threads.
+			if a.mgr != nil && a.mgr.svc != nil {
+				if a.mgr.svc.HasActiveThreadForEndpoint(a.endpointID, a.threadID) {
+					resetIdle()
+					continue
+				}
+			}
+			return
+		case raw := <-a.inbox:
+			resetIdle()
+			switch cmd := raw.(type) {
+			case cmdSendUserTurn:
+				resp, err := a.handleSendUserTurn(cmd.ctx, cmd.meta, cmd.req)
+				cmd.resp <- sendUserTurnResult{resp: resp, err: err}
+			}
+		}
+	}
+}
+
+func (a *threadActor) handleSendUserTurn(ctx context.Context, meta *session.Meta, req SendUserTurnRequest) (SendUserTurnResponse, error) {
+	if a == nil || a.mgr == nil || a.mgr.svc == nil {
+		return SendUserTurnResponse{}, errors.New("service not ready")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := requireRWX(meta); err != nil {
+		return SendUserTurnResponse{}, err
+	}
+	if !a.mgr.svc.Enabled() {
+		return SendUserTurnResponse{}, ErrNotConfigured
+	}
+
+	endpointID := strings.TrimSpace(meta.EndpointID)
+	if endpointID == "" || endpointID != strings.TrimSpace(a.endpointID) {
+		return SendUserTurnResponse{}, errors.New("invalid request")
+	}
+	threadID := strings.TrimSpace(req.ThreadID)
+	if threadID == "" || threadID != strings.TrimSpace(a.threadID) {
+		return SendUserTurnResponse{}, errors.New("invalid request")
+	}
+
+	persisted, normalizedInput, err := a.mgr.svc.persistUserMessage(ctx, meta, endpointID, threadID, req.Input)
+	if err != nil {
+		return SendUserTurnResponse{}, err
+	}
+	req.Input = normalizedInput
+
+	// Transcript events are thread-scoped; they never go to summary subscribers.
+	a.mgr.svc.broadcastTranscriptMessage(endpointID, threadID, "", persisted.RowID, persisted.MessageJSON, persisted.CreatedAtUnixMs)
+	a.mgr.svc.broadcastThreadSummary(endpointID, threadID)
+
+	thKey := runThreadKey(endpointID, threadID)
+	var activeRunID string
+	var r *run
+	a.mgr.svc.mu.Lock()
+	activeRunID = strings.TrimSpace(a.mgr.svc.activeRunByTh[thKey])
+	if activeRunID != "" {
+		r = a.mgr.svc.runs[activeRunID]
+	}
+	a.mgr.svc.mu.Unlock()
+
+	expected := strings.TrimSpace(req.ExpectedRunID)
+	if activeRunID != "" && r != nil && !r.isDetached() {
+		if expected != "" && expected != activeRunID {
+			return SendUserTurnResponse{}, ErrRunChanged
+		}
+		if err := r.enqueueSteer(ctx, steerInput{MessageID: persisted.MessageID, Input: req.Input, CreatedAtUnixMs: persisted.CreatedAtUnixMs}); err != nil {
+			// If the run finished between the lookup and the enqueue, fall back to starting a new run.
+			r = nil
+		} else {
+			return SendUserTurnResponse{RunID: activeRunID, Kind: "steer"}, nil
+		}
+	}
+
+	runID, err := NewRunID()
+	if err != nil {
+		return SendUserTurnResponse{}, err
+	}
+
+	startReq := RunStartRequest{
+		ThreadID: threadID,
+		Model:    strings.TrimSpace(req.Model),
+		Input:    req.Input,
+		Options:  req.Options,
+	}
+	if err := a.mgr.svc.StartRunDetached(meta, runID, startReq); err != nil {
+		return SendUserTurnResponse{}, err
+	}
+	a.mgr.svc.broadcastThreadSummary(endpointID, threadID)
+	return SendUserTurnResponse{RunID: runID, Kind: "start"}, nil
+}
