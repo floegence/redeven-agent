@@ -94,6 +94,7 @@ type run struct {
 	cancelRequested bool
 	cancelFn        context.CancelFunc
 	detached        atomic.Bool // hard-canceled: stop emitting realtime events and skip thread state updates
+	busyCount       atomic.Int32
 
 	uploadsDir       string
 	threadsDB        *threadstore.Store
@@ -212,6 +213,23 @@ func (r *run) touchActivity() {
 	}
 }
 
+func (r *run) beginBusy() func() {
+	if r == nil {
+		return func() {}
+	}
+	r.busyCount.Add(1)
+	return func() {
+		r.busyCount.Add(-1)
+	}
+}
+
+func (r *run) isBusy() bool {
+	if r == nil {
+		return false
+	}
+	return r.busyCount.Load() > 0
+}
+
 func (r *run) isWaitingApproval() bool {
 	if r == nil {
 		return false
@@ -245,7 +263,7 @@ func (r *run) runIdleWatchdog(ctx context.Context) {
 		case <-idleTimer.C:
 			// Waiting for the user is not an "idle" run. That lifecycle is bounded by the
 			// per-approval timeout (toolApprovalTO), plus the run's max wall time.
-			if r.isWaitingApproval() {
+			if r.isWaitingApproval() || r.isBusy() {
 				idleTimer.Reset(r.idleTimeout)
 				continue
 			}
@@ -1523,6 +1541,8 @@ func (r *run) handleToolCall(ctx context.Context, toolID string, toolName string
 	}
 
 	r.debug("ai.run.tool.exec.start", "tool_id", toolID, "tool_name", toolName)
+	endBusy := r.beginBusy()
+	defer endBusy()
 	block.Status = ToolCallStatusRunning
 	r.sendStreamEvent(streamEventBlockSet{Type: "block-set", MessageID: r.messageID, BlockIndex: idx, Block: block})
 	r.persistSetToolBlock(idx, block)
@@ -2022,6 +2042,124 @@ func (r *run) execTool(ctx context.Context, meta *session.Meta, toolID string, t
 		}
 		return r.toolWriteTodos(ctx, toolID, p.Todos, p.ExpectedVersion, p.Explanation)
 
+	case "use_skill":
+		if meta == nil || !meta.CanExecute {
+			return nil, errors.New("execute permission denied")
+		}
+		var p struct {
+			Name   string `json:"name"`
+			Reason string `json:"reason"`
+		}
+		b, _ := json.Marshal(args)
+		if err := json.Unmarshal(b, &p); err != nil {
+			return nil, errors.New("invalid args")
+		}
+		name := strings.TrimSpace(p.Name)
+		if name == "" {
+			return nil, errors.New("missing name")
+		}
+		reason := strings.TrimSpace(p.Reason)
+		activation, alreadyActive, err := r.activateSkill(name)
+		if err != nil {
+			return nil, err
+		}
+		out := map[string]any{
+			"name":           activation.Name,
+			"activation_id":  activation.ActivationID,
+			"already_active": alreadyActive,
+			"content":        activation.Content,
+			"content_ref":    activation.ContentRef,
+			"root_dir":       activation.RootDir,
+			"mode_hints":     activation.ModeHints,
+		}
+		if reason != "" {
+			out["reason"] = reason
+		}
+		if len(activation.Dependencies) > 0 {
+			deps := make([]map[string]any, 0, len(activation.Dependencies))
+			for _, dep := range activation.Dependencies {
+				deps = append(deps, map[string]any{
+					"name":      dep.Name,
+					"transport": dep.Transport,
+					"command":   dep.Command,
+					"url":       dep.URL,
+				})
+			}
+			out["dependencies"] = deps
+			out["dependency_degraded"] = true
+		}
+		return out, nil
+
+	case "delegate_task":
+		if meta == nil || !meta.CanExecute {
+			return nil, errors.New("execute permission denied")
+		}
+		return r.delegateTask(ctx, cloneAnyMap(args))
+
+	case "send_subagent_input":
+		if meta == nil || !meta.CanExecute {
+			return nil, errors.New("execute permission denied")
+		}
+		var p struct {
+			ID        string `json:"id"`
+			Message   string `json:"message"`
+			Interrupt bool   `json:"interrupt"`
+		}
+		b, _ := json.Marshal(args)
+		if err := json.Unmarshal(b, &p); err != nil {
+			return nil, errors.New("invalid args")
+		}
+		id := strings.TrimSpace(p.ID)
+		message := strings.TrimSpace(p.Message)
+		if id == "" || message == "" {
+			return nil, errors.New("missing id or message")
+		}
+		return r.sendSubagentInput(id, message, p.Interrupt)
+
+	case "wait_subagents":
+		if meta == nil || !meta.CanExecute {
+			return nil, errors.New("execute permission denied")
+		}
+		var p struct {
+			IDs       []string `json:"ids"`
+			TimeoutMS int64    `json:"timeout_ms"`
+		}
+		b, _ := json.Marshal(args)
+		if err := json.Unmarshal(b, &p); err != nil {
+			return nil, errors.New("invalid args")
+		}
+		timeoutMS := p.TimeoutMS
+		if timeoutMS <= 0 {
+			timeoutMS = 30_000
+		}
+		if timeoutMS < 10_000 {
+			timeoutMS = 10_000
+		}
+		if timeoutMS > 300_000 {
+			timeoutMS = 300_000
+		}
+		waitCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutMS)*time.Millisecond)
+		defer cancel()
+		out, timedOut := r.waitSubagents(waitCtx, p.IDs)
+		return map[string]any{"status": out, "timed_out": timedOut}, nil
+
+	case "close_subagent":
+		if meta == nil || !meta.CanExecute {
+			return nil, errors.New("execute permission denied")
+		}
+		var p struct {
+			ID string `json:"id"`
+		}
+		b, _ := json.Marshal(args)
+		if err := json.Unmarshal(b, &p); err != nil {
+			return nil, errors.New("invalid args")
+		}
+		id := strings.TrimSpace(p.ID)
+		if id == "" {
+			return nil, errors.New("missing id")
+		}
+		return r.closeSubagent(id)
+
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", toolName)
 	}
@@ -2110,42 +2248,11 @@ func (r *run) toolApplyPatch(ctx context.Context, patchText string) (any, error)
 		return nil, mapToolCwdError(err)
 	}
 
-	tmpFile, err := os.CreateTemp("", "redeven-apply-patch-*.diff")
-	if err != nil {
-		return nil, errors.New("cannot create temp patch file")
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-	tmpPath := tmpFile.Name()
-	defer func() {
-		_ = os.Remove(tmpPath)
-	}()
-	if _, err := tmpFile.WriteString(patchText + "\n"); err != nil {
-		_ = tmpFile.Close()
-		return nil, errors.New("cannot write patch file")
-	}
-	if err := tmpFile.Close(); err != nil {
-		return nil, errors.New("cannot close patch file")
-	}
-
-	checkCmd := exec.CommandContext(ctx, "git", "apply", "--check", "--whitespace=nowarn", "--recount", tmpPath)
-	checkCmd.Dir = workingDirAbs
-	checkOut, checkErr := checkCmd.CombinedOutput()
-	if checkErr != nil {
-		msg := strings.TrimSpace(string(checkOut))
-		if msg == "" {
-			msg = "patch check failed"
-		}
-		return nil, errors.New(msg)
-	}
-
-	applyCmd := exec.CommandContext(ctx, "git", "apply", "--whitespace=nowarn", "--recount", tmpPath)
-	applyCmd.Dir = workingDirAbs
-	applyOut, applyErr := applyCmd.CombinedOutput()
-	if applyErr != nil {
-		msg := strings.TrimSpace(string(applyOut))
-		if msg == "" {
-			msg = "patch apply failed"
-		}
-		return nil, errors.New(msg)
+	if err := applyUnifiedDiff(workingDirAbs, patchText); err != nil {
+		return nil, err
 	}
 
 	filesChanged, hunks, additions, deletions := summarizeUnifiedDiff(patchText)
@@ -2188,6 +2295,11 @@ func summarizeUnifiedDiff(patchText string) (filesChanged int, hunks int, additi
 
 // --- terminal.exec ---
 
+const (
+	terminalExecDefaultTimeout = 10 * time.Minute
+	terminalExecMaxTimeout     = 30 * time.Minute
+)
+
 func (r *run) toolTerminalExec(ctx context.Context, command string, stdin string, cwd string, timeoutMS int64) (any, error) {
 	command = strings.TrimSpace(command)
 	if command == "" {
@@ -2197,10 +2309,10 @@ func (r *run) toolTerminalExec(ctx context.Context, command string, stdin string
 		return nil, errors.New("stdin too large")
 	}
 	if timeoutMS <= 0 {
-		timeoutMS = 60_000
+		timeoutMS = int64(terminalExecDefaultTimeout / time.Millisecond)
 	}
-	if timeoutMS > 60_000 {
-		timeoutMS = 60_000
+	if timeoutMS > int64(terminalExecMaxTimeout/time.Millisecond) {
+		timeoutMS = int64(terminalExecMaxTimeout / time.Millisecond)
 	}
 
 	workingDirAbs, err := r.workingDirAbs()
