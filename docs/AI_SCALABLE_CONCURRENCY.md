@@ -1,6 +1,6 @@
 # Flower: Scalable Multi-Thread Concurrency (Design)
 
-Status: design proposal (not implemented).
+Status: implemented (core concurrency model, 2026-02-14).
 
 This document proposes a **ground-up concurrency model** for Flower (Redeven Agent AI assistant) that is *natively prepared* for **many concurrent running threads** (no artificial thread-count cap).
 
@@ -490,6 +490,23 @@ Phase 3: split subscriptions.
 Phase 4: introduce ResourceScheduler via tool interceptors.
 
 Phase 5: move persistence to a pipeline.
+
+---
+
+## 14. Implementation Status (This Repo)
+
+Implemented in `internal/ai` + Env App UI:
+
+- Per-thread active run tracking (no channel-level mutual exclusion).
+- `ai.sendUserTurn` start-or-steer semantics (Codex-style Enter-to-send).
+- Thread-scoped realtime subscription (`ai.subscribeThread`) + endpoint summary subscription (`ai.subscribeSummary`).
+- Run steer queue (`run.steerCh`) and runtime drain points (steer inputs applied to the in-flight run).
+
+Not implemented yet (future work):
+
+- ResourceScheduler (workspace locks / terminal pool / provider backpressure).
+- Persistence pipeline/outbox (batch writes, drop policy tuning).
+- Summary event coalescing (last-write-wins batching under extreme load).
 
 ---
 

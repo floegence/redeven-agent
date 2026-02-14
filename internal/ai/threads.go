@@ -312,7 +312,11 @@ func (s *Service) RenameThread(ctx context.Context, meta *session.Meta, threadID
 	if strings.TrimSpace(threadID) == "" {
 		return errors.New("missing thread_id")
 	}
-	return db.RenameThread(ctx, meta.EndpointID, threadID, title, meta.UserPublicID, meta.UserEmail)
+	if err := db.RenameThread(ctx, meta.EndpointID, threadID, title, meta.UserPublicID, meta.UserEmail); err != nil {
+		return err
+	}
+	s.broadcastThreadSummary(strings.TrimSpace(meta.EndpointID), strings.TrimSpace(threadID))
+	return nil
 }
 
 func (s *Service) SetThreadModel(ctx context.Context, meta *session.Meta, threadID string, modelID string) error {
@@ -353,7 +357,11 @@ func (s *Service) SetThreadModel(ctx context.Context, meta *session.Meta, thread
 		return fmt.Errorf("model not allowed: %s", modelID)
 	}
 
-	return db.UpdateThreadModelID(ctx, endpointID, threadID, modelID)
+	if err := db.UpdateThreadModelID(ctx, endpointID, threadID, modelID); err != nil {
+		return err
+	}
+	s.broadcastThreadSummary(strings.TrimSpace(endpointID), strings.TrimSpace(threadID))
+	return nil
 }
 
 func (s *Service) CancelThread(meta *session.Meta, threadID string) error {
@@ -387,6 +395,7 @@ func (s *Service) CancelThread(meta *session.Meta, threadID string) error {
 		uctx, cancel := context.WithTimeout(context.Background(), persistTO)
 		_ = db.UpdateThreadRunState(uctx, endpointID, threadID, "canceled", "", meta.UserPublicID, meta.UserEmail)
 		cancel()
+		s.broadcastThreadSummary(endpointID, threadID)
 	}
 	return nil
 }
@@ -431,12 +440,6 @@ func (s *Service) DeleteThread(ctx context.Context, meta *session.Meta, threadID
 		s.mu.Lock()
 		if strings.TrimSpace(s.activeRunByTh[runThreadKey(endpointID, threadID)]) == runID {
 			delete(s.activeRunByTh, runThreadKey(endpointID, threadID))
-		}
-		for ch, rid := range s.activeRunByChan {
-			if strings.TrimSpace(rid) != runID {
-				continue
-			}
-			delete(s.activeRunByChan, ch)
 		}
 		s.mu.Unlock()
 	}
