@@ -1197,7 +1197,7 @@ func (g *Gateway) handleAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		th, err := g.ai.CreateThread(r.Context(), meta, body.Title, body.ModelID)
+		th, err := g.ai.CreateThread(r.Context(), meta, body.Title, body.ModelID, body.WorkingDir)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, apiResp{OK: false, Error: err.Error()})
 			return
