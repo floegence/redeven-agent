@@ -122,19 +122,21 @@ Permissions are enforced by checking effective `session_meta` bits (see `interna
 | `PATCH /_redeven_proxy/api/forwards/:forward_id` | Update port forward | `execute` | `internal/codeapp/gateway/gateway.go` |
 | `DELETE /_redeven_proxy/api/forwards/:forward_id` | Delete port forward | `execute` | `internal/codeapp/gateway/gateway.go` |
 | `POST /_redeven_proxy/api/forwards/:forward_id/touch` | Mark a port forward as opened (UI/audit) | `execute` | `internal/codeapp/gateway/gateway.go` |
-| `GET /_redeven_proxy/api/ai/models` | List allowed AI models | `read` | `internal/codeapp/gateway/gateway.go` |
-| `POST /_redeven_proxy/api/ai/runs` | Start an AI run (streaming) | `read` | `internal/codeapp/gateway/gateway.go` |
-| `POST /_redeven_proxy/api/ai/runs/:run_id/cancel` | Cancel an AI run | `read` | `internal/codeapp/gateway/gateway.go` |
-| `POST /_redeven_proxy/api/ai/runs/:run_id/tool_approvals` | Approve/reject a tool call | `read` | `internal/codeapp/gateway/gateway.go` |
-| `POST /_redeven_proxy/api/ai/uploads` | Upload an attachment | `read` | `internal/codeapp/gateway/gateway.go` |
-| `GET /_redeven_proxy/api/ai/uploads/:upload_id` | Download an attachment | `read` | `internal/codeapp/gateway/gateway.go` |
-| `GET /_redeven_proxy/api/ai/threads` | List AI threads | `read` | `internal/codeapp/gateway/gateway.go` |
-| `POST /_redeven_proxy/api/ai/threads` | Create AI thread | `read` | `internal/codeapp/gateway/gateway.go` |
-| `GET /_redeven_proxy/api/ai/threads/:thread_id` | Get AI thread | `read` | `internal/codeapp/gateway/gateway.go` |
-| `PATCH /_redeven_proxy/api/ai/threads/:thread_id` | Rename AI thread | `read` | `internal/codeapp/gateway/gateway.go` |
-| `DELETE /_redeven_proxy/api/ai/threads/:thread_id` | Delete AI thread | `write` | `internal/codeapp/gateway/gateway.go` |
-| `GET /_redeven_proxy/api/ai/threads/:thread_id/messages` | List AI thread messages | `read` | `internal/codeapp/gateway/gateway.go` |
-| `POST /_redeven_proxy/api/ai/threads/:thread_id/messages` | Append AI thread message | `read` | `internal/codeapp/gateway/gateway.go` |
+| `GET /_redeven_proxy/api/ai/models` | List allowed AI models | `read + write + execute` | `internal/codeapp/gateway/gateway.go` |
+| `POST /_redeven_proxy/api/ai/runs` | Start an AI run (streaming) | `read + write + execute` | `internal/codeapp/gateway/gateway.go` |
+| `GET /_redeven_proxy/api/ai/runs/:run_id/events` | List AI run events | `read + write + execute` | `internal/codeapp/gateway/gateway.go` |
+| `POST /_redeven_proxy/api/ai/runs/:run_id/cancel` | Cancel an AI run | `read + write + execute` | `internal/codeapp/gateway/gateway.go` |
+| `POST /_redeven_proxy/api/ai/runs/:run_id/tool_approvals` | Approve/reject a tool call | `read + write + execute` | `internal/codeapp/gateway/gateway.go` |
+| `POST /_redeven_proxy/api/ai/uploads` | Upload an attachment | `read + write + execute` | `internal/codeapp/gateway/gateway.go` |
+| `GET /_redeven_proxy/api/ai/uploads/:upload_id` | Download an attachment | `read + write + execute` | `internal/codeapp/gateway/gateway.go` |
+| `GET /_redeven_proxy/api/ai/threads` | List AI threads | `read + write + execute` | `internal/codeapp/gateway/gateway.go` |
+| `POST /_redeven_proxy/api/ai/threads` | Create AI thread | `read + write + execute` | `internal/codeapp/gateway/gateway.go` |
+| `GET /_redeven_proxy/api/ai/threads/:thread_id` | Get AI thread | `read + write + execute` | `internal/codeapp/gateway/gateway.go` |
+| `PATCH /_redeven_proxy/api/ai/threads/:thread_id` | Rename AI thread | `read + write + execute` | `internal/codeapp/gateway/gateway.go` |
+| `DELETE /_redeven_proxy/api/ai/threads/:thread_id` | Delete AI thread | `read + write + execute` | `internal/codeapp/gateway/gateway.go` |
+| `GET /_redeven_proxy/api/ai/threads/:thread_id/todos` | Get AI thread todos snapshot | `read + write + execute` | `internal/codeapp/gateway/gateway.go` |
+| `GET /_redeven_proxy/api/ai/threads/:thread_id/messages` | List AI thread messages | `read + write + execute` | `internal/codeapp/gateway/gateway.go` |
+| `POST /_redeven_proxy/api/ai/threads/:thread_id/messages` | Append AI thread message | `read + write + execute` | `internal/codeapp/gateway/gateway.go` |
 
 ## Adding New Capabilities (Policy Contract)
 

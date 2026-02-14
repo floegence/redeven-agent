@@ -1394,6 +1394,7 @@ mainLoop:
 		}
 
 		turnTextSeen := false
+		endBusy := r.beginBusy()
 		stepResult, stepErr := adapter.StreamTurn(execCtx, turnReq, func(event StreamEvent) {
 			switch event.Type {
 			case StreamEventTextDelta:
@@ -1412,6 +1413,7 @@ mainLoop:
 				}
 			}
 		})
+		endBusy()
 		if stepErr != nil {
 			recoveryCount++
 			if r.finalizeIfContextCanceled(execCtx) {
@@ -1804,6 +1806,70 @@ mainLoop:
 			"no_progress_rounds":  noToolRounds,
 			"complexity":          taskComplexity,
 		})
+
+		// One last chance: force a signal-only turn to produce task_complete instead of
+		// prematurely waiting_user when the model forgets explicit completion.
+		forcedMsg := "You have produced repeated no-tool rounds. Summarize what you accomplished and what remains (if anything), then call task_complete."
+		messages = append(messages, Message{Role: "user", Content: []ContentPart{{Type: "text", Text: forcedMsg}}})
+		forcedOverlay := "[FINAL SUMMARY] Repeated no-tool rounds. You MUST call task_complete now with a verified summary (include remaining work and next actions if incomplete)."
+		forcedSystemPrompt := r.buildLayeredSystemPrompt(taskObjective, mode, taskComplexity, step, maxSteps, false, scheduler.ActiveTools(mode), state, forcedOverlay)
+		forcedTurnMessages := composeTurnMessages(forcedSystemPrompt, messages)
+
+		signalOnlyTools := make([]ToolDef, 0, 1)
+		for _, t := range scheduler.ActiveTools(mode) {
+			if t.Name == "task_complete" {
+				signalOnlyTools = append(signalOnlyTools, t)
+				break
+			}
+		}
+		forcedReq := TurnRequest{
+			Model:            modelName,
+			Messages:         forcedTurnMessages,
+			Tools:            signalOnlyTools,
+			Budgets:          TurnBudgets{MaxSteps: 1, MaxInputTokens: req.Options.MaxInputTokens, MaxOutputToken: req.Options.MaxOutputTokens, MaxCostUSD: req.Options.MaxCostUSD},
+			ModeFlags:        ModeFlags{Mode: mode},
+			ProviderControls: ProviderControls{ThinkingBudgetTokens: req.Options.ThinkingBudgetTokens, CacheControl: req.Options.CacheControl, ResponseFormat: req.Options.ResponseFormat, Temperature: req.Options.Temperature, TopP: req.Options.TopP},
+		}
+		endForcedBusy := r.beginBusy()
+		forcedResult, forcedErr := adapter.StreamTurn(execCtx, forcedReq, func(event StreamEvent) {
+			if event.Type == StreamEventTextDelta && strings.TrimSpace(event.Text) != "" {
+				_ = r.appendTextDelta(event.Text)
+			}
+		})
+		endForcedBusy()
+		if forcedErr == nil {
+			_, forcedTaskComplete, _ := splitSignalToolCalls(forcedResult.ToolCalls)
+			if forcedTaskComplete != nil {
+				resultText := extractSignalText(*forcedTaskComplete, "result")
+				if resultText == "" {
+					resultText = strings.TrimSpace(forcedResult.Text)
+				}
+				if strings.TrimSpace(resultText) != "" {
+					gatePassed, gateReason := evaluateTaskCompletionGate(resultText, state, taskComplexity, req.Options.Mode)
+					r.persistRunEvent("completion.attempt", RealtimeStreamKindLifecycle, map[string]any{
+						"step_index":          step,
+						"attempt":             "task_complete_forced",
+						"completion_contract": completionContractExplicitOnly,
+						"gate_passed":         gatePassed,
+						"gate_reason":         gateReason,
+						"forced":              true,
+						"complexity":          taskComplexity,
+						"mode":                strings.TrimSpace(req.Options.Mode),
+					})
+					// Forced completion is a safety net; do not block on the completion gate here.
+					if strings.TrimSpace(forcedResult.Text) == "" {
+						_ = r.appendTextDelta(strings.TrimSpace(resultText))
+					}
+					r.emitSourcesToolBlock("task_complete")
+					r.setFinalizationReason("task_complete_forced")
+					r.setEndReason("complete")
+					r.emitLifecyclePhase("ended", map[string]any{"reason": "task_complete_forced", "step_index": step})
+					r.sendStreamEvent(streamEventMessageEnd{Type: "message-end", MessageID: r.messageID})
+					return nil
+				}
+			}
+		}
+
 		ended, askErr := tryAskUser(step, "I still do not have explicit completion. Please provide missing requirements, or ask me to continue with a specific next action.", "missing_explicit_completion")
 		if askErr != nil {
 			return askErr
@@ -1846,11 +1912,48 @@ mainLoop:
 		ModeFlags:        ModeFlags{Mode: mode},
 		ProviderControls: ProviderControls{ResponseFormat: req.Options.ResponseFormat, Temperature: req.Options.Temperature, TopP: req.Options.TopP},
 	}
+	endBusy := r.beginBusy()
 	summaryResult, summaryErr := adapter.StreamTurn(execCtx, summaryReq, func(event StreamEvent) {
 		if event.Type == StreamEventTextDelta && strings.TrimSpace(event.Text) != "" {
 			_ = r.appendTextDelta(event.Text)
 		}
 	})
+	endBusy()
+
+	// If the provider produced a task_complete tool call, honor it even if it did not
+	// also emit plain text in the turn.
+	if summaryErr == nil {
+		_, taskCompleteCall, _ := splitSignalToolCalls(summaryResult.ToolCalls)
+		if taskCompleteCall != nil {
+			resultText := extractSignalText(*taskCompleteCall, "result")
+			if resultText == "" {
+				resultText = strings.TrimSpace(summaryResult.Text)
+			}
+			if strings.TrimSpace(resultText) != "" {
+				gatePassed, gateReason := evaluateTaskCompletionGate(resultText, state, taskComplexity, req.Options.Mode)
+				r.persistRunEvent("completion.attempt", RealtimeStreamKindLifecycle, map[string]any{
+					"step_index":          nativeHardMaxSteps,
+					"attempt":             "task_complete_forced",
+					"completion_contract": completionContractExplicitOnly,
+					"gate_passed":         gatePassed,
+					"gate_reason":         gateReason,
+					"forced":              true,
+					"complexity":          taskComplexity,
+					"mode":                strings.TrimSpace(req.Options.Mode),
+				})
+				// Hard-max completion is a safety net; do not block on the completion gate here.
+				if strings.TrimSpace(summaryResult.Text) == "" {
+					_ = r.appendTextDelta(strings.TrimSpace(resultText))
+				}
+				r.emitSourcesToolBlock("task_complete")
+				r.setFinalizationReason("task_complete_forced")
+				r.setEndReason("complete")
+				r.emitLifecyclePhase("ended", map[string]any{"reason": "task_complete_forced", "step_index": nativeHardMaxSteps})
+				r.sendStreamEvent(streamEventMessageEnd{Type: "message-end", MessageID: r.messageID})
+				return nil
+			}
+		}
+	}
 
 	if summaryErr != nil || strings.TrimSpace(summaryResult.Text) == "" {
 		// Summary turn failed — tell user via endAskUser with specific error,
@@ -1919,6 +2022,7 @@ func (r *run) runNativeSocial(
 		ProviderControls: ProviderControls{ThinkingBudgetTokens: req.Options.ThinkingBudgetTokens, CacheControl: req.Options.CacheControl, ResponseFormat: req.Options.ResponseFormat, Temperature: req.Options.Temperature, TopP: req.Options.TopP},
 	}
 	estimateTokens, estimateSource := estimateTurnTokens(providerType, turnReq)
+	endBusy := r.beginBusy()
 	stepResult, stepErr := adapter.StreamTurn(execCtx, turnReq, func(event StreamEvent) {
 		switch event.Type {
 		case StreamEventTextDelta:
@@ -1933,6 +2037,7 @@ func (r *run) runNativeSocial(
 			}
 		}
 	})
+	endBusy()
 	if stepErr != nil {
 		if r.finalizeIfContextCanceled(execCtx) {
 			return nil
@@ -2734,7 +2839,8 @@ func (r *run) buildLayeredSystemPrompt(objective string, mode string, complexity
 		"You are an expert software engineer: you can write, analyze, refactor, and debug code across languages.",
 		"You are a master of shell commands and system diagnostics. When network information is needed, prefer direct requests to authoritative sources (official docs/specs/vendor pages) using curl and related CLI tools.",
 		"You are also a practical life assistant: answer everyday questions and help plan and execute tasks when possible.",
-		"Operate within the available tools, workspace, and permission policy for this session.",
+		"Operate within the available tools and permission policy for this session.",
+		"The working directory is a default context, not a hard sandbox: you may access paths outside it when needed (use absolute paths/cwd/workdir explicitly).",
 		"Default behavior: finish the full task in one run whenever the available tools and permissions allow it.",
 		"Keep going until the user's task is completely resolved before ending your turn.",
 		"Only call task_complete when you are confident the problem is fully solved.",
@@ -2742,7 +2848,7 @@ func (r *run) buildLayeredSystemPrompt(objective string, mode string, complexity
 		"",
 		"# Tool Usage Strategy",
 		"Follow this workflow for every task:",
-		"1. **Investigate** — Use terminal.exec to inspect the workspace and device state (rg/sed/cat for code; OS probes for diagnostics; curl for network data) and gather context.",
+		"1. **Investigate** — Use terminal.exec to inspect the workspace, relevant local paths, and device state (rg/sed/cat for code; OS probes for diagnostics; curl for network data) and gather context.",
 		"2. **Plan** — Identify what needs to be done based on the information gathered.",
 		"3. **Act** — Use apply_patch for file edits; use terminal.exec for validated command actions.",
 		"4. **Verify** — Use terminal.exec to run checks (tests/lint/build) and confirm correctness.",
@@ -2770,6 +2876,7 @@ func (r *run) buildLayeredSystemPrompt(objective string, mode string, complexity
 		"- If you can answer by reading files, use terminal.exec with rg/sed/cat first.",
 		"- Prefer apply_patch for file edits instead of shell redirection or ad-hoc overwrite commands.",
 		"- Use workdir/cwd fields on terminal.exec instead of running cd in the command string.",
+		"- For long-running commands (tests/build/lint), increase terminal.exec timeout_ms (up to 30 minutes).",
 		"- Do NOT wrap terminal.exec commands with an extra `bash -lc` (terminal.exec already runs a shell with -lc).",
 		"- For multi-line scripts, pass content via terminal.exec `stdin` and use a stdin-reading command (e.g. `python -`, `bash`, `cat`). Avoid heredocs/here-strings.",
 		"- Do NOT fabricate file contents, command outputs, or tool results. Always use tools to get real data.",
@@ -2804,8 +2911,8 @@ func (r *run) buildLayeredSystemPrompt(objective string, mode string, complexity
 		"- **Debugging**: terminal.exec (reproduce) → apply_patch fix → terminal.exec (verify) → task_complete",
 		"",
 		"# Search Template",
-		"- Default: `rg \"<PATTERN>\" . --hidden --glob '!.git'`",
-		"- If output is too large or slow, retry with: `rg \"<PATTERN>\" . --hidden --glob '!.git' --glob '!node_modules' --glob '!dist'`",
+		"- Default: `rg \"<PATTERN>\" . --hidden --glob '!.git' --glob '!node_modules' --glob '!.pnpm-store' --glob '!dist' --glob '!build' --glob '!out' --glob '!coverage' --glob '!target' --glob '!.venv' --glob '!venv' --glob '!.cache' --glob '!.next' --glob '!.turbo'`",
+		"- If you explicitly need dependency or build output, remove the relevant --glob excludes.",
 	}
 	availableSkills := r.listSkills()
 	activeSkills := r.activeSkills()
