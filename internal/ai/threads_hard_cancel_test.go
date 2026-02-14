@@ -65,7 +65,6 @@ func TestService_DeleteThreadForce_DoesNotWaitForRunExit(t *testing.T) {
 	}
 
 	svc.mu.Lock()
-	svc.activeRunByChan[meta.ChannelID] = runID
 	svc.activeRunByTh[thKey] = runID
 	svc.runs[runID] = stuck
 	svc.mu.Unlock()
@@ -84,9 +83,8 @@ func TestService_DeleteThreadForce_DoesNotWaitForRunExit(t *testing.T) {
 
 	svc.mu.Lock()
 	_, byTh := svc.activeRunByTh[thKey]
-	_, byCh := svc.activeRunByChan[meta.ChannelID]
 	svc.mu.Unlock()
-	if byTh || byCh {
+	if byTh {
 		t.Fatalf("active run mappings should be detached after force delete")
 	}
 }
@@ -116,7 +114,6 @@ func TestService_CancelRun_DetachesStaleActiveMapping(t *testing.T) {
 
 	// Simulate a corrupted state: active mapping exists, but the run is missing from svc.runs.
 	svc.mu.Lock()
-	svc.activeRunByChan[meta.ChannelID] = runID
 	svc.activeRunByTh[thKey] = runID
 	svc.mu.Unlock()
 
@@ -126,9 +123,8 @@ func TestService_CancelRun_DetachesStaleActiveMapping(t *testing.T) {
 
 	svc.mu.Lock()
 	_, byTh := svc.activeRunByTh[thKey]
-	_, byCh := svc.activeRunByChan[meta.ChannelID]
 	svc.mu.Unlock()
-	if byTh || byCh {
+	if byTh {
 		t.Fatalf("active run mappings should be detached after cancel")
 	}
 

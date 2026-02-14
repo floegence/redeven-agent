@@ -1478,11 +1478,6 @@ func (g *Gateway) handleAPI(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, apiResp{OK: false, Error: "invalid session"})
 			return
 		}
-		if g.ai.HasActiveRun(channelID) {
-			writeJSON(w, http.StatusConflict, apiResp{OK: false, Error: "run already active"})
-			return
-		}
-
 		dec := json.NewDecoder(r.Body)
 		dec.DisallowUnknownFields()
 		var req ai.RunStartRequest

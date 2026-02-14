@@ -28,14 +28,15 @@ export const redevenV1TypeIds = {
     sysMonitor: 3001,
   },
   ai: {
-    runStart: 6001,
+    sendUserTurn: 6001,
     runCancel: 6002,
-    subscribe: 6003,
+    subscribeSummary: 6003,
     event: 6004, // notify (agent -> client)
     toolApproval: 6005,
     listMessages: 6006,
     getActiveRunSnapshot: 6007,
     setToolCollapsed: 6008,
+    subscribeThread: 6009,
   },
   sessions: {
     listActive: 5001,

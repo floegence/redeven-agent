@@ -295,9 +295,10 @@ type ToolCallBlock struct {
 type RealtimeEventType string
 
 const (
-	RealtimeEventTypeStream      RealtimeEventType = "stream_event"
-	RealtimeEventTypeThreadState RealtimeEventType = "thread_state"
-	RealtimeEventTypeTranscript  RealtimeEventType = "transcript_message"
+	RealtimeEventTypeStream        RealtimeEventType = "stream_event"
+	RealtimeEventTypeThreadState   RealtimeEventType = "thread_state"
+	RealtimeEventTypeTranscript    RealtimeEventType = "transcript_message"
+	RealtimeEventTypeThreadSummary RealtimeEventType = "thread_summary"
 )
 
 // RealtimeStreamKind is a low-cardinality stream category for diagnostics/UI routing.
@@ -338,6 +339,13 @@ type RealtimeEvent struct {
 	// Transcript message events (EventType=transcript_message).
 	MessageRowID int64           `json:"message_row_id,omitempty"`
 	MessageJSON  json.RawMessage `json:"message_json,omitempty"`
+
+	// Thread summary events (EventType=thread_summary).
+	Title               string `json:"title,omitempty"`
+	UpdatedAtUnixMs     int64  `json:"updated_at_unix_ms,omitempty"`
+	LastMessagePreview  string `json:"last_message_preview,omitempty"`
+	LastMessageAtUnixMs int64  `json:"last_message_at_unix_ms,omitempty"`
+	ActiveRunID         string `json:"active_run_id,omitempty"`
 }
 
 // ActiveThreadRun is returned in subscribe snapshots so late subscribers can discover

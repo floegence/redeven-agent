@@ -1480,46 +1480,6 @@ export function EnvAIPage() {
     }
   };
 
-  const waitForThreadStop = (threadId: string, timeoutMs = 12_000): Promise<boolean> =>
-    new Promise((resolve) => {
-      const tid = String(threadId ?? '').trim();
-      if (!tid || !ai.isThreadRunning(tid)) {
-        resolve(true);
-        return;
-      }
-
-      const deadline = Date.now() + timeoutMs;
-      let settled = false;
-      let timer = 0;
-      let unsub: () => void = () => {};
-
-      const finish = (ok: boolean) => {
-        if (settled) return;
-        settled = true;
-        window.clearInterval(timer);
-        unsub();
-        resolve(ok);
-      };
-
-      const check = () => {
-        if (!ai.isThreadRunning(tid)) {
-          finish(true);
-          return;
-        }
-        if (Date.now() >= deadline) {
-          finish(false);
-        }
-      };
-
-      unsub = ai.onRealtimeEvent((event) => {
-        if (String(event.threadId ?? '').trim() !== tid) return;
-        if (event.eventType !== 'thread_state') return;
-        check();
-      });
-      timer = window.setInterval(check, 120);
-      check();
-    });
-
   const stopRun = () => {
     const tid = String(ai.activeThreadId() ?? '').trim();
     if (!tid) return;
@@ -1821,7 +1781,7 @@ export function EnvAIPage() {
     };
   };
 
-  const startRun = async (content: string, attachments: Attachment[], userMessageId?: string) => {
+  const sendUserTurn = async (content: string, attachments: Attachment[], userMessageId?: string) => {
     if (!chat) {
       notify.error('AI unavailable', 'Chat is not ready.');
       setSendPending(false);
@@ -1860,25 +1820,6 @@ export function EnvAIPage() {
     forceScrollToLatest();
 
     let tid = ai.activeThreadId();
-    if (tid && ai.isThreadRunning(tid)) {
-      setRunPhaseLabel('Stopping previous run...');
-      const canceled = await cancelRunForThread(tid, { notifyOnError: false });
-      if (!canceled) {
-        notify.error('Failed to send message', 'Could not stop the current run.');
-        setSendPending(false);
-        setRunPhaseLabel('Working');
-        return;
-      }
-
-      const stopped = await waitForThreadStop(tid);
-      if (!stopped) {
-        notify.error('Failed to send message', 'Timed out waiting for the current run to stop.');
-        setSendPending(false);
-        setRunPhaseLabel('Working');
-        return;
-      }
-    }
-
     if (!tid) {
       skipNextThreadLoad = true;
       tid = await ai.ensureThreadForSend();
@@ -1903,9 +1844,17 @@ export function EnvAIPage() {
     ai.markThreadPendingRun(tid);
 
     try {
+      // Ensure the client is subscribed to thread-scoped events before sending so we don't miss
+      // the initial transcript/stream frames on a new chat.
+      try {
+        await rpc.ai.subscribeThread({ threadId: tid });
+      } catch {
+        // Best-effort: sendUserTurn still persists the message and can self-heal via transcript refresh.
+      }
+
       setRunPhaseLabel('Planning...');
       const msgID = String(userMessageId ?? '').trim();
-      const resp = await rpc.ai.startRun({
+      const baseReq = {
         threadId: tid,
         model,
         input: {
@@ -1914,13 +1863,30 @@ export function EnvAIPage() {
           attachments: attIn,
         },
         options: { maxSteps: 10, mode: executionMode() },
-      });
+      } as const;
+
+      const expected = String(ai.runIdForThread(tid) ?? '').trim();
+      let resp: Awaited<ReturnType<(typeof rpc.ai)['sendUserTurn']>>;
+      try {
+        resp = await rpc.ai.sendUserTurn({ ...baseReq, expectedRunId: expected || undefined });
+      } catch (e) {
+        const rawMsg = e instanceof Error ? e.message : String(e);
+        const msg = rawMsg.trim().toLowerCase();
+        if (expected && msg.includes('run changed')) {
+          resp = await rpc.ai.sendUserTurn(baseReq);
+        } else {
+          throw e;
+        }
+      }
 
       const rid = String(resp.runId ?? '').trim();
       if (rid) {
         ai.confirmThreadRun(tid, rid);
       }
       ai.bumpThreadsSeq();
+      if (String(resp.kind ?? '').trim().toLowerCase() === 'steer') {
+        setRunPhaseLabel('Working');
+      }
     } catch (e) {
       ai.clearThreadPendingRun(tid);
       const msg = e instanceof Error ? e.message : String(e);
@@ -1932,10 +1898,10 @@ export function EnvAIPage() {
     }
   };
 
-  let startRunQueue: Promise<void> = Promise.resolve();
-  const enqueueStartRun = (content: string, attachments: Attachment[], userMessageId?: string) => {
-    const task = startRunQueue.then(() => startRun(content, attachments, userMessageId));
-    startRunQueue = task.catch(() => {});
+  let sendUserTurnQueue: Promise<void> = Promise.resolve();
+  const enqueueSendUserTurn = (content: string, attachments: Attachment[], userMessageId?: string) => {
+    const task = sendUserTurnQueue.then(() => sendUserTurn(content, attachments, userMessageId));
+    sendUserTurnQueue = task.catch(() => {});
     return task;
   };
 
@@ -1964,7 +1930,7 @@ export function EnvAIPage() {
         setRunPhaseLabel('Working');
         return;
       }
-      await enqueueStartRun(content, attachments, userMessageId);
+      await enqueueSendUserTurn(content, attachments, userMessageId);
     },
     onUploadAttachment: uploadAttachment,
     onToolApproval: sendToolApproval,
@@ -2041,7 +2007,7 @@ export function EnvAIPage() {
   // Handle suggestion click from empty state
   const handleSuggestionClick = (prompt: string) => {
     if (!canInteract()) return;
-    void enqueueStartRun(prompt, []);
+    void enqueueSendUserTurn(prompt, []);
   };
 
   // Keep the custom working indicator visible from send start until the run fully ends.
