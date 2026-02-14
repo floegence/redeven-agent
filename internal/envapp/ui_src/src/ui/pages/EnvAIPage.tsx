@@ -1067,9 +1067,9 @@ export function EnvAIPage() {
   let lastMessagesReq = 0;
   let lastTodosReq = 0;
   let skipNextThreadLoad = false;
-  const messagesCacheByThread = new Map<string, Message[]>();
-  const transcriptCursorByThread = new Map<string, number>(); // thread_id -> max transcript_messages.id seen
-  const transcriptInitDoneByThread = new Set<string>(); // thread_id with baseline history loaded
+  let activeTranscriptThreadId = '';
+  let activeTranscriptCursor = 0; // max transcript_messages.id seen for the active thread
+  let activeTranscriptBaselineLoaded = false;
   const failureNotifiedRuns = new Set<string>();
   const [runPhaseLabel, setRunPhaseLabel] = createSignal('Working');
   const setThreadTodosIfChanged = (next: ThreadTodosView | null): void => {
@@ -1252,115 +1252,71 @@ export function EnvAIPage() {
   const isTerminalRunStatus = (status: string) =>
     status === 'success' || status === 'failed' || status === 'canceled' || status === 'timed_out' || status === 'waiting_user';
 
-  const mergeDraftAssistantMessage = (threadId: string, messages: Message[]): Message[] => {
+  const normalizeMessageID = (m: any): string => String(m?.id ?? '').trim();
+
+  const resetActiveTranscriptCursor = (threadId: string) => {
     const tid = String(threadId ?? '').trim();
-    if (!tid) return messages;
-    const draft = ai.threadDraftAssistantMessage(tid);
-    if (!draft) return messages;
-    const draftId = String((draft as any)?.id ?? '').trim();
-    if (!draftId) return messages;
-    if (messages.some((m) => String((m as any)?.id ?? '').trim() === draftId)) return messages;
-    return [...messages, decorateMessageForTerminalExec(draft as Message)];
+    activeTranscriptThreadId = tid;
+    activeTranscriptCursor = 0;
+    activeTranscriptBaselineLoaded = false;
   };
 
-  const mergeToolCallCollapseState = (existing: Message, loaded: Message): Message => {
-    const prevBlocks = Array.isArray((existing as any)?.blocks) ? ((existing as any).blocks as any[]) : [];
-    const nextBlocks = Array.isArray((loaded as any)?.blocks) ? ((loaded as any).blocks as any[]) : [];
-    if (prevBlocks.length === 0 || nextBlocks.length === 0) return loaded;
+  const upsertMessageById = (existing: Message[], next: Message): Message[] => {
+    const id = normalizeMessageID(next);
+    if (!id) return existing;
+    const idx = existing.findIndex((m) => normalizeMessageID(m) === id);
+    if (idx === -1) return [...existing, next];
+    const out = existing.slice();
+    out[idx] = next;
+    return out;
+  };
 
-    const collapsedByToolId = new Map<string, boolean>();
-    for (const blk of prevBlocks) {
-      if (!blk || typeof blk !== 'object') continue;
-      if (String((blk as any)?.type ?? '') !== 'tool-call') continue;
-      const toolId = String((blk as any)?.toolId ?? '').trim();
-      if (!toolId) continue;
-      if ((blk as any).collapsed === undefined) continue;
-      collapsedByToolId.set(toolId, Boolean((blk as any).collapsed));
-    }
-    if (collapsedByToolId.size === 0) return loaded;
-
-    const mergedBlocks = nextBlocks.map((blk) => {
-      if (!blk || typeof blk !== 'object') return blk;
-      if (String((blk as any)?.type ?? '') !== 'tool-call') return blk;
-      const toolId = String((blk as any)?.toolId ?? '').trim();
-      if (!toolId) return blk;
-      if (!collapsedByToolId.has(toolId)) return blk;
-      return { ...(blk as any), collapsed: collapsedByToolId.get(toolId) };
+  const mergeBaselineTranscript = (existing: Message[], loaded: Message[]): Message[] => {
+    const loadedByID = new Map<string, Message>();
+    const loadedOrder: string[] = [];
+    loaded.forEach((m) => {
+      const id = normalizeMessageID(m);
+      if (!id || loadedByID.has(id)) return;
+      loadedByID.set(id, m);
+      loadedOrder.push(id);
     });
-
-    return { ...(loaded as any), blocks: mergedBlocks } as any;
-  };
-
-  const mergeTranscriptSnapshot = (
-    existing: Message[],
-    snapshot: Message[],
-    opts?: { snapshotIsBaseline?: boolean },
-  ): Message[] => {
-    const normalizeID = (m: any): string => String(m?.id ?? '').trim();
 
     const existingByID = new Map<string, Message>();
     const existingOrder: string[] = [];
     existing.forEach((m) => {
-      const id = normalizeID(m);
+      const id = normalizeMessageID(m);
       if (!id || existingByID.has(id)) return;
       existingByID.set(id, m);
       existingOrder.push(id);
     });
 
-    const snapshotByID = new Map<string, Message>();
-    const snapshotOrder: string[] = [];
-    snapshot.forEach((m) => {
-      const id = normalizeID(m);
-      if (!id || snapshotByID.has(id)) return;
-      snapshotByID.set(id, m);
-      snapshotOrder.push(id);
-    });
-
     const out: Message[] = [];
     const seen = new Set<string>();
 
-    const mergeOne = (id: string): Message | null => {
-      const next = snapshotByID.get(id);
-      if (!next) return null;
-      const prev = existingByID.get(id);
-      if (!prev) return next;
-      // Treat transcript snapshot as the source of truth for content; keep UI-only state like tool collapse.
-      return mergeToolCallCollapseState(prev, next);
-    };
-
-    if (opts?.snapshotIsBaseline) {
-      snapshotOrder.forEach((id) => {
-        const merged = mergeOne(id);
-        if (!merged) return;
-        out.push(merged);
-        seen.add(id);
-      });
-
-      // Keep any optimistic/local-only messages that are not yet persisted.
-      existingOrder.forEach((id) => {
-        if (seen.has(id)) return;
-        const m = existingByID.get(id);
-        if (!m) return;
-        out.push(m);
-        seen.add(id);
-      });
-      return out;
-    }
-
-    // Delta snapshot: keep existing ordering, update messages in-place, then append truly new messages.
-    existingOrder.forEach((id) => {
-      const merged = mergeOne(id);
-      out.push(merged ?? (existingByID.get(id) as Message));
-      seen.add(id);
-    });
-    snapshotOrder.forEach((id) => {
-      if (seen.has(id)) return;
-      const m = snapshotByID.get(id);
+    loadedOrder.forEach((id) => {
+      const m = loadedByID.get(id);
       if (!m) return;
       out.push(m);
       seen.add(id);
     });
 
+    // Keep any optimistic/local-only messages that are not yet persisted.
+    existingOrder.forEach((id) => {
+      if (seen.has(id)) return;
+      const m = existingByID.get(id);
+      if (!m) return;
+      out.push(m);
+      seen.add(id);
+    });
+
+    return out;
+  };
+
+  const mergeDeltaTranscript = (existing: Message[], delta: Message[]): Message[] => {
+    let out = existing;
+    delta.forEach((m) => {
+      out = upsertMessageById(out, m);
+    });
     return out;
   };
 
@@ -1375,9 +1331,10 @@ export function EnvAIPage() {
     const reqNo = ++lastMessagesReq;
     setMessagesLoading(true);
     try {
-      const baseline = opts?.reset === true;
-      const afterRowId = baseline ? 0 : Math.max(0, transcriptCursorByThread.get(tid) ?? 0);
-      const resp = await rpc.ai.listMessages({ threadId: tid, afterRowId, tail: baseline, limit: 500 });
+      const baseline = opts?.reset === true || (opts?.reset !== false && !activeTranscriptBaselineLoaded);
+      const resp = baseline
+        ? await rpc.ai.listMessages({ threadId: tid, tail: true, limit: 500 })
+        : await rpc.ai.listMessages({ threadId: tid, afterRowId: activeTranscriptCursor, limit: 500 });
       if (reqNo !== lastMessagesReq) return;
 
       const items = Array.isArray((resp as any)?.messages) ? (resp as any).messages : [];
@@ -1385,28 +1342,31 @@ export function EnvAIPage() {
         .map((it: any) => decorateMessageForTerminalExec((it?.messageJson ?? it?.message_json) as Message))
         .filter((m: any) => !!String(m?.id ?? '').trim());
 
+      const isActiveTid = tid === String(ai.activeThreadId() ?? '').trim();
+      if (!isActiveTid) return;
+
       const nextAfter = Number((resp as any)?.nextAfterRowId ?? (resp as any)?.next_after_row_id ?? 0);
+      if (baseline) {
+        activeTranscriptBaselineLoaded = true;
+      }
       if (Number.isFinite(nextAfter) && nextAfter > 0) {
-        const prev = transcriptCursorByThread.get(tid) ?? 0;
-        transcriptCursorByThread.set(tid, Math.max(prev, Math.floor(nextAfter)));
-        transcriptInitDoneByThread.add(tid);
-      } else if (afterRowId === 0) {
-        // Mark baseline loaded even if the thread is currently empty.
-        transcriptInitDoneByThread.add(tid);
+        const nextCursor = Math.floor(nextAfter);
+        if (baseline) {
+          activeTranscriptCursor = nextCursor;
+        } else {
+          activeTranscriptCursor = Math.max(activeTranscriptCursor, nextCursor);
+        }
+      } else if (baseline) {
+        activeTranscriptCursor = 0;
       }
 
-      const existing = tid === String(ai.activeThreadId() ?? '').trim() ? (chat.messages() ?? []) : (messagesCacheByThread.get(tid) ?? []);
-      const merged = mergeTranscriptSnapshot(existing, loaded, { snapshotIsBaseline: baseline });
-      messagesCacheByThread.set(tid, merged);
-
-      if (tid === String(ai.activeThreadId() ?? '').trim()) {
-        const withDraft = mergeDraftAssistantMessage(tid, merged);
-        chat.setMessages(withDraft);
-        setHasMessages(withDraft.length > 0);
-        if (opts?.scrollToBottom) {
-          enableAutoFollow();
-          forceScrollToLatest();
-        }
+      const existing = chat.messages() ?? [];
+      const merged = baseline ? mergeBaselineTranscript(existing, loaded) : mergeDeltaTranscript(existing, loaded);
+      chat.setMessages(merged);
+      setHasMessages(merged.length > 0);
+      if (opts?.scrollToBottom) {
+        enableAutoFollow();
+        forceScrollToLatest();
       }
     } catch (e) {
       if (reqNo !== lastMessagesReq) return;
@@ -1416,6 +1376,31 @@ export function EnvAIPage() {
       if (reqNo === lastMessagesReq) {
         setMessagesLoading(false);
       }
+    }
+  };
+
+  const loadActiveRunSnapshot = async (threadId: string): Promise<void> => {
+    if (!chat) return;
+    if (protocol.status() !== 'connected' || !ai.aiEnabled()) return;
+
+    const tid = String(threadId ?? '').trim();
+    if (!tid) return;
+    if (tid !== String(ai.activeThreadId() ?? '').trim()) return;
+
+    try {
+      const resp = await rpc.ai.getActiveRunSnapshot({ threadId: tid });
+      if (!resp.ok || !resp.messageJson) return;
+
+      if (tid !== String(ai.activeThreadId() ?? '').trim()) return;
+
+      const decorated = decorateMessageForTerminalExec(resp.messageJson as Message);
+      const current = chat.messages() ?? [];
+      const next = upsertMessageById(current, decorated);
+      chat.setMessages(next);
+      setHasMessages(next.length > 0);
+      scheduleFollowScrollToLatest();
+    } catch {
+      // Best-effort: ignore snapshot failures (realtime frames / transcript refresh can self-heal).
     }
   };
 
@@ -1547,24 +1532,12 @@ export function EnvAIPage() {
       setThreadTodos(null);
       setTodosError('');
       setTodosLoading(false);
+      resetActiveTranscriptCursor('');
       return;
     }
 
     const tid = ai.activeThreadId();
     enableAutoFollow();
-
-    // Draft -> thread promotion: keep the optimistic user message already rendered in the chat store.
-    if (skipNextThreadLoad && tid) {
-      skipNextThreadLoad = false;
-      const tidStr = String(tid ?? '').trim();
-      const current = chat?.messages() ?? [];
-      if (tidStr) {
-        messagesCacheByThread.set(tidStr, current);
-      }
-      setHasMessages(current.length > 0);
-      void loadThreadTodos(tid, { silent: true, notifyError: false });
-      return;
-    }
 
     if (!tid) {
       chat?.clearMessages();
@@ -1573,25 +1546,30 @@ export function EnvAIPage() {
       setThreadTodos(null);
       setTodosError('');
       setTodosLoading(false);
+      resetActiveTranscriptCursor('');
       return;
     }
 
     const tidStr = String(tid ?? '').trim();
-    const cached = messagesCacheByThread.get(tidStr);
-    const seedMessages = cached ? mergeDraftAssistantMessage(tidStr, [...cached]) : mergeDraftAssistantMessage(tidStr, []);
-    if (seedMessages.length > 0) {
-      chat?.setMessages(seedMessages);
-      setHasMessages(true);
+    resetActiveTranscriptCursor(tidStr);
+
+    // Draft -> thread promotion: keep the optimistic user message already rendered in the chat store.
+    if (skipNextThreadLoad) {
+      skipNextThreadLoad = false;
+      const current = chat?.messages() ?? [];
+      setHasMessages(current.length > 0);
     } else {
       chat?.clearMessages();
       setHasMessages(false);
     }
+
     setRunPhaseLabel('Working');
     setThreadTodos(null);
     setTodosError('');
     setTodosLoading(true);
-    const needsBaseline = !transcriptInitDoneByThread.has(tidStr);
-    void loadThreadMessages(tid, { scrollToBottom: true, reset: needsBaseline });
+    void loadThreadMessages(tid, { scrollToBottom: true, reset: true }).then(() => {
+      void loadActiveRunSnapshot(tidStr);
+    });
     void loadThreadTodos(tid, { silent: false, notifyError: false });
   });
 
@@ -1610,27 +1588,20 @@ export function EnvAIPage() {
 
         const decorated = decorateMessageForTerminalExec(messageJson as Message);
 
-        const prevCursor = transcriptCursorByThread.get(tid) ?? 0;
         const isActiveTid = tid === String(ai.activeThreadId() ?? '').trim();
-        const shouldBackfillGap = isActiveTid && rowId > prevCursor + 1 && transcriptInitDoneByThread.has(tid);
-        if (shouldBackfillGap) {
-          // Backfill before advancing the cursor so we don't skip missed rows.
-          void loadThreadMessages(tid, { reset: false });
-        } else if (rowId > 0) {
-          transcriptCursorByThread.set(tid, Math.max(prevCursor, rowId));
-        }
-
-        const cached = messagesCacheByThread.get(tid) ?? [];
-        if (!cached.some((m) => String((m as any)?.id ?? '').trim() === messageID)) {
-          const next = [...cached, decorated];
-          messagesCacheByThread.set(tid, next);
-        }
-
         if (isActiveTid) {
-          const current = chat?.messages() ?? [];
-          if (!current.some((m) => String((m as any)?.id ?? '').trim() === messageID)) {
-            chat?.addMessage(decorated);
+          if (rowId > 0) {
+            const shouldBackfillGap = activeTranscriptBaselineLoaded && rowId > activeTranscriptCursor + 1;
+            if (shouldBackfillGap) {
+              // Backfill before advancing the cursor so we don't skip missed rows.
+              void loadThreadMessages(tid, { reset: false });
+            }
+            activeTranscriptCursor = Math.max(activeTranscriptCursor, rowId);
           }
+
+          const current = chat?.messages() ?? [];
+          const next = upsertMessageById(current, decorated);
+          chat?.setMessages(next);
           setHasMessages(true);
           scheduleFollowScrollToLatest();
         }
@@ -1812,6 +1783,35 @@ export function EnvAIPage() {
     await rpc.ai.approveTool({ runId: rid, toolId, approved });
   };
 
+  const installSharedToolCollapse = (ctx: ChatContextValue) => {
+    const key = '__redeven_shared_tool_collapse_v1';
+    const anyCtx = ctx as any;
+    if (anyCtx[key]) return;
+    anyCtx[key] = true;
+
+    const original = ctx.toggleToolCollapse.bind(ctx);
+    ctx.toggleToolCollapse = (messageId: string, toolId: string) => {
+      original(messageId, toolId);
+
+      if (protocol.status() !== 'connected' || !ai.aiEnabled()) return;
+
+      const tid = String(ai.activeThreadId() ?? '').trim();
+      const mid = String(messageId ?? '').trim();
+      const tidTool = String(toolId ?? '').trim();
+      if (!tid || !mid || !tidTool) return;
+
+      const msg = (ctx.messages() ?? []).find((m: any) => String(m?.id ?? '').trim() === mid);
+      const blocks: any[] = Array.isArray((msg as any)?.blocks) ? ((msg as any).blocks as any[]) : [];
+      const toolBlock = blocks.find((b) => b && typeof b === 'object' && b.type === 'tool-call' && String((b as any).toolId ?? '').trim() === tidTool);
+      const collapsed = (toolBlock as any)?.collapsed;
+      if (typeof collapsed !== 'boolean') return;
+
+      void rpc.ai.setToolCollapsed({ threadId: tid, messageId: mid, toolId: tidTool, collapsed }).catch(() => {
+        // Best-effort: ignore persistence failures (snapshot/transcript refresh can self-heal).
+      });
+    };
+  };
+
   const startRun = async (content: string, attachments: Attachment[], userMessageId?: string) => {
     if (!chat) {
       notify.error('AI unavailable', 'Chat is not ready.');
@@ -1888,7 +1888,6 @@ export function EnvAIPage() {
       url: String(a.url ?? '').trim(),
     }));
 
-    ai.clearThreadDraftAssistantMessage(tid);
     ai.markThreadPendingRun(tid);
 
     try {
@@ -2066,6 +2065,7 @@ export function EnvAIPage() {
         <ChatCapture
           onReady={(ctx) => {
             chat = ctx;
+            installSharedToolCollapse(ctx);
             setChatReady(true);
           }}
         />
