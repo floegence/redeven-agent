@@ -90,6 +90,23 @@ export interface ToolCallBlock {
   collapsed?: boolean;
 }
 
+export interface TodosBlock {
+  type: 'todos';
+  version: number;
+  updatedAtUnixMs: number;
+  todos: Array<{
+    id: string;
+    content: string;
+    status: 'pending' | 'in_progress' | 'completed' | 'cancelled';
+    note?: string;
+  }>;
+}
+
+export interface SourcesBlock {
+  type: 'sources';
+  sources: Array<{ title: string; url: string }>;
+}
+
 export type MessageBlock =
   | TextBlock
   | MarkdownBlock
@@ -102,7 +119,9 @@ export type MessageBlock =
   | ShellBlock
   | FileBlock
   | ThinkingBlock
-  | ToolCallBlock;
+  | ToolCallBlock
+  | TodosBlock
+  | SourcesBlock;
 
 export type MessageRole = 'user' | 'assistant' | 'system';
 export type MessageStatus = 'sending' | 'streaming' | 'complete' | 'error';

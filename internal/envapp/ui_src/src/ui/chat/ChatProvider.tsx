@@ -479,6 +479,10 @@ function createEmptyBlock(blockType: MessageBlock['type']): MessageBlock {
       return { type: 'thinking' };
     case 'tool-call':
       return { type: 'tool-call', toolName: '', toolId: '', args: {}, status: 'pending' };
+    case 'todos':
+      return { type: 'todos', version: 0, updatedAtUnixMs: 0, todos: [] };
+    case 'sources':
+      return { type: 'sources', sources: [] };
     default:
       return { type: 'text', content: '' };
   }
