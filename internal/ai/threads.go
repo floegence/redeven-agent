@@ -75,7 +75,7 @@ func (s *Service) GetThread(ctx context.Context, meta *session.Meta, threadID st
 	if s == nil {
 		return nil, errors.New("nil service")
 	}
-	if err := requireRead(meta); err != nil {
+	if err := requireRWX(meta); err != nil {
 		return nil, err
 	}
 	s.mu.Lock()
@@ -121,7 +121,7 @@ func (s *Service) ListThreads(ctx context.Context, meta *session.Meta, limit int
 	if s == nil {
 		return nil, errors.New("nil service")
 	}
-	if err := requireRead(meta); err != nil {
+	if err := requireRWX(meta); err != nil {
 		return nil, err
 	}
 	s.mu.Lock()
@@ -388,7 +388,7 @@ func (s *Service) ListThreadMessages(ctx context.Context, meta *session.Meta, th
 	if s == nil {
 		return nil, errors.New("nil service")
 	}
-	if err := requireRead(meta); err != nil {
+	if err := requireRWX(meta); err != nil {
 		return nil, err
 	}
 	s.mu.Lock()
@@ -426,7 +426,7 @@ func (s *Service) GetThreadTodos(ctx context.Context, meta *session.Meta, thread
 	if s == nil {
 		return nil, errors.New("nil service")
 	}
-	if err := requireRead(meta); err != nil {
+	if err := requireRWX(meta); err != nil {
 		return nil, err
 	}
 	s.mu.Lock()

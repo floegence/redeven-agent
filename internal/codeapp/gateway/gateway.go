@@ -1135,7 +1135,7 @@ func (g *Gateway) handleAPI(w http.ResponseWriter, r *http.Request) {
 		return
 
 	case r.Method == http.MethodGet && r.URL.Path == "/_redeven_proxy/api/ai/models":
-		if _, ok := g.requirePermission(w, r, requiredPermissionRead); !ok {
+		if _, ok := g.requirePermission(w, r, requiredPermissionFull); !ok {
 			return
 		}
 		if g.ai == nil || !g.ai.Enabled() {
@@ -1151,7 +1151,7 @@ func (g *Gateway) handleAPI(w http.ResponseWriter, r *http.Request) {
 		return
 
 	case r.Method == http.MethodGet && r.URL.Path == "/_redeven_proxy/api/ai/threads":
-		meta, ok := g.requirePermission(w, r, requiredPermissionRead)
+		meta, ok := g.requirePermission(w, r, requiredPermissionFull)
 		if !ok {
 			return
 		}
@@ -1226,7 +1226,7 @@ func (g *Gateway) handleAPI(w http.ResponseWriter, r *http.Request) {
 
 		switch {
 		case action == "" && r.Method == http.MethodGet:
-			meta, ok := g.requirePermission(w, r, requiredPermissionRead)
+			meta, ok := g.requirePermission(w, r, requiredPermissionFull)
 			if !ok {
 				return
 			}
@@ -1352,7 +1352,7 @@ func (g *Gateway) handleAPI(w http.ResponseWriter, r *http.Request) {
 			return
 
 		case action == "todos" && r.Method == http.MethodGet:
-			meta, ok := g.requirePermission(w, r, requiredPermissionRead)
+			meta, ok := g.requirePermission(w, r, requiredPermissionFull)
 			if !ok {
 				return
 			}
@@ -1373,7 +1373,7 @@ func (g *Gateway) handleAPI(w http.ResponseWriter, r *http.Request) {
 			return
 
 		case action == "messages" && r.Method == http.MethodGet:
-			meta, ok := g.requirePermission(w, r, requiredPermissionRead)
+			meta, ok := g.requirePermission(w, r, requiredPermissionFull)
 			if !ok {
 				return
 			}
@@ -1525,7 +1525,7 @@ func (g *Gateway) handleAPI(w http.ResponseWriter, r *http.Request) {
 		return
 
 	case (r.Method == http.MethodPost || r.Method == http.MethodGet) && strings.HasPrefix(r.URL.Path, "/_redeven_proxy/api/ai/runs/"):
-		meta, ok := g.requirePermission(w, r, requiredPermissionRead)
+		meta, ok := g.requirePermission(w, r, requiredPermissionFull)
 		if !ok {
 			return
 		}
@@ -1675,7 +1675,7 @@ func (g *Gateway) handleAPI(w http.ResponseWriter, r *http.Request) {
 		return
 
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/_redeven_proxy/api/ai/uploads/"):
-		if _, ok := g.requirePermission(w, r, requiredPermissionRead); !ok {
+		if _, ok := g.requirePermission(w, r, requiredPermissionFull); !ok {
 			return
 		}
 		if g.ai == nil || !g.ai.Enabled() {
