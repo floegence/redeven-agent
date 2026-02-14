@@ -1,6 +1,6 @@
 import type { StreamEvent } from '../../../chat';
 
-export type AIRealtimeEventType = 'stream_event' | 'thread_state' | 'transcript_message';
+export type AIRealtimeEventType = 'stream_event' | 'thread_state' | 'transcript_message' | 'thread_summary';
 
 export type AIThreadRunStatus = 'idle' | 'accepted' | 'running' | 'waiting_approval' | 'recovering' | 'waiting_user' | 'success' | 'failed' | 'canceled' | 'timed_out';
 
@@ -9,7 +9,7 @@ export type AIActiveRun = {
   runId: string;
 };
 
-export type AIStartRunRequest = {
+export type AISendUserTurnRequest = {
   threadId: string;
   model?: string;
   input: {
@@ -25,10 +25,12 @@ export type AIStartRunRequest = {
     maxSteps: number;
     mode?: 'act' | 'plan';
   };
+  expectedRunId?: string;
 };
 
-export type AIStartRunResponse = {
+export type AISendUserTurnResponse = {
   runId: string;
+  kind: string;
 };
 
 export type AICancelRunRequest = {
@@ -40,8 +42,16 @@ export type AICancelRunResponse = {
   ok: boolean;
 };
 
-export type AISubscribeResponse = {
+export type AISubscribeSummaryResponse = {
   activeRuns: AIActiveRun[];
+};
+
+export type AISubscribeThreadRequest = {
+  threadId: string;
+};
+
+export type AISubscribeThreadResponse = {
+  runId?: string;
 };
 
 export type AITranscriptMessageItem = {
@@ -110,4 +120,11 @@ export type AIRealtimeEvent = {
   // transcript_message only
   messageRowId?: number;
   messageJson?: any;
+
+  // thread_summary only
+  title?: string;
+  updatedAtUnixMs?: number;
+  lastMessagePreview?: string;
+  lastMessageAtUnixMs?: number;
+  activeRunId?: string;
 };

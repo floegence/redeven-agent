@@ -98,14 +98,19 @@ type Service struct {
 	resolveProviderKey  func(providerID string) (string, bool, error)
 	resolveWebSearchKey func(providerID string) (string, bool, error)
 
-	mu              sync.Mutex
-	activeRunByChan map[string]string // channel_id -> run_id
-	activeRunByTh   map[string]string // <endpoint_id>:<thread_id> -> run_id
-	runs            map[string]*run
+	mu            sync.Mutex
+	activeRunByTh map[string]string // <endpoint_id>:<thread_id> -> run_id
+	runs          map[string]*run
 
-	realtimeWriters       map[*rpc.Server]*aiSinkWriter
-	realtimeByEndpoint    map[string]map[*rpc.Server]struct{}
-	realtimeEndpointBySRV map[*rpc.Server]string
+	threadMgr *threadManager
+
+	realtimeWriters map[*rpc.Server]*aiSinkWriter
+
+	realtimeSummaryByEndpoint    map[string]map[*rpc.Server]struct{}
+	realtimeSummaryEndpointBySRV map[*rpc.Server]string
+
+	realtimeByThread    map[string]map[*rpc.Server]struct{} // <endpoint_id>:<thread_id> -> set(stream)
+	realtimeThreadBySRV map[*rpc.Server]string
 
 	uploadsDir string
 	threadsDB  *threadstore.Store
@@ -206,39 +211,45 @@ func NewService(opts Options) (*Service, error) {
 	memoryExtractor := contextextractor.New(contextRepo)
 	capabilityResolver := contextadapter.NewResolver(contextRepo)
 
-	return &Service{
-		log:                   logger,
-		stateDir:              strings.TrimSpace(opts.StateDir),
-		fsRoot:                strings.TrimSpace(opts.FSRoot),
-		shell:                 strings.TrimSpace(opts.Shell),
-		cfg:                   opts.Config,
-		persistOpTO:           persistTO,
-		runMaxWallTime:        maxWall,
-		runIdleTimeout:        idleTO,
-		approvalTimeout:       approvalTO,
-		streamWriteTO:         streamWTO,
-		resolveProviderKey:    resolveProviderKey,
-		resolveWebSearchKey:   resolveWebSearchKey,
-		activeRunByChan:       make(map[string]string),
-		activeRunByTh:         make(map[string]string),
-		runs:                  make(map[string]*run),
-		realtimeWriters:       make(map[*rpc.Server]*aiSinkWriter),
-		realtimeByEndpoint:    make(map[string]map[*rpc.Server]struct{}),
-		realtimeEndpointBySRV: make(map[*rpc.Server]string),
-		uploadsDir:            uploadsDir,
-		threadsDB:             ts,
-		contextRepo:           contextRepo,
-		contextRetriever:      contextRetriever,
-		contextPacker:         contextPacker,
-		memoryExtractor:       memoryExtractor,
-		snapshotCompactor:     snapshotCompactor,
-		capabilityResolver:    capabilityResolver,
-	}, nil
+	svc := &Service{
+		log:                          logger,
+		stateDir:                     strings.TrimSpace(opts.StateDir),
+		fsRoot:                       strings.TrimSpace(opts.FSRoot),
+		shell:                        strings.TrimSpace(opts.Shell),
+		cfg:                          opts.Config,
+		persistOpTO:                  persistTO,
+		runMaxWallTime:               maxWall,
+		runIdleTimeout:               idleTO,
+		approvalTimeout:              approvalTO,
+		streamWriteTO:                streamWTO,
+		resolveProviderKey:           resolveProviderKey,
+		resolveWebSearchKey:          resolveWebSearchKey,
+		activeRunByTh:                make(map[string]string),
+		runs:                         make(map[string]*run),
+		realtimeWriters:              make(map[*rpc.Server]*aiSinkWriter),
+		realtimeSummaryByEndpoint:    make(map[string]map[*rpc.Server]struct{}),
+		realtimeSummaryEndpointBySRV: make(map[*rpc.Server]string),
+		realtimeByThread:             make(map[string]map[*rpc.Server]struct{}),
+		realtimeThreadBySRV:          make(map[*rpc.Server]string),
+		uploadsDir:                   uploadsDir,
+		threadsDB:                    ts,
+		contextRepo:                  contextRepo,
+		contextRetriever:             contextRetriever,
+		contextPacker:                contextPacker,
+		memoryExtractor:              memoryExtractor,
+		snapshotCompactor:            snapshotCompactor,
+		capabilityResolver:           capabilityResolver,
+	}
+	svc.threadMgr = newThreadManager(svc)
+	return svc, nil
 }
 
 func (s *Service) Close() error {
 	if s == nil {
 		return nil
+	}
+	if s.threadMgr != nil {
+		s.threadMgr.Close()
 	}
 	s.mu.Lock()
 	ts := s.threadsDB
@@ -251,8 +262,10 @@ func (s *Service) Close() error {
 		writers = append(writers, w)
 		delete(s.realtimeWriters, srv)
 	}
-	s.realtimeByEndpoint = make(map[string]map[*rpc.Server]struct{})
-	s.realtimeEndpointBySRV = make(map[*rpc.Server]string)
+	s.realtimeSummaryByEndpoint = make(map[string]map[*rpc.Server]struct{})
+	s.realtimeSummaryEndpointBySRV = make(map[*rpc.Server]string)
+	s.realtimeByThread = make(map[string]map[*rpc.Server]struct{})
+	s.realtimeThreadBySRV = make(map[*rpc.Server]string)
 	s.mu.Unlock()
 
 	for _, w := range writers {
@@ -294,7 +307,7 @@ func (s *Service) UpdateConfig(next *config.AIConfig, persist func() error) erro
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if len(s.activeRunByChan) > 0 {
+	if len(s.activeRunByTh) > 0 {
 		return ErrConfigLocked
 	}
 
@@ -304,19 +317,6 @@ func (s *Service) UpdateConfig(next *config.AIConfig, persist func() error) erro
 
 	s.cfg = next
 	return nil
-}
-
-func (s *Service) HasActiveRun(channelID string) bool {
-	if s == nil {
-		return false
-	}
-	channelID = strings.TrimSpace(channelID)
-	if channelID == "" {
-		return false
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return strings.TrimSpace(s.activeRunByChan[channelID]) != ""
 }
 
 func (s *Service) HasActiveThread(threadID string) bool {
@@ -603,10 +603,6 @@ func (s *Service) prepareRun(meta *session.Meta, runID string, req RunStartReque
 		s.mu.Unlock()
 		return nil, ErrNotConfigured
 	}
-	if existing := strings.TrimSpace(s.activeRunByChan[channelID]); existing != "" {
-		s.mu.Unlock()
-		return nil, ErrRunActive
-	}
 	thKey := runThreadKey(endpointID, threadID)
 	if thKey == "" {
 		s.mu.Unlock()
@@ -651,7 +647,6 @@ func (s *Service) prepareRun(meta *session.Meta, runID string, req RunStartReque
 		},
 		Writer: w,
 	})
-	s.activeRunByChan[channelID] = runID
 	s.activeRunByTh[thKey] = runID
 	s.runs[runID] = r
 	s.mu.Unlock()
@@ -671,6 +666,7 @@ func (s *Service) prepareRun(meta *session.Meta, runID string, req RunStartReque
 
 	updateThreadRunState("running", "")
 	s.broadcastThreadState(endpointID, threadID, runID, "running", "")
+	s.broadcastThreadSummary(endpointID, threadID)
 
 	return &preparedRun{
 		meta:                 metaRef,
@@ -704,7 +700,6 @@ func (s *Service) executePreparedRun(ctx context.Context, prepared *preparedRun)
 
 	r := prepared.r
 	runID := strings.TrimSpace(prepared.runID)
-	channelID := strings.TrimSpace(prepared.channelID)
 	endpointID := strings.TrimSpace(prepared.endpointID)
 	threadID := strings.TrimSpace(prepared.threadID)
 	thKey := strings.TrimSpace(prepared.thKey)
@@ -743,9 +738,6 @@ func (s *Service) executePreparedRun(ctx context.Context, prepared *preparedRun)
 	defer func() {
 		s.mu.Lock()
 		delete(s.runs, runID)
-		if strings.TrimSpace(s.activeRunByChan[channelID]) == runID {
-			delete(s.activeRunByChan, channelID)
-		}
 		if strings.TrimSpace(s.activeRunByTh[thKey]) == runID {
 			delete(s.activeRunByTh, thKey)
 		}
@@ -760,6 +752,7 @@ func (s *Service) executePreparedRun(ctx context.Context, prepared *preparedRun)
 			prepared.updateThreadRunState(runStatus, runStatusErr)
 		}
 		s.broadcastThreadState(endpointID, threadID, runID, runStatus, runStatusErr)
+		s.broadcastThreadSummary(endpointID, threadID)
 	}()
 
 	pctx, cancelPersist := context.WithTimeout(context.Background(), persistTO)
@@ -838,20 +831,8 @@ func (s *Service) executePreparedRun(ctx context.Context, prepared *preparedRun)
 	effectiveInput := req.Input
 
 	userMsgID := strings.TrimSpace(req.Input.MessageID)
-	if userMsgID != "" {
-		// Best-effort validation: keep ids short and URL-safe so the browser can reuse them
-		// as stable DOM keys and DB uniqueness keys.
-		if len(userMsgID) > 128 {
-			userMsgID = ""
-		}
-		for i := 0; i < len(userMsgID); i++ {
-			ch := userMsgID[i]
-			if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_' || ch == '-' {
-				continue
-			}
-			userMsgID = ""
-			break
-		}
+	if userMsgID != "" && !isSafeClientMessageID(userMsgID) {
+		userMsgID = ""
 	}
 	if userMsgID == "" {
 		var genErr error
@@ -881,9 +862,20 @@ func (s *Service) executePreparedRun(ctx context.Context, prepared *preparedRun)
 	}, meta.UserPublicID, meta.UserEmail)
 	cancelPersist()
 	if err != nil {
-		return streamEarlyError(err)
+		if !isUniqueConstraintError(err) {
+			return streamEarlyError(err)
+		}
+		pctx, cancelPersist = context.WithTimeout(context.Background(), persistTO)
+		existingRowID, existingJSON, getErr := db.GetTranscriptMessageRowIDAndJSONByMessageID(pctx, endpointID, threadID, userMsgID)
+		cancelPersist()
+		if getErr != nil {
+			return streamEarlyError(err)
+		}
+		userRowID = existingRowID
+		userJSON = existingJSON
 	}
 	s.broadcastTranscriptMessage(endpointID, threadID, runID, userRowID, userJSON, now)
+	s.broadcastThreadSummary(endpointID, threadID)
 
 	select {
 	case <-ctx.Done():
@@ -1015,6 +1007,7 @@ func (s *Service) executePreparedRun(ctx context.Context, prepared *preparedRun)
 		return err
 	}
 	s.broadcastTranscriptMessage(endpointID, threadID, runID, assistantRowID, assistantJSON, assistantAt)
+	s.broadcastThreadSummary(endpointID, threadID)
 	if s.contextRepo != nil {
 		turnID := "turn_" + strings.TrimSpace(runID)
 		turnCtx, cancelTurn := context.WithTimeout(context.Background(), persistTO)
@@ -1281,12 +1274,6 @@ func (s *Service) CancelRun(meta *session.Meta, runID string) error {
 		r.markDetached()
 	}
 	// Detach any stale active mappings so the thread can be managed even if the run is stuck.
-	for ch, rid := range s.activeRunByChan {
-		if strings.TrimSpace(rid) != runID {
-			continue
-		}
-		delete(s.activeRunByChan, ch)
-	}
 	for k, rid := range s.activeRunByTh {
 		if strings.TrimSpace(rid) != runID {
 			continue
@@ -1309,6 +1296,7 @@ func (s *Service) CancelRun(meta *session.Meta, runID string) error {
 		_ = db.UpdateThreadRunState(uctx, endpointID, threadID, "canceled", "", meta.UserPublicID, meta.UserEmail)
 		cancel()
 		s.broadcastThreadState(endpointID, threadID, runID, "canceled", "")
+		s.broadcastThreadSummary(endpointID, threadID)
 	}
 	return nil
 }
