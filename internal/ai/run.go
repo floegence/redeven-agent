@@ -397,6 +397,84 @@ func (r *run) sendStreamEvent(ev any) {
 	if r == nil || ev == nil {
 		return
 	}
+
+	// Preserve UI-only tool-call state (e.g. collapsed) across block-set replacements.
+	//
+	// The client ChatProvider replaces blocks on "block-set". If a tool-call block update does
+	// not include the collapsed field, the UI will reset it to default. Since collapsed is
+	// persisted in assistantBlocks when set, merge it into outgoing frames as a best-effort.
+	if bs, ok := ev.(streamEventBlockSet); ok {
+		getCollapsed := func(idx int) (*bool, bool) {
+			if idx < 0 {
+				return nil, false
+			}
+			r.muAssistant.Lock()
+			defer r.muAssistant.Unlock()
+			if idx >= len(r.assistantBlocks) {
+				return nil, false
+			}
+			switch prev := r.assistantBlocks[idx].(type) {
+			case ToolCallBlock:
+				if prev.Collapsed == nil {
+					return nil, false
+				}
+				v := *prev.Collapsed
+				return &v, true
+			case *ToolCallBlock:
+				if prev == nil || prev.Collapsed == nil {
+					return nil, false
+				}
+				v := *prev.Collapsed
+				return &v, true
+			case map[string]any:
+				if c, ok := prev["collapsed"].(bool); ok {
+					v := c
+					return &v, true
+				}
+				return nil, false
+			default:
+				return nil, false
+			}
+		}
+
+		switch blk := bs.Block.(type) {
+		case ToolCallBlock:
+			if blk.Collapsed == nil {
+				if c, ok := getCollapsed(bs.BlockIndex); ok {
+					blk.Collapsed = c
+					bs.Block = blk
+					ev = bs
+				}
+			}
+		case *ToolCallBlock:
+			if blk != nil {
+				cp := *blk
+				if cp.Collapsed == nil {
+					if c, ok := getCollapsed(bs.BlockIndex); ok {
+						cp.Collapsed = c
+					}
+				}
+				bs.Block = cp
+				ev = bs
+			}
+		case map[string]any:
+			typ, _ := blk["type"].(string)
+			if strings.TrimSpace(typ) == "tool-call" {
+				if _, has := blk["collapsed"]; !has {
+					if c, ok := getCollapsed(bs.BlockIndex); ok {
+						cp := make(map[string]any, len(blk)+1)
+						for k, v := range blk {
+							cp[k] = v
+						}
+						cp["collapsed"] = *c
+						bs.Block = cp
+						ev = bs
+					}
+				}
+			}
+		}
+	}
+
 	r.touchActivity()
 	if !r.detached.Load() && r.onStreamEvent != nil {
 		r.onStreamEvent(ev)
@@ -1662,6 +1740,25 @@ func (r *run) persistSetToolBlock(idx int, block ToolCallBlock) {
 	}
 	r.muAssistant.Lock()
 	defer r.muAssistant.Unlock()
+	if block.Collapsed == nil && idx >= 0 && idx < len(r.assistantBlocks) {
+		switch prev := r.assistantBlocks[idx].(type) {
+		case ToolCallBlock:
+			if prev.Collapsed != nil {
+				v := *prev.Collapsed
+				block.Collapsed = &v
+			}
+		case *ToolCallBlock:
+			if prev != nil && prev.Collapsed != nil {
+				v := *prev.Collapsed
+				block.Collapsed = &v
+			}
+		case map[string]any:
+			if c, ok := prev["collapsed"].(bool); ok {
+				v := c
+				block.Collapsed = &v
+			}
+		}
+	}
 	r.persistEnsureIndex(idx)
 	r.assistantBlocks[idx] = block
 }
@@ -1725,6 +1822,82 @@ func (r *run) snapshotAssistantMessageJSON() (string, string, int64, error) {
 	}
 
 	return string(b), strings.TrimSpace(sb.String()), assistantAt, nil
+}
+
+func (r *run) setToolCollapsed(toolID string, collapsed bool) bool {
+	if r == nil {
+		return false
+	}
+	toolID = strings.TrimSpace(toolID)
+	if toolID == "" {
+		return false
+	}
+
+	var (
+		idx      = -1
+		nextAny  any
+		nextTool ToolCallBlock
+	)
+
+	r.muAssistant.Lock()
+	for i, blk := range r.assistantBlocks {
+		switch v := blk.(type) {
+		case ToolCallBlock:
+			if strings.TrimSpace(v.ToolID) != toolID {
+				continue
+			}
+			idx = i
+			b := collapsed
+			v.Collapsed = &b
+			r.assistantBlocks[i] = v
+			nextTool = v
+			nextAny = v
+		case *ToolCallBlock:
+			if v == nil || strings.TrimSpace(v.ToolID) != toolID {
+				continue
+			}
+			idx = i
+			cp := *v
+			b := collapsed
+			cp.Collapsed = &b
+			r.assistantBlocks[i] = cp
+			nextTool = cp
+			nextAny = cp
+		case map[string]any:
+			typ, _ := v["type"].(string)
+			if strings.TrimSpace(typ) != "tool-call" {
+				continue
+			}
+			rawToolID, _ := v["toolId"].(string)
+			if strings.TrimSpace(rawToolID) != toolID {
+				continue
+			}
+			idx = i
+			cp := make(map[string]any, len(v)+1)
+			for k, val := range v {
+				cp[k] = val
+			}
+			cp["collapsed"] = collapsed
+			r.assistantBlocks[i] = cp
+			nextAny = cp
+		default:
+			continue
+		}
+		if idx >= 0 {
+			break
+		}
+	}
+	r.muAssistant.Unlock()
+
+	if idx < 0 {
+		return false
+	}
+	if nextAny == nil {
+		nextAny = nextTool
+	}
+
+	r.sendStreamEvent(streamEventBlockSet{Type: "block-set", MessageID: r.messageID, BlockIndex: idx, Block: nextAny})
+	return true
 }
 
 func parseWebSearchResult(result any) (websearch.SearchResult, bool) {
