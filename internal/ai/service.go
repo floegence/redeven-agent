@@ -794,6 +794,15 @@ func (s *Service) executePreparedRun(ctx context.Context, prepared *preparedRun)
 		complexityDecision.Reasons = []string{"non_task_intent"}
 	}
 	req.Options.Complexity = normalizeTaskComplexity(complexityDecision.Level)
+	if req.Options.Intent == RunIntentTask {
+		req.Options.RequireStructuredTodos = requiresStructuredTodoPlan(rawUserInputText)
+		if req.Options.RequireStructuredTodos && req.Options.MinimumTodoItems < 3 {
+			req.Options.MinimumTodoItems = 3
+		}
+	} else {
+		req.Options.RequireStructuredTodos = false
+		req.Options.MinimumTodoItems = 0
+	}
 	r.persistRunEvent("intent.classified", RealtimeStreamKindLifecycle, map[string]any{
 		"intent":         intentDecision.Intent,
 		"reason":         intentDecision.Reason,
@@ -804,9 +813,11 @@ func (s *Service) executePreparedRun(ctx context.Context, prepared *preparedRun)
 		"mode":           req.Options.Mode,
 	})
 	r.persistRunEvent("complexity.classified", RealtimeStreamKindLifecycle, map[string]any{
-		"intent":     req.Options.Intent,
-		"complexity": req.Options.Complexity,
-		"reasons":    append([]string(nil), complexityDecision.Reasons...),
+		"intent":                   req.Options.Intent,
+		"complexity":               req.Options.Complexity,
+		"reasons":                  append([]string(nil), complexityDecision.Reasons...),
+		"require_structured_todos": req.Options.RequireStructuredTodos,
+		"minimum_todo_items":       req.Options.MinimumTodoItems,
 	})
 	if intentDecision.Intent == RunIntentSocial {
 		r.persistRunEvent("intent.routed", RealtimeStreamKindLifecycle, map[string]any{

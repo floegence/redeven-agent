@@ -10,7 +10,7 @@ import (
 func TestExtractWriteTodosState(t *testing.T) {
 	t.Parallel()
 
-	open, inProgress, version, ok := extractWriteTodosState(map[string]any{
+	total, open, inProgress, version, ok := extractWriteTodosState(map[string]any{
 		"version": 3,
 		"summary": map[string]any{
 			"total":       3,
@@ -23,15 +23,15 @@ func TestExtractWriteTodosState(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected valid write_todos payload")
 	}
-	if open != 2 || inProgress != 1 || version != 3 {
-		t.Fatalf("unexpected todos state open=%d in_progress=%d version=%d", open, inProgress, version)
+	if total != 3 || open != 2 || inProgress != 1 || version != 3 {
+		t.Fatalf("unexpected todos state total=%d open=%d in_progress=%d version=%d", total, open, inProgress, version)
 	}
 }
 
 func TestExtractWriteTodosState_EmptyTodosSnapshot(t *testing.T) {
 	t.Parallel()
 
-	open, inProgress, version, ok := extractWriteTodosState(map[string]any{
+	total, open, inProgress, version, ok := extractWriteTodosState(map[string]any{
 		"version": 4,
 		"summary": map[string]any{
 			"total":       0,
@@ -44,8 +44,8 @@ func TestExtractWriteTodosState_EmptyTodosSnapshot(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected empty todos snapshot to be valid")
 	}
-	if open != 0 || inProgress != 0 || version != 4 {
-		t.Fatalf("unexpected empty todos state open=%d in_progress=%d version=%d", open, inProgress, version)
+	if total != 0 || open != 0 || inProgress != 0 || version != 4 {
+		t.Fatalf("unexpected empty todos state total=%d open=%d in_progress=%d version=%d", total, open, inProgress, version)
 	}
 }
 
@@ -78,6 +78,9 @@ func TestUpdateTodoRuntimeState(t *testing.T) {
 
 	if !state.TodoTrackingEnabled {
 		t.Fatalf("todo tracking should be enabled")
+	}
+	if state.TodoTotalCount != 2 {
+		t.Fatalf("todo total count=%d, want 2", state.TodoTotalCount)
 	}
 	if state.TodoOpenCount != 1 {
 		t.Fatalf("todo open count=%d, want 1", state.TodoOpenCount)

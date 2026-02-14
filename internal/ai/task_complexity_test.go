@@ -76,3 +76,39 @@ func TestMaybeEscalateTaskComplexity(t *testing.T) {
 		t.Fatalf("standard should escalate to complex, got %q", got)
 	}
 }
+
+func TestRequiresStructuredTodoPlan(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name  string
+		input string
+		want  bool
+	}{
+		{
+			name:  "explicit chinese todo planning",
+			input: "请你先划分任务并用todo工具给我一个分步计划，再按todo执行。",
+			want:  true,
+		},
+		{
+			name:  "explicit english todo planning",
+			input: "Please break down the task into todos and execute according to the todo list.",
+			want:  true,
+		},
+		{
+			name:  "no explicit todo planning",
+			input: "Fix the failing test and report what changed.",
+			want:  false,
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := requiresStructuredTodoPlan(tc.input); got != tc.want {
+				t.Fatalf("requiresStructuredTodoPlan(%q)=%v, want %v", tc.input, got, tc.want)
+			}
+		})
+	}
+}
