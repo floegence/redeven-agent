@@ -320,7 +320,152 @@ Implementation sketch:
 
 ---
 
-## 11. Migration / Refactor Plan (Recommended Phases)
+## 11. Concrete Implementation Sketch (Pseudocode + Touch Points)
+
+This section is intentionally concrete so the refactor is straightforward to execute.
+
+### 11.1 ThreadActor: mailbox and state
+
+Thread key:
+
+- `thread_key = endpoint_id + \":\" + thread_id` (existing helper `runThreadKey(...)` already matches this idea).
+
+Actor lifecycle:
+
+- `ThreadManager.Get(thread_key)` returns an existing actor or creates one on demand.
+- Each actor runs a single goroutine and processes a mailbox channel.
+- Actors stop themselves after an idle timeout (no active run + no recent messages).
+
+Minimal actor state:
+
+- `active_run_id` (string)
+- `active_run` (pointer/handle; only used for steer/cancel routing)
+- cached thread summary fields (optional; for summary broadcast coalescing)
+
+Mailbox commands (sketch):
+
+```text
+CmdSendUserTurn(meta, thread_id, expected_run_id?, model?, input, options) -> (run_id, kind=start|steer)
+CmdCancel(run_id?|thread_id, reason) -> ok
+CmdRunDone(run_id, final_status, final_error) -> void (clears active pointer if still current)
+```
+
+### 11.2 `sendUserTurn`: start-or-steer algorithm
+
+This mirrors Codex core behavior: attempt steer into an active run first; if none exists, start a new run.
+
+Pseudocode (thread actor perspective):
+
+```text
+on CmdSendUserTurn(req):
+  assert thread exists
+
+  if active_run_id != \"\":
+    if req.expected_run_id != \"\" and req.expected_run_id != active_run_id:
+      return 409 run_changed
+
+    // Persist-first (idempotent by message_id uniqueness).
+    persist_transcript_user_message(req.input)
+    publish_thread_summary_update()
+    publish_thread_transcript_message()
+
+    // In-memory injection.
+    active_run.enqueue_steer(req.input)
+    publish_thread_stream_event(\"run.steer.accepted\")
+    return (active_run_id, kind=steer)
+
+  // No active run: start new.
+  run_id = new_run_id()
+
+  // Persist user message first (same as steer path).
+  persist_transcript_user_message(req.input)
+  persist_thread_run_state(thread_id, state=\"accepted\")
+  publish_thread_summary_update()
+  publish_thread_stream_event(\"run.accepted\")
+
+  // Spawn the run asynchronously.
+  active_run = RunSupervisor.StartRun(run_id, req.model, req.options, thread_id, ...)
+  active_run_id = run_id
+
+  persist_thread_run_state(thread_id, state=\"running\") // when actually entering execution
+  publish_thread_summary_update()
+  publish_thread_stream_event(\"run.started\")
+
+  return (run_id, kind=start)
+```
+
+Notes:
+
+- `message_id` should be required for steer-start idempotency. The existing `transcript_messages` uniqueness constraint (`UNIQUE(thread_id, message_id)`) already provides exactly-once behavior for retries.
+- Use existing run states (`accepted` and `running`) instead of introducing a new `waiting_resource` state. The UI already treats `accepted` as active.
+
+### 11.3 Run: steer queue and drain points
+
+Add an in-memory steer queue to each run:
+
+- `steerCh chan SteerInput` (buffered)
+- `pendingSteer atomic/int` (optional; for diagnostics)
+
+Drain points in the runtime loop:
+
+- before each provider turn
+- after each tool-dispatch batch
+- when transitioning out of `waiting_user`
+
+Drain behavior:
+
+- convert steer inputs to normal “user messages” in the runtime `messages` buffer
+- append attachment parts as `file` content messages (same encoding currently used in `buildMessagesForRun`)
+- emit a lifecycle/stream event indicating steer was applied (optional but recommended for observability)
+
+### 11.4 EventHub: subscription scopes and routing
+
+Replace endpoint-wide broadcast with explicit subscription scopes:
+
+- `summary_subs[endpoint_id] -> set(stream_server)`
+- `thread_subs[endpoint_id:thread_id] -> set(stream_server)`
+
+Routing rules:
+
+- thread transcript and run stream events go only to `thread_subs[thread_key]`
+- thread summary updates go only to `summary_subs[endpoint_id]`
+
+Coalescing:
+
+- summary updates should be “last write wins” per `(endpoint_id, thread_id)` to avoid floods during rapid transcript appends.
+
+### 11.5 Concrete code touch points (current repo layout)
+
+Server (Go):
+
+- `internal/ai/service.go`
+  - remove channel-level gate (`activeRunByChan`)
+  - introduce ThreadManager/ThreadActor
+  - implement `sendUserTurn` semantics
+- `internal/ai/rpc.go`
+  - add new RPC handlers: `sendUserTurn`, `subscribeSummary`, `subscribeThread`
+- `internal/ai/realtime_sink.go`
+  - implement scoped subscriptions and summary vs thread routing
+- `internal/ai/run.go`, `internal/ai/native_runtime.go`
+  - add steer queue and drain points
+
+Env App UI (TypeScript):
+
+- `internal/envapp/ui_src/src/ui/pages/AIChatContext.ts`
+  - subscribe to summary only (drive sidebar)
+  - keep `activeRunByThread` from summary updates
+- `internal/envapp/ui_src/src/ui/pages/EnvAIPage.tsx`
+  - Enter/send calls `sendUserTurn` (no cancel+wait)
+  - active thread attaches `subscribeThread(thread_id)` and renders full events
+
+Gateway (HTTP):
+
+- `internal/codeapp/gateway/gateway.go`
+  - remove any remaining channel-level “run already active” gating
+  - keep thread-level busy checks only where they remain meaningful
+---
+
+## 12. Migration / Refactor Plan (Recommended Phases)
 
 This is intentionally a refactor, not an incremental patch.
 
@@ -348,10 +493,9 @@ Phase 5: move persistence to a pipeline.
 
 ---
 
-## 12. Open Questions (Only if needed)
+## 13. Open Questions (Only if needed)
 
 This design intentionally minimizes decision points. The only choices that may require product input later:
 
 - Whether steer during `waiting_approval` should implicitly reject outstanding approvals.
 - Whether to allow model switching mid-run (recommended: do not; keep model fixed per run).
-
