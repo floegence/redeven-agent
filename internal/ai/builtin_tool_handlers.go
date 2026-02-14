@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 
 	aitools "github.com/floegence/redeven-agent/internal/ai/tools"
 )
@@ -13,6 +12,31 @@ import (
 type builtInToolHandler struct {
 	r        *run
 	toolName string
+}
+
+func toolSuccessSummary(toolName string) string {
+	switch strings.TrimSpace(toolName) {
+	case "terminal.exec":
+		return "terminal.exec"
+	case "apply_patch":
+		return "apply_patch.applied"
+	case "write_todos":
+		return "todos.updated"
+	case "web.search":
+		return "web.search"
+	case "use_skill":
+		return "skill.activated"
+	case "delegate_task":
+		return "delegation.created"
+	case "send_subagent_input":
+		return "delegation.input_sent"
+	case "wait_subagents":
+		return "delegation.wait"
+	case "close_subagent":
+		return "delegation.closed"
+	default:
+		return "tool.success"
+	}
 }
 
 func (h *builtInToolHandler) Validate(_ context.Context, call ToolCall) error {
@@ -46,7 +70,7 @@ func (h *builtInToolHandler) Execute(ctx context.Context, call ToolCall) (ToolRe
 			ToolID:    strings.TrimSpace(call.ID),
 			ToolName:  toolName,
 			Status:    toolResultStatusSuccess,
-			Summary:   "tool.success",
+			Summary:   toolSuccessSummary(toolName),
 			Details:   "tool execution completed",
 			Data:      data,
 			Truncated: truncated,
@@ -102,202 +126,6 @@ func (h signalToolHandler) Execute(_ context.Context, call ToolCall) (ToolResult
 }
 
 func (h signalToolHandler) HandlePartial(_ context.Context, _ PartialToolCall) error {
-	return nil
-}
-
-type useSkillToolHandler struct {
-	r *run
-}
-
-func (h *useSkillToolHandler) Validate(_ context.Context, call ToolCall) error {
-	if h == nil || h.r == nil {
-		return fmt.Errorf("tool handler unavailable")
-	}
-	if strings.TrimSpace(call.Name) == "" {
-		return fmt.Errorf("missing skill tool name")
-	}
-	name := strings.TrimSpace(anyToString(call.Args["name"]))
-	if name == "" {
-		return fmt.Errorf("missing required field: name")
-	}
-	return nil
-}
-
-func (h *useSkillToolHandler) Execute(_ context.Context, call ToolCall) (ToolResult, error) {
-	if h == nil || h.r == nil {
-		return ToolResult{}, fmt.Errorf("tool handler unavailable")
-	}
-	name := strings.TrimSpace(anyToString(call.Args["name"]))
-	reason := strings.TrimSpace(anyToString(call.Args["reason"]))
-	activation, alreadyActive, err := h.r.activateSkill(name)
-	if err != nil {
-		return ToolResult{ToolID: call.ID, ToolName: call.Name, Status: toolResultStatusError, Summary: "tool.error", Details: err.Error()}, nil
-	}
-	out := map[string]any{
-		"name":           activation.Name,
-		"activation_id":  activation.ActivationID,
-		"already_active": alreadyActive,
-		"content":        activation.Content,
-		"content_ref":    activation.ContentRef,
-		"root_dir":       activation.RootDir,
-		"mode_hints":     activation.ModeHints,
-	}
-	if reason != "" {
-		out["reason"] = reason
-	}
-	if len(activation.Dependencies) > 0 {
-		deps := make([]map[string]any, 0, len(activation.Dependencies))
-		for _, dep := range activation.Dependencies {
-			deps = append(deps, map[string]any{
-				"name":      dep.Name,
-				"transport": dep.Transport,
-				"command":   dep.Command,
-				"url":       dep.URL,
-			})
-		}
-		out["dependencies"] = deps
-		out["dependency_degraded"] = true
-	}
-	return ToolResult{ToolID: call.ID, ToolName: call.Name, Status: toolResultStatusSuccess, Summary: "skill.activated", Details: "skill activated", Data: out}, nil
-}
-
-func (h *useSkillToolHandler) HandlePartial(_ context.Context, _ PartialToolCall) error {
-	return nil
-}
-
-type delegateTaskToolHandler struct {
-	r *run
-}
-
-func (h *delegateTaskToolHandler) Validate(_ context.Context, call ToolCall) error {
-	if h == nil || h.r == nil {
-		return fmt.Errorf("tool handler unavailable")
-	}
-	if strings.TrimSpace(anyToString(call.Args["objective"])) == "" {
-		return fmt.Errorf("missing required field: objective")
-	}
-	return nil
-}
-
-func (h *delegateTaskToolHandler) Execute(ctx context.Context, call ToolCall) (ToolResult, error) {
-	if h == nil || h.r == nil {
-		return ToolResult{}, fmt.Errorf("tool handler unavailable")
-	}
-	out, err := h.r.delegateTask(ctx, cloneAnyMap(call.Args))
-	if err != nil {
-		return ToolResult{ToolID: call.ID, ToolName: call.Name, Status: toolResultStatusError, Summary: "tool.error", Details: err.Error()}, nil
-	}
-	return ToolResult{ToolID: call.ID, ToolName: call.Name, Status: toolResultStatusSuccess, Summary: "delegation.created", Details: "subagent task created", Data: out}, nil
-}
-
-func (h *delegateTaskToolHandler) HandlePartial(_ context.Context, _ PartialToolCall) error {
-	return nil
-}
-
-type sendSubagentInputToolHandler struct {
-	r *run
-}
-
-func (h *sendSubagentInputToolHandler) Validate(_ context.Context, call ToolCall) error {
-	if h == nil || h.r == nil {
-		return fmt.Errorf("tool handler unavailable")
-	}
-	if strings.TrimSpace(anyToString(call.Args["id"])) == "" {
-		return fmt.Errorf("missing required field: id")
-	}
-	if strings.TrimSpace(anyToString(call.Args["message"])) == "" {
-		return fmt.Errorf("missing required field: message")
-	}
-	return nil
-}
-
-func (h *sendSubagentInputToolHandler) Execute(_ context.Context, call ToolCall) (ToolResult, error) {
-	if h == nil || h.r == nil {
-		return ToolResult{}, fmt.Errorf("tool handler unavailable")
-	}
-	id := strings.TrimSpace(anyToString(call.Args["id"]))
-	message := strings.TrimSpace(anyToString(call.Args["message"]))
-	interrupt := false
-	if raw, ok := call.Args["interrupt"].(bool); ok {
-		interrupt = raw
-	}
-	out, err := h.r.sendSubagentInput(id, message, interrupt)
-	if err != nil {
-		return ToolResult{ToolID: call.ID, ToolName: call.Name, Status: toolResultStatusError, Summary: "tool.error", Details: err.Error()}, nil
-	}
-	return ToolResult{ToolID: call.ID, ToolName: call.Name, Status: toolResultStatusSuccess, Summary: "delegation.input_sent", Details: "input sent to subagent", Data: out}, nil
-}
-
-func (h *sendSubagentInputToolHandler) HandlePartial(_ context.Context, _ PartialToolCall) error {
-	return nil
-}
-
-type waitSubagentsToolHandler struct {
-	r *run
-}
-
-func (h *waitSubagentsToolHandler) Validate(_ context.Context, call ToolCall) error {
-	if h == nil || h.r == nil {
-		return fmt.Errorf("tool handler unavailable")
-	}
-	return nil
-}
-
-func (h *waitSubagentsToolHandler) Execute(ctx context.Context, call ToolCall) (ToolResult, error) {
-	if h == nil || h.r == nil {
-		return ToolResult{}, fmt.Errorf("tool handler unavailable")
-	}
-	timeoutMS := int64(30_000)
-	if v, ok := call.Args["timeout_ms"].(float64); ok {
-		timeoutMS = int64(v)
-	}
-	if v, ok := call.Args["timeout_ms"].(int64); ok {
-		timeoutMS = v
-	}
-	if timeoutMS < 10_000 {
-		timeoutMS = 10_000
-	}
-	if timeoutMS > 300_000 {
-		timeoutMS = 300_000
-	}
-	ids := extractStringSlice(call.Args["ids"])
-	waitCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutMS)*time.Millisecond)
-	defer cancel()
-	out, timedOut := h.r.waitSubagents(waitCtx, ids)
-	return ToolResult{ToolID: call.ID, ToolName: call.Name, Status: toolResultStatusSuccess, Summary: "delegation.wait", Details: "subagent wait completed", Data: map[string]any{"status": out, "timed_out": timedOut}}, nil
-}
-
-func (h *waitSubagentsToolHandler) HandlePartial(_ context.Context, _ PartialToolCall) error {
-	return nil
-}
-
-type closeSubagentToolHandler struct {
-	r *run
-}
-
-func (h *closeSubagentToolHandler) Validate(_ context.Context, call ToolCall) error {
-	if h == nil || h.r == nil {
-		return fmt.Errorf("tool handler unavailable")
-	}
-	if strings.TrimSpace(anyToString(call.Args["id"])) == "" {
-		return fmt.Errorf("missing required field: id")
-	}
-	return nil
-}
-
-func (h *closeSubagentToolHandler) Execute(_ context.Context, call ToolCall) (ToolResult, error) {
-	if h == nil || h.r == nil {
-		return ToolResult{}, fmt.Errorf("tool handler unavailable")
-	}
-	id := strings.TrimSpace(anyToString(call.Args["id"]))
-	out, err := h.r.closeSubagent(id)
-	if err != nil {
-		return ToolResult{ToolID: call.ID, ToolName: call.Name, Status: toolResultStatusError, Summary: "tool.error", Details: err.Error()}, nil
-	}
-	return ToolResult{ToolID: call.ID, ToolName: call.Name, Status: toolResultStatusSuccess, Summary: "delegation.closed", Details: "subagent closed", Data: out}, nil
-}
-
-func (h *closeSubagentToolHandler) HandlePartial(_ context.Context, _ PartialToolCall) error {
 	return nil
 }
 
@@ -359,10 +187,14 @@ func normalizeTruncatedToolPayload(toolName string, payload any) (any, bool) {
 			return payload, false
 		}
 		trimmed, truncated := truncateByRunes(string(b), 4000)
-		if !truncated {
+		if truncated {
+			return map[string]any{"raw": trimmed, "truncated": true}, true
+		}
+		var normalized any
+		if err := json.Unmarshal(b, &normalized); err != nil {
 			return payload, false
 		}
-		return map[string]any{"raw": trimmed, "truncated": true}, true
+		return normalized, false
 	}
 }
 
@@ -385,7 +217,7 @@ func builtInToolDefinitions() []ToolDef {
 	defs := []ToolDef{
 		{
 			Name:             "apply_patch",
-			Description:      "Apply a unified diff patch to files in the current workspace.",
+			Description:      "Apply a unified diff patch to files on the local machine. Paths are resolved relative to the run working directory unless absolute.",
 			InputSchema:      toSchema(map[string]any{"type": "object", "properties": map[string]any{"patch": map[string]any{"type": "string"}}, "required": []string{"patch"}, "additionalProperties": false}),
 			ParallelSafe:     false,
 			Mutating:         true,
@@ -396,8 +228,8 @@ func builtInToolDefinitions() []ToolDef {
 		},
 		{
 			Name:             "terminal.exec",
-			Description:      "Execute shell command in workspace. Prefer rg/sed/cat for investigation and use workdir instead of cd. Use stdin for multi-line scripts.",
-			InputSchema:      toSchema(map[string]any{"type": "object", "properties": map[string]any{"command": map[string]any{"type": "string"}, "stdin": map[string]any{"type": "string", "maxLength": 200000}, "cwd": map[string]any{"type": "string"}, "workdir": map[string]any{"type": "string"}, "timeout_ms": map[string]any{"type": "integer", "minimum": 1, "maximum": 60000}, "description": map[string]any{"type": "string", "maxLength": 200}}, "required": []string{"command"}, "additionalProperties": false}),
+			Description:      "Execute a shell command on the local machine. Defaults to the run working directory, but you may set cwd/workdir or use absolute paths to operate outside the workspace when needed.",
+			InputSchema:      toSchema(map[string]any{"type": "object", "properties": map[string]any{"command": map[string]any{"type": "string"}, "stdin": map[string]any{"type": "string", "maxLength": 200000}, "cwd": map[string]any{"type": "string"}, "workdir": map[string]any{"type": "string"}, "timeout_ms": map[string]any{"type": "integer", "minimum": 1, "maximum": 1800000}, "description": map[string]any{"type": "string", "maxLength": 200}}, "required": []string{"command"}, "additionalProperties": false}),
 			ParallelSafe:     false,
 			Mutating:         false,
 			RequiresApproval: false,
@@ -518,21 +350,6 @@ func registerBuiltInTools(reg *InMemoryToolRegistry, r *run) error {
 		handler := ToolHandler(&builtInToolHandler{r: r, toolName: def.Name})
 		if def.Name == "task_complete" || def.Name == "ask_user" {
 			handler = signalToolHandler{}
-		}
-		if def.Name == "use_skill" {
-			handler = &useSkillToolHandler{r: r}
-		}
-		if def.Name == "delegate_task" {
-			handler = &delegateTaskToolHandler{r: r}
-		}
-		if def.Name == "send_subagent_input" {
-			handler = &sendSubagentInputToolHandler{r: r}
-		}
-		if def.Name == "wait_subagents" {
-			handler = &waitSubagentsToolHandler{r: r}
-		}
-		if def.Name == "close_subagent" {
-			handler = &closeSubagentToolHandler{r: r}
 		}
 		if err := reg.Register(def, handler); err != nil {
 			return err

@@ -14,7 +14,7 @@ import (
 	"github.com/floegence/redeven-agent/internal/session"
 )
 
-func TestGateway_AI_Permissions_ReadOnlyCanBrowseButCannotMutate(t *testing.T) {
+func TestGateway_AI_Permissions_RequireRWX(t *testing.T) {
 	t.Parallel()
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -78,17 +78,6 @@ func TestGateway_AI_Permissions_ReadOnlyCanBrowseButCannotMutate(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	// Read-only sessions can browse AI threads.
-	{
-		req := httptest.NewRequest(http.MethodGet, "/_redeven_proxy/api/ai/threads", nil)
-		req.Header.Set("Origin", envOrigin)
-		rr := httptest.NewRecorder()
-		gw.serveHTTP(rr, req)
-		if rr.Code != http.StatusOK {
-			t.Fatalf("list threads status=%d body=%s", rr.Code, rr.Body.String())
-		}
-	}
-
 	assertForbidden := func(method string, path string) {
 		t.Helper()
 		req := httptest.NewRequest(method, path, nil)
@@ -103,13 +92,20 @@ func TestGateway_AI_Permissions_ReadOnlyCanBrowseButCannotMutate(t *testing.T) {
 		}
 	}
 
-	// Mutating AI endpoints require RWX.
+	// AI endpoints require RWX for the entire feature surface.
+	assertForbidden(http.MethodGet, "/_redeven_proxy/api/ai/models")
+	assertForbidden(http.MethodGet, "/_redeven_proxy/api/ai/threads")
 	assertForbidden(http.MethodPost, "/_redeven_proxy/api/ai/threads")
+	assertForbidden(http.MethodGet, "/_redeven_proxy/api/ai/threads/th_test")
 	assertForbidden(http.MethodPatch, "/_redeven_proxy/api/ai/threads/th_test")
 	assertForbidden(http.MethodDelete, "/_redeven_proxy/api/ai/threads/th_test")
+	assertForbidden(http.MethodGet, "/_redeven_proxy/api/ai/threads/th_test/todos")
+	assertForbidden(http.MethodGet, "/_redeven_proxy/api/ai/threads/th_test/messages")
 	assertForbidden(http.MethodPost, "/_redeven_proxy/api/ai/threads/th_test/messages")
 	assertForbidden(http.MethodPost, "/_redeven_proxy/api/ai/runs")
+	assertForbidden(http.MethodGet, "/_redeven_proxy/api/ai/runs/run_test/events")
 	assertForbidden(http.MethodPost, "/_redeven_proxy/api/ai/runs/run_test/cancel")
 	assertForbidden(http.MethodPost, "/_redeven_proxy/api/ai/runs/run_test/tool_approvals")
 	assertForbidden(http.MethodPost, "/_redeven_proxy/api/ai/uploads")
+	assertForbidden(http.MethodGet, "/_redeven_proxy/api/ai/uploads/upload_test")
 }

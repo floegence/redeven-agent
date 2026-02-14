@@ -4,54 +4,49 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/floegence/redeven-agent/internal/session"
 )
 
-func TestRunIdleWatchdog_DoesNotTimeoutWhileWaitingApproval(t *testing.T) {
+func TestRunIdleWatchdog_DoesNotCancelWhileToolBusy(t *testing.T) {
 	t.Parallel()
+
+	root := t.TempDir()
+	meta := &session.Meta{CanRead: true, CanWrite: true, CanExecute: true}
 
 	r := newRun(runOptions{
 		Log:         slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{})),
-		IdleTimeout: 80 * time.Millisecond,
+		FSRoot:      root,
+		Shell:       "bash",
+		SessionMeta: meta,
+		RunID:       "run_test_idle_watchdog",
+		ChannelID:   "ch_test",
+		EndpointID:  "env_test",
+		ThreadID:    "th_test",
+		MessageID:   "m_test",
+		IdleTimeout: 150 * time.Millisecond,
 	})
 
-	r.mu.Lock()
-	r.waitingApproval = true
-	r.mu.Unlock()
-
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	t.Cleanup(cancel)
+	r.cancelFn = cancel
 
-	done := make(chan struct{})
-	go func() {
-		r.runIdleWatchdog(ctx)
-		close(done)
-	}()
+	go r.runIdleWatchdog(ctx)
 
-	deadline := time.Now().Add(4 * r.idleTimeout)
-	for time.Now().Before(deadline) {
-		if got := r.getCancelReason(); got != "" {
-			t.Fatalf("cancelReason=%q, want empty while waitingApproval", got)
-		}
-		time.Sleep(10 * time.Millisecond)
+	outcome, err := r.handleToolCall(ctx, "tool_1", "terminal.exec", map[string]any{
+		"command":    "sleep 0.3; echo ok",
+		"timeout_ms": 5_000,
+	})
+	if err != nil {
+		t.Fatalf("handleToolCall error: %v", err)
 	}
-
-	r.mu.Lock()
-	r.waitingApproval = false
-	r.mu.Unlock()
-
-	deadline = time.Now().Add(4 * r.idleTimeout)
-	for time.Now().Before(deadline) {
-		if got := r.getCancelReason(); got == "timed_out" {
-			cancel()
-			<-done
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
+	if outcome == nil || !outcome.Success {
+		t.Fatalf("expected tool success outcome=%#v", outcome)
 	}
-
-	cancel()
-	<-done
-	t.Fatalf("run did not time out after leaving waitingApproval state")
+	if reason := strings.TrimSpace(r.getCancelReason()); reason != "" {
+		t.Fatalf("expected no cancel reason, got %q", reason)
+	}
 }
