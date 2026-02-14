@@ -10,6 +10,8 @@ import { FileBlock } from './FileBlock';
 import { ChecklistBlock } from './ChecklistBlock';
 import { ShellBlock } from './ShellBlock';
 import { ThinkingBlock } from './ThinkingBlock';
+import { TodosBlock } from './TodosBlock';
+import { SourcesBlock } from './SourcesBlock';
 
 // Lazy-load heavy components that rely on large third-party libraries
 const CodeBlock = lazy(() =>
@@ -218,6 +220,26 @@ export const BlockRenderer: Component<BlockRendererProps> = (props) => {
               />
             </Suspense>
           );
+        }}
+      </Match>
+
+      <Match when={props.block.type === 'todos' && props.block}>
+        {(block) => {
+          const b = block() as import('../types').TodosBlock;
+          return (
+            <TodosBlock
+              version={b.version}
+              updatedAtUnixMs={b.updatedAtUnixMs}
+              todos={b.todos}
+            />
+          );
+        }}
+      </Match>
+
+      <Match when={props.block.type === 'sources' && props.block}>
+        {(block) => {
+          const b = block() as import('../types').SourcesBlock;
+          return <SourcesBlock sources={b.sources} />;
         }}
       </Match>
     </Switch>
