@@ -4,7 +4,7 @@ export type wire_ai_attachment = {
   url: string;
 };
 
-export type wire_ai_start_run_req = {
+export type wire_ai_send_user_turn_req = {
   thread_id: string;
   model?: string;
   input: {
@@ -16,10 +16,12 @@ export type wire_ai_start_run_req = {
     max_steps: number;
     mode?: string;
   };
+  expected_run_id?: string;
 };
 
-export type wire_ai_start_run_resp = {
+export type wire_ai_send_user_turn_resp = {
   run_id: string;
+  kind: string;
 };
 
 export type wire_ai_cancel_run_req = {
@@ -36,10 +38,18 @@ export type wire_ai_active_run = {
   run_id: string;
 };
 
-export type wire_ai_subscribe_req = Record<string, never>;
+export type wire_ai_subscribe_summary_req = Record<string, never>;
 
-export type wire_ai_subscribe_resp = {
+export type wire_ai_subscribe_summary_resp = {
   active_runs: wire_ai_active_run[];
+};
+
+export type wire_ai_subscribe_thread_req = {
+  thread_id: string;
+};
+
+export type wire_ai_subscribe_thread_resp = {
+  run_id?: string;
 };
 
 export type wire_ai_tool_approval_req = {
@@ -53,7 +63,7 @@ export type wire_ai_tool_approval_resp = {
 };
 
 export type wire_ai_event_notify = {
-  event_type: 'stream_event' | 'thread_state' | 'transcript_message';
+  event_type: 'stream_event' | 'thread_state' | 'transcript_message' | 'thread_summary';
   endpoint_id: string;
   thread_id: string;
   run_id: string;
@@ -67,6 +77,13 @@ export type wire_ai_event_notify = {
 
   message_row_id?: number;
   message_json?: any;
+
+  // thread_summary only
+  title?: string;
+  updated_at_unix_ms?: number;
+  last_message_preview?: string;
+  last_message_at_unix_ms?: number;
+  active_run_id?: string;
 };
 
 export type wire_ai_list_messages_req = {
