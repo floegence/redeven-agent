@@ -81,6 +81,68 @@ func TestStore_UpdateThreadRunState(t *testing.T) {
 	}
 }
 
+func TestStore_ResetStaleActiveThreadRunStates(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "threads.sqlite")
+	s, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = s.Close() }()
+
+	ctx := context.Background()
+	type threadCase struct {
+		threadID   string
+		status     string
+		runError   string
+		wantStatus string
+		wantRunErr string
+	}
+	cases := []threadCase{
+		{threadID: "th_accepted", status: "accepted", wantStatus: "canceled"},
+		{threadID: "th_running", status: "running", wantStatus: "canceled"},
+		{threadID: "th_waiting_approval", status: "waiting_approval", wantStatus: "canceled"},
+		{threadID: "th_recovering", status: "recovering", wantStatus: "canceled"},
+		{threadID: "th_waiting_user", status: "waiting_user", wantStatus: "waiting_user"},
+		{threadID: "th_success", status: "success", wantStatus: "success"},
+		{threadID: "th_failed", status: "failed", runError: "boom", wantStatus: "failed", wantRunErr: "boom"},
+	}
+
+	for _, tc := range cases {
+		if err := s.CreateThread(ctx, Thread{ThreadID: tc.threadID, EndpointID: "env_1", Title: tc.threadID}); err != nil {
+			t.Fatalf("CreateThread(%s): %v", tc.threadID, err)
+		}
+		if err := s.UpdateThreadRunState(ctx, "env_1", tc.threadID, tc.status, tc.runError, "u1", "u1@example.com"); err != nil {
+			t.Fatalf("UpdateThreadRunState(%s): %v", tc.threadID, err)
+		}
+	}
+
+	affected, err := s.ResetStaleActiveThreadRunStates(ctx)
+	if err != nil {
+		t.Fatalf("ResetStaleActiveThreadRunStates: %v", err)
+	}
+	if affected != 4 {
+		t.Fatalf("affected=%d, want 4", affected)
+	}
+
+	for _, tc := range cases {
+		th, err := s.GetThread(ctx, "env_1", tc.threadID)
+		if err != nil {
+			t.Fatalf("GetThread(%s): %v", tc.threadID, err)
+		}
+		if th == nil {
+			t.Fatalf("thread %s missing", tc.threadID)
+		}
+		if got := strings.TrimSpace(th.RunStatus); got != tc.wantStatus {
+			t.Fatalf("thread %s run_status=%q, want %q", tc.threadID, got, tc.wantStatus)
+		}
+		if gotErr := strings.TrimSpace(th.RunError); gotErr != tc.wantRunErr {
+			t.Fatalf("thread %s run_error=%q, want %q", tc.threadID, gotErr, tc.wantRunErr)
+		}
+	}
+}
+
 func TestStore_MigrateFromV1AddsRunColumns(t *testing.T) {
 	t.Parallel()
 
