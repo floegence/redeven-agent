@@ -124,6 +124,12 @@ export const BlockRenderer: Component<BlockRendererProps> = (props) => {
           const b = block() as {
             command: string;
             output?: string;
+            outputRef?: { runId: string; toolId: string };
+            cwd?: string;
+            timeoutMs?: number;
+            durationMs?: number;
+            timedOut?: boolean;
+            truncated?: boolean;
             exitCode?: number;
             status: 'running' | 'success' | 'error';
           };
@@ -131,6 +137,12 @@ export const BlockRenderer: Component<BlockRendererProps> = (props) => {
             <ShellBlock
               command={b.command}
               output={b.output}
+              outputRef={b.outputRef}
+              cwd={b.cwd}
+              timeoutMs={b.timeoutMs}
+              durationMs={b.durationMs}
+              timedOut={b.timedOut}
+              truncated={b.truncated}
               exitCode={b.exitCode}
               status={b.status}
             />
