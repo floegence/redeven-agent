@@ -1134,6 +1134,148 @@ func (g *Gateway) handleAPI(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, apiResp{OK: true, Data: map[string]any{"provider_api_key_set": set}})
 		return
 
+	case r.Method == http.MethodGet && r.URL.Path == "/_redeven_proxy/api/ai/skills":
+		meta, ok := g.requirePermission(w, r, requiredPermissionRead)
+		if !ok {
+			return
+		}
+		if g.ai == nil {
+			writeJSON(w, http.StatusServiceUnavailable, apiResp{OK: false, Error: "ai service not ready"})
+			return
+		}
+		catalog, err := g.ai.ListSkillsCatalog()
+		if err != nil {
+			g.appendAudit(meta, "ai_skills_list", "failure", nil, err)
+			writeJSON(w, http.StatusServiceUnavailable, apiResp{OK: false, Error: err.Error()})
+			return
+		}
+		g.appendAudit(meta, "ai_skills_list", "success", map[string]any{"catalog_version": catalog.CatalogVersion}, nil)
+		writeJSON(w, http.StatusOK, apiResp{OK: true, Data: catalog})
+		return
+
+	case r.Method == http.MethodPost && r.URL.Path == "/_redeven_proxy/api/ai/skills/reload":
+		meta, ok := g.requirePermission(w, r, requiredPermissionRead)
+		if !ok {
+			return
+		}
+		if g.ai == nil {
+			writeJSON(w, http.StatusServiceUnavailable, apiResp{OK: false, Error: "ai service not ready"})
+			return
+		}
+		catalog, err := g.ai.ReloadSkillsCatalog()
+		if err != nil {
+			g.appendAudit(meta, "ai_skills_reload", "failure", nil, err)
+			writeJSON(w, http.StatusServiceUnavailable, apiResp{OK: false, Error: err.Error()})
+			return
+		}
+		g.appendAudit(meta, "ai_skills_reload", "success", map[string]any{"catalog_version": catalog.CatalogVersion}, nil)
+		writeJSON(w, http.StatusOK, apiResp{OK: true, Data: catalog})
+		return
+
+	case r.Method == http.MethodPut && r.URL.Path == "/_redeven_proxy/api/ai/skills/toggles":
+		meta, ok := g.requirePermission(w, r, requiredPermissionAdmin)
+		if !ok {
+			return
+		}
+		if g.ai == nil {
+			writeJSON(w, http.StatusServiceUnavailable, apiResp{OK: false, Error: "ai service not ready"})
+			return
+		}
+		var body struct {
+			Patches []ai.SkillTogglePatch `json:"patches"`
+		}
+		dec := json.NewDecoder(r.Body)
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&body); err != nil {
+			writeJSON(w, http.StatusBadRequest, apiResp{OK: false, Error: "invalid json"})
+			return
+		}
+		if err := dec.Decode(&struct{}{}); err != io.EOF {
+			writeJSON(w, http.StatusBadRequest, apiResp{OK: false, Error: "invalid json"})
+			return
+		}
+		if len(body.Patches) == 0 {
+			writeJSON(w, http.StatusBadRequest, apiResp{OK: false, Error: "missing patches"})
+			return
+		}
+		catalog, err := g.ai.PatchSkillToggles(body.Patches)
+		if err != nil {
+			g.appendAudit(meta, "ai_skills_toggle_update", "failure", map[string]any{"patches": len(body.Patches)}, err)
+			writeJSON(w, http.StatusBadRequest, apiResp{OK: false, Error: err.Error()})
+			return
+		}
+		g.appendAudit(meta, "ai_skills_toggle_update", "success", map[string]any{"patches": len(body.Patches), "catalog_version": catalog.CatalogVersion}, nil)
+		writeJSON(w, http.StatusOK, apiResp{OK: true, Data: catalog})
+		return
+
+	case r.Method == http.MethodPost && r.URL.Path == "/_redeven_proxy/api/ai/skills":
+		meta, ok := g.requirePermission(w, r, requiredPermissionAdmin)
+		if !ok {
+			return
+		}
+		if g.ai == nil {
+			writeJSON(w, http.StatusServiceUnavailable, apiResp{OK: false, Error: "ai service not ready"})
+			return
+		}
+		var body struct {
+			Scope       string `json:"scope"`
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Body        string `json:"body,omitempty"`
+		}
+		dec := json.NewDecoder(r.Body)
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&body); err != nil {
+			writeJSON(w, http.StatusBadRequest, apiResp{OK: false, Error: "invalid json"})
+			return
+		}
+		if err := dec.Decode(&struct{}{}); err != io.EOF {
+			writeJSON(w, http.StatusBadRequest, apiResp{OK: false, Error: "invalid json"})
+			return
+		}
+		catalog, err := g.ai.CreateSkill(body.Scope, body.Name, body.Description, body.Body)
+		if err != nil {
+			g.appendAudit(meta, "ai_skills_create", "failure", map[string]any{"scope": strings.TrimSpace(body.Scope), "name": strings.TrimSpace(body.Name)}, err)
+			writeJSON(w, http.StatusBadRequest, apiResp{OK: false, Error: err.Error()})
+			return
+		}
+		g.appendAudit(meta, "ai_skills_create", "success", map[string]any{"scope": strings.TrimSpace(body.Scope), "name": strings.TrimSpace(body.Name), "catalog_version": catalog.CatalogVersion}, nil)
+		writeJSON(w, http.StatusOK, apiResp{OK: true, Data: catalog})
+		return
+
+	case r.Method == http.MethodDelete && r.URL.Path == "/_redeven_proxy/api/ai/skills":
+		meta, ok := g.requirePermission(w, r, requiredPermissionAdmin)
+		if !ok {
+			return
+		}
+		if g.ai == nil {
+			writeJSON(w, http.StatusServiceUnavailable, apiResp{OK: false, Error: "ai service not ready"})
+			return
+		}
+		var body struct {
+			Scope string `json:"scope"`
+			Name  string `json:"name"`
+		}
+		dec := json.NewDecoder(r.Body)
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&body); err != nil {
+			writeJSON(w, http.StatusBadRequest, apiResp{OK: false, Error: "invalid json"})
+			return
+		}
+		if err := dec.Decode(&struct{}{}); err != io.EOF {
+			writeJSON(w, http.StatusBadRequest, apiResp{OK: false, Error: "invalid json"})
+			return
+		}
+		catalog, err := g.ai.DeleteSkill(body.Scope, body.Name)
+		if err != nil {
+			g.appendAudit(meta, "ai_skills_delete", "failure", map[string]any{"scope": strings.TrimSpace(body.Scope), "name": strings.TrimSpace(body.Name)}, err)
+			writeJSON(w, http.StatusBadRequest, apiResp{OK: false, Error: err.Error()})
+			return
+		}
+		g.appendAudit(meta, "ai_skills_delete", "success", map[string]any{"scope": strings.TrimSpace(body.Scope), "name": strings.TrimSpace(body.Name), "catalog_version": catalog.CatalogVersion}, nil)
+		writeJSON(w, http.StatusOK, apiResp{OK: true, Data: catalog})
+		return
+
 	case r.Method == http.MethodGet && r.URL.Path == "/_redeven_proxy/api/ai/models":
 		if _, ok := g.requirePermission(w, r, requiredPermissionFull); !ok {
 			return
