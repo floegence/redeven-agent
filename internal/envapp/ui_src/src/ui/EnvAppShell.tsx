@@ -31,7 +31,7 @@ import { EnvFileBrowserPage } from './pages/EnvFileBrowserPage';
 import { EnvCodespacesPage } from './pages/EnvCodespacesPage';
 import { EnvPortForwardsPage } from './pages/EnvPortForwardsPage';
 import { EnvAIPage } from './pages/EnvAIPage';
-import { AIChatContext, createAIChatContextValue } from './pages/AIChatContext';
+import { AIChatContext, createAIChatContextValue, type ModelsResponse } from './pages/AIChatContext';
 import { AIChatSidebar } from './pages/AIChatSidebar';
 import { EnvSettingsPage } from './pages/EnvSettingsPage';
 import { hasRWXPermissions } from './pages/aiPermissions';
@@ -39,6 +39,9 @@ import { redevenDeckWidgets } from './deck/redevenDeckWidgets';
 import { useRedevenRpc } from './protocol/redeven_v1';
 import { AuditLogDialog } from './widgets/AuditLogDialog';
 import { AskFlowerComposerWindow } from './widgets/AskFlowerComposerWindow';
+import { buildAskFlowerDraftMarkdown } from './utils/askFlowerContextTemplate';
+import { normalizeVirtualPath as normalizeAskFlowerVirtualPath } from './utils/askFlowerPath';
+import { fetchGatewayJSON } from './services/gatewayApi';
 import { getSandboxWindowInfo } from './services/sandboxWindowRegistry';
 import {
   channelInitEntry,
@@ -57,6 +60,42 @@ const FLOE_APP_AGENT = 'com.floegence.redeven.agent';
 const CODE_SPACE_ID_ENV_UI = 'env-ui';
 
 const ACTIVE_TAB_STORAGE_KEY = 'redeven_envapp_active_tab';
+const ACTIVE_THREAD_STORAGE_KEY = 'redeven_ai_active_thread_id';
+const DRAFT_MODEL_STORAGE_KEY = 'redeven_ai_draft_model_id';
+const EXECUTION_MODE_STORAGE_KEY = 'redeven_ai_execution_mode';
+
+type CreateThreadResponse = Readonly<{
+  thread: Readonly<{
+    thread_id: string;
+  }>;
+}>;
+
+function readPersistedDraftModelId(): string {
+  try {
+    return String(localStorage.getItem(DRAFT_MODEL_STORAGE_KEY) ?? '').trim();
+  } catch {
+    return '';
+  }
+}
+
+function readPersistedExecutionMode(): 'act' | 'plan' {
+  try {
+    const value = String(localStorage.getItem(EXECUTION_MODE_STORAGE_KEY) ?? '').trim().toLowerCase();
+    return value === 'plan' ? 'plan' : 'act';
+  } catch {
+    return 'act';
+  }
+}
+
+function persistActiveThreadId(threadId: string): void {
+  try {
+    const value = String(threadId ?? '').trim();
+    if (!value) return;
+    localStorage.setItem(ACTIVE_THREAD_STORAGE_KEY, value);
+  } catch {
+    // ignore
+  }
+}
 
 function readPersistedActiveTab(): EnvNavTab | null {
   try {
@@ -169,15 +208,141 @@ export function EnvAppShell() {
     setAskFlowerComposerAnchor(null);
   };
 
-  const submitAskFlowerComposer = (userPrompt: string) => {
+  const uploadAskFlowerAttachment = async (file: File): Promise<string> => {
+    const form = new FormData();
+    form.append('file', file);
+
+    const resp = await fetch('/_redeven_proxy/api/ai/uploads', {
+      method: 'POST',
+      body: form,
+      credentials: 'omit',
+      cache: 'no-store',
+    });
+
+    const text = await resp.text();
+    let data: any = null;
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      // ignore
+    }
+    if (!resp.ok) throw new Error(String(data?.error ?? `HTTP ${resp.status}`));
+    if (data?.ok === false) throw new Error(String(data?.error ?? 'Upload failed'));
+
+    const url = String(data?.data?.url ?? '').trim();
+    if (!url) throw new Error('Upload failed');
+    return url;
+  };
+
+  const resolveAskFlowerModel = async (): Promise<string> => {
+    const models = await fetchGatewayJSON<ModelsResponse>('/_redeven_proxy/api/ai/models', { method: 'GET' });
+    const options = Array.isArray(models?.models) ? models.models : [];
+    const allowed = new Set<string>();
+    for (const item of options) {
+      const id = String(item?.id ?? '').trim();
+      if (id) allowed.add(id);
+    }
+
+    const persisted = readPersistedDraftModelId();
+    if (persisted && allowed.has(persisted)) return persisted;
+
+    const defaultModel = String(models?.default_model ?? '').trim();
+    if (defaultModel && allowed.has(defaultModel)) return defaultModel;
+
+    const first = String(options[0]?.id ?? '').trim();
+    if (first && allowed.has(first)) return first;
+
+    throw new Error('No available model. Configure AI in Settings first.');
+  };
+
+  const createAskFlowerThread = async (params: { modelId: string; suggestedWorkingDir: string }): Promise<string> => {
+    const body: Record<string, unknown> = { title: '' };
+    if (params.modelId) body.model_id = params.modelId;
+    if (params.suggestedWorkingDir) body.working_dir = params.suggestedWorkingDir;
+
+    const resp = await fetchGatewayJSON<CreateThreadResponse>('/_redeven_proxy/api/ai/threads', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+    const threadId = String(resp?.thread?.thread_id ?? '').trim();
+    if (!threadId) {
+      throw new Error('Failed to create chat thread.');
+    }
+    return threadId;
+  };
+
+  const submitAskFlowerComposer = async (userPrompt: string): Promise<void> => {
     const intent = askFlowerComposerIntent();
     if (!intent) return;
-    closeAskFlowerComposer();
-    goTab('ai');
-    injectAskFlowerIntent({
-      ...intent,
-      userPrompt: String(userPrompt ?? '').trim(),
-    });
+
+    if (protocol.status() !== 'connected') {
+      notify.error('Not connected', 'Connecting to agent...');
+      return;
+    }
+    if (!canUseFlower()) {
+      notify.error('Permission denied', 'Read/write/execute permission required.');
+      return;
+    }
+
+    const trimmedPrompt = String(userPrompt ?? '').trim();
+    if (!trimmedPrompt) {
+      notify.error('Missing message', 'Please enter your question before sending.');
+      return;
+    }
+
+    try {
+      const modelId = await resolveAskFlowerModel();
+      const suggestedWorkingDirRaw = String(intent.suggestedWorkingDir ?? '').trim();
+      const suggestedWorkingDir = suggestedWorkingDirRaw
+        ? normalizeAskFlowerVirtualPath(suggestedWorkingDirRaw)
+        : '';
+      const threadId = await createAskFlowerThread({ modelId, suggestedWorkingDir });
+
+      const uploadedAttachments: Array<{ name: string; mimeType: string; url: string }> = [];
+      for (const file of intent.pendingAttachments) {
+        const url = await uploadAskFlowerAttachment(file);
+        uploadedAttachments.push({
+          name: String(file.name ?? '').trim() || 'attachment',
+          mimeType: String(file.type ?? '').trim() || 'application/octet-stream',
+          url,
+        });
+      }
+
+      try {
+        await rpc.ai.subscribeThread({ threadId });
+      } catch {
+        // Best-effort: send still persists and AI page can self-heal via transcript loading.
+      }
+
+      const finalPrompt =
+        buildAskFlowerDraftMarkdown({
+          intent: {
+            ...intent,
+            userPrompt: trimmedPrompt,
+          },
+          includeSuggestedWorkingDir: false,
+        }) || trimmedPrompt;
+
+      await rpc.ai.sendUserTurn({
+        threadId,
+        model: modelId,
+        input: {
+          text: finalPrompt,
+          attachments: uploadedAttachments,
+        },
+        options: {
+          maxSteps: 10,
+          mode: readPersistedExecutionMode(),
+        },
+      });
+
+      persistActiveThreadId(threadId);
+      closeAskFlowerComposer();
+      goTab('ai');
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      notify.error('Failed to send to Flower', msg || 'Request failed.');
+    }
   };
 
   const status = createMemo(() => (manualError() ? 'error' : protocol.status()));
@@ -920,7 +1085,7 @@ export function EnvAppShell() {
             intent={askFlowerComposerIntent()}
             anchor={askFlowerComposerAnchor()}
             onClose={closeAskFlowerComposer}
-            onSubmit={submitAskFlowerComposer}
+            onSend={submitAskFlowerComposer}
           />
         </Shell>
         </AIChatProviderBridge>
