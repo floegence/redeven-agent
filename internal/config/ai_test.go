@@ -56,6 +56,29 @@ func TestAIConfigValidate_RejectsMultipleDefaults(t *testing.T) {
 	}
 }
 
+func TestAIConfigValidate_MoonshotRequiresBaseURL(t *testing.T) {
+	t.Parallel()
+
+	cfg := &AIConfig{
+		Providers: []AIProvider{
+			{
+				ID:     "moonshot",
+				Name:   "Moonshot",
+				Type:   "moonshot",
+				Models: []AIProviderModel{{ModelName: "kimi-k2.5", IsDefault: true}},
+			},
+		},
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatalf("expected validation error for moonshot without base_url")
+	}
+
+	cfg.Providers[0].BaseURL = "https://api.moonshot.cn/v1"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate moonshot: %v", err)
+	}
+}
+
 func TestAIConfigValidate_OK(t *testing.T) {
 	t.Parallel()
 

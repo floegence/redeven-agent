@@ -9,6 +9,7 @@ High-level design:
 - Tooling follows a shell-first workflow: `terminal.exec` for investigation and verification, `apply_patch` for file edits.
 - LLM orchestration runs in the **Go runtime** via native provider SDK adapters:
   - OpenAI: `openai-go` (Responses API)
+  - Moonshot: `openai-go` (Chat Completions API on Moonshot base URL)
   - Anthropic: `anthropic-sdk-go` (Messages API)
 
 ## Requirements
@@ -25,7 +26,7 @@ Notes:
 - Providers own their model list: `ai.providers[].models[]` is the allow-list shown in the Chat UI.
 - Exactly one `providers[].models[].is_default` must be true (default for new chats).
 - The wire model id remains `<provider_id>/<model_name>` (stored on each chat thread).
-- `providers[].base_url` is optional for `openai` / `anthropic`, and **required** for `openai_compatible`.
+- `providers[].base_url` is optional for `openai` / `anthropic`, and **required** for `openai_compatible` / `moonshot`.
 
 API keys:
 

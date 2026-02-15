@@ -86,11 +86,11 @@ type AIProvider struct {
 	// Name is a human-friendly display name (safe to rename at any time).
 	Name string `json:"name,omitempty"`
 
-	// Type is one of: "openai" | "anthropic" | "openai_compatible".
+	// Type is one of: "openai" | "anthropic" | "openai_compatible" | "moonshot".
 	Type string `json:"type"`
 
 	// BaseURL overrides the provider endpoint (example: "https://api.openai.com/v1").
-	// When empty, provider defaults apply (except openai_compatible where base_url is required).
+	// When empty, provider defaults apply (except openai_compatible and moonshot where base_url is required).
 	BaseURL string `json:"base_url,omitempty"`
 
 	// StrictToolSchema overrides provider tool schema strictness.
@@ -99,6 +99,7 @@ type AIProvider struct {
 	// - openai official endpoints: strict
 	// - openai custom gateways: non-strict
 	// - openai_compatible: non-strict
+	// - moonshot: non-strict
 	StrictToolSchema *bool `json:"strict_tool_schema,omitempty"`
 
 	// Models is the allowed model list for this provider (shown in the Chat UI).
@@ -184,14 +185,14 @@ func (c *AIConfig) Validate() error {
 
 		t := strings.TrimSpace(p.Type)
 		switch t {
-		case "openai", "anthropic", "openai_compatible":
+		case "openai", "anthropic", "openai_compatible", "moonshot":
 		default:
 			return fmt.Errorf("providers[%d]: invalid type %q", i, t)
 		}
 
 		baseURL := strings.TrimSpace(p.BaseURL)
-		if t == "openai_compatible" && baseURL == "" {
-			return fmt.Errorf("providers[%d]: base_url is required for openai_compatible", i)
+		if (t == "openai_compatible" || t == "moonshot") && baseURL == "" {
+			return fmt.Errorf("providers[%d]: base_url is required for %s", i, t)
 		}
 		if baseURL != "" {
 			u, err := url.Parse(baseURL)
