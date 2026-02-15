@@ -85,6 +85,10 @@ function shouldAnimateStandaloneBlock(message: Message, block: MessageBlock): bo
   return hasStandaloneBlockPayload(block);
 }
 
+function isCompactToolBlock(block: MessageBlock): boolean {
+  return block.type === 'tool-call' || block.type === 'shell';
+}
+
 export const MessageBubble: Component<MessageBubbleProps> = (props) => {
   const prefersReducedMotion = readPrefersReducedMotion();
   const [animatedSlots, setAnimatedSlots] = createSignal<Record<number, true>>({});
@@ -127,6 +131,12 @@ export const MessageBubble: Component<MessageBubbleProps> = (props) => {
     return Math.min(blockIndex, IMESSAGE_MAX_STAGGER_INDEX) * IMESSAGE_STAGGER_SECONDS;
   };
 
+  const slotClass = (block: MessageBlock): string =>
+    cn(
+      'chat-message-block-slot',
+      isCompactToolBlock(block) && 'chat-message-block-slot-compact',
+    );
+
   return (
     <div
       class={cn(
@@ -142,7 +152,7 @@ export const MessageBubble: Component<MessageBubbleProps> = (props) => {
           <Show
             when={shouldAnimateSlot(index)}
             fallback={
-              <div class="chat-message-block-slot">
+              <div class={slotClass(block())}>
                 <BlockRenderer
                   block={block()}
                   messageId={props.message.id}
@@ -153,7 +163,7 @@ export const MessageBubble: Component<MessageBubbleProps> = (props) => {
             }
           >
             <Motion.div
-              class="chat-message-block-slot chat-message-block-slot-imessage"
+              class={cn(slotClass(block()), 'chat-message-block-slot-imessage')}
               initial={{ opacity: 0, x: 14, y: 10, scale: 0.96, filter: 'blur(2px)' }}
               animate={{ opacity: 1, x: 0, y: 0, scale: 1, filter: 'blur(0px)' }}
               transition={{

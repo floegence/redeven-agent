@@ -176,7 +176,7 @@
 
 /* Shell block: command highlighting + collapsed output interaction. */
 .chat-shell-block {
-  margin: 0.5rem 0;
+  margin: 0.25rem 0;
   border-radius: 0.625rem;
   overflow: hidden;
   border: 1px solid #2d333b;
@@ -185,6 +185,15 @@
   color: #e6edf3;
   box-shadow: 0 1px 2px rgb(0 0 0 / 0.18);
   transition: border-color 200ms ease, box-shadow 200ms ease;
+}
+
+.chat-tool-call-block {
+  margin: 0.25rem 0;
+}
+
+.chat-message-bubble-assistant > .chat-message-block-slot.chat-message-block-slot-compact {
+  padding-top: 0.375rem;
+  padding-bottom: 0.375rem;
 }
 
 .chat-shell-block * {
