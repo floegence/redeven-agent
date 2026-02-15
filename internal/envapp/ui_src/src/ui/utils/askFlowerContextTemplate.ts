@@ -1,4 +1,5 @@
 import type { AskFlowerContextItem, AskFlowerIntent, AskFlowerIntentMode } from '../pages/askFlowerIntent';
+import { resolveSuggestedWorkingDirAbsolute } from './askFlowerPath';
 
 function sourceLabel(source: AskFlowerIntent['source']): string {
   if (source === 'file_browser') return 'file browser';
@@ -58,7 +59,11 @@ export function buildAskFlowerDraftMarkdown(params: {
   }
 
   if (includeSuggestedWorkingDir) {
-    const suggested = String(intent.suggestedWorkingDir ?? '').trim();
+    const suggested = resolveSuggestedWorkingDirAbsolute({
+      suggestedWorkingDirAbs: intent.suggestedWorkingDirAbs,
+      suggestedWorkingDirVirtual: intent.suggestedWorkingDirVirtual,
+      fsRootAbs: intent.fsRootAbs,
+    });
     if (suggested) {
       sections.push(`Suggested working directory: \`${suggested}\``);
     }
