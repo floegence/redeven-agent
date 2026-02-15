@@ -2,6 +2,7 @@ import { For, Show, createEffect, createMemo, createSignal, onCleanup } from 'so
 import { Button, FloatingWindow } from '@floegence/floe-webapp-core/ui';
 import type { AskFlowerComposerAnchor } from '../pages/EnvContext';
 import type { AskFlowerContextItem, AskFlowerIntent } from '../pages/askFlowerIntent';
+import { resolveSuggestedWorkingDirAbsolute } from '../utils/askFlowerPath';
 
 const WINDOW_DEFAULT_SIZE = { width: 620, height: 420 };
 const WINDOW_MIN_SIZE = { width: 420, height: 320 };
@@ -84,7 +85,11 @@ export function AskFlowerComposerWindow(props: AskFlowerComposerWindowProps) {
       lines.push(...intent.contextItems.map((item) => contextLine(item)));
     }
 
-    const suggestedWorkingDir = String(intent.suggestedWorkingDir ?? '').trim();
+    const suggestedWorkingDir = resolveSuggestedWorkingDirAbsolute({
+      suggestedWorkingDirAbs: intent.suggestedWorkingDirAbs,
+      suggestedWorkingDirVirtual: intent.suggestedWorkingDirVirtual,
+      fsRootAbs: intent.fsRootAbs,
+    });
     if (suggestedWorkingDir) {
       lines.push(`Suggested working directory: ${suggestedWorkingDir}`);
     }

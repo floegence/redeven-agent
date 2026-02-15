@@ -38,7 +38,12 @@ import { normalizeThreadTodosView, normalizeWriteTodosToolView, todoStatusLabel,
 import { hasRWXPermissions } from './aiPermissions';
 import type { AskFlowerIntent } from './askFlowerIntent';
 import { buildAskFlowerDraftMarkdown, mergeAskFlowerDraft } from '../utils/askFlowerContextTemplate';
-import { normalizeVirtualPath as normalizeAskFlowerVirtualPath } from '../utils/askFlowerPath';
+import {
+  absolutePathToVirtualPath,
+  normalizeAbsolutePath as normalizeAskFlowerAbsolutePath,
+  resolveSuggestedWorkingDirAbsolute,
+  virtualPathToAbsolutePath,
+} from '../utils/askFlowerPath';
 
 // ---- Working dir picker (directory tree utilities) ----
 
@@ -97,25 +102,15 @@ function withChildren(tree: FileItem[], folderPath: string, children: FileItem[]
 }
 
 function virtualToRealPath(virtualPath: string, rootAbs?: string): string {
-  const vp = normalizeVirtualPath(virtualPath);
-  const root = String(rootAbs ?? '').trim().replace(/\/+$/, '') || '';
-  if (!root) return vp;
-  if (vp === '/') return root;
-  if (root === '/') return vp;
-  return root + vp;
+  const root = String(rootAbs ?? '').trim();
+  if (!root) return normalizeVirtualPath(virtualPath);
+  return virtualPathToAbsolutePath(virtualPath, root) || normalizeVirtualPath(virtualPath);
 }
 
 function realToVirtualPath(realPath: string, rootAbs?: string): string {
-  const root = String(rootAbs ?? '').trim().replace(/\/+$/, '') || '';
-  const p = String(realPath ?? '').trim();
-  if (!p) return '/';
+  const root = String(rootAbs ?? '').trim();
   if (!root) return '/';
-  if (root === '/') return normalizeVirtualPath(p);
-  if (p === root) return '/';
-  if (p.startsWith(root + '/')) {
-    return normalizeVirtualPath(p.slice(root.length));
-  }
-  return '/';
+  return absolutePathToVirtualPath(realPath, root);
 }
 
 function toUserDisplayPath(realPath: string, rootAbs?: string): string {
@@ -1003,6 +998,7 @@ export function EnvAIPage() {
   let followScrollRafPending = false;
   let scrollerListenerEl: HTMLElement | null = null;
   let scrollerListenerCleanup: (() => void) | null = null;
+  let draftWorkingDirInitializedForHome = false;
 
   createEffect(() => {
     if (!protocol.client()) return;
@@ -1017,12 +1013,61 @@ export function EnvAIPage() {
     })();
   });
 
+  const validateWorkingDirSilently = async (workingDir: string): Promise<string> => {
+    const value = String(workingDir ?? '').trim();
+    if (!value) return '';
+    try {
+      const resp = await fetchGatewayJSON<Readonly<{ working_dir: string }>>('/_redeven_proxy/api/ai/validate_working_dir', {
+        method: 'POST',
+        body: JSON.stringify({ working_dir: value }),
+      });
+      return String(resp?.working_dir ?? '').trim();
+    } catch {
+      return '';
+    }
+  };
+
   createEffect(() => {
-    const hp = String(homePath() ?? '').trim();
-    if (!hp) return;
-    const current = String(ai.draftWorkingDir() ?? '').trim();
-    if (current) return;
-    ai.setDraftWorkingDir(hp);
+    env.env_id();
+    draftWorkingDirInitializedForHome = false;
+  });
+
+  createEffect(() => {
+    if (draftWorkingDirInitializedForHome) return;
+    if (protocol.status() !== 'connected' || !ai.aiEnabled() || !canRWXReady()) return;
+
+    const root = normalizeAskFlowerAbsolutePath(String(homePath() ?? '').trim());
+    if (!root) return;
+
+    draftWorkingDirInitializedForHome = true;
+    const currentRaw = String(ai.draftWorkingDir() ?? '').trim();
+    if (!currentRaw) {
+      ai.setDraftWorkingDir(root);
+      return;
+    }
+
+    const normalizedCurrent = normalizeAskFlowerAbsolutePath(currentRaw);
+    const currentCandidate = normalizedCurrent || currentRaw;
+    void (async () => {
+      const validCurrent = await validateWorkingDirSilently(currentCandidate);
+      if (validCurrent) {
+        if (validCurrent !== currentRaw) {
+          ai.setDraftWorkingDir(validCurrent);
+        }
+        return;
+      }
+
+      const legacyCandidate = virtualToRealPath(currentRaw, root);
+      if (legacyCandidate && legacyCandidate !== currentRaw) {
+        const validLegacy = await validateWorkingDirSilently(legacyCandidate);
+        if (validLegacy) {
+          ai.setDraftWorkingDir(validLegacy);
+          return;
+        }
+      }
+
+      ai.setDraftWorkingDir(root);
+    })();
   });
 
   const getMessageListScroller = () =>
@@ -1247,14 +1292,18 @@ export function EnvAIPage() {
     const inputApi = chatInputApi();
     if (!inputApi) return false;
 
-    const suggestedWorkingDir = String(intent.suggestedWorkingDir ?? '').trim();
-    const normalizedSuggested = suggestedWorkingDir ? normalizeAskFlowerVirtualPath(suggestedWorkingDir) : '';
-    const includeSuggestedWorkingDir = workingDirLocked() && !!normalizedSuggested;
+    const suggestedWorkingDirAbs = resolveSuggestedWorkingDirAbsolute({
+      suggestedWorkingDirAbs: intent.suggestedWorkingDirAbs,
+      suggestedWorkingDirVirtual: intent.suggestedWorkingDirVirtual,
+      fsRootAbs: intent.fsRootAbs,
+      fallbackFsRootAbs: homePath(),
+    });
+    const includeSuggestedWorkingDir = workingDirLocked() && !!suggestedWorkingDirAbs;
 
     const draftText = buildAskFlowerDraftMarkdown({
       intent: {
         ...intent,
-        suggestedWorkingDir: normalizedSuggested || undefined,
+        suggestedWorkingDirAbs: suggestedWorkingDirAbs || undefined,
       },
       includeSuggestedWorkingDir,
     });
@@ -1267,11 +1316,11 @@ export function EnvAIPage() {
       inputApi.addAttachmentFiles(intent.pendingAttachments);
     }
 
-    if (normalizedSuggested) {
+    if (suggestedWorkingDirAbs) {
       if (workingDirLocked()) {
-        notify.info('Working directory locked', `Suggested: ${normalizedSuggested}`);
+        notify.info('Working directory locked', `Suggested: ${suggestedWorkingDirAbs}`);
       } else {
-        ai.setDraftWorkingDir(normalizedSuggested);
+        ai.setDraftWorkingDir(suggestedWorkingDirAbs);
       }
     }
 
