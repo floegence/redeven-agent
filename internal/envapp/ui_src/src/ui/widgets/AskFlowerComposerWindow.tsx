@@ -1,5 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from 'solid-js';
 import { Button, FloatingWindow } from '@floegence/floe-webapp-core/ui';
+import { ChevronDown, ChevronUp, Folder, FileText, Paperclip, Terminal, Send } from '@floegence/floe-webapp-core/icons';
 import type { AskFlowerComposerAnchor } from '../pages/EnvContext';
 import type { AskFlowerContextItem, AskFlowerIntent } from '../pages/askFlowerIntent';
 import { resolveSuggestedWorkingDirAbsolute } from '../utils/askFlowerPath';
@@ -24,24 +25,13 @@ function clamp(value: number, min: number, max: number): number {
 type WindowSizing = {
   compact: boolean;
   margin: number;
-  defaultSize: {
-    width: number;
-    height: number;
-  };
-  minSize: {
-    width: number;
-    height: number;
-  };
-  maxSize: {
-    width: number;
-    height: number;
-  };
+  defaultSize: { width: number; height: number };
+  minSize: { width: number; height: number };
+  maxSize: { width: number; height: number };
 };
 
 function currentViewportSize(): { width: number; height: number } {
-  if (typeof window === 'undefined') {
-    return { width: 1440, height: 900 };
-  }
+  if (typeof window === 'undefined') return { width: 1440, height: 900 };
   return {
     width: Math.max(320, window.innerWidth),
     height: Math.max(320, window.innerHeight),
@@ -49,34 +39,28 @@ function currentViewportSize(): { width: number; height: number } {
 }
 
 function resolveWindowSizing(viewport: { width: number; height: number }): WindowSizing {
-  const compact = viewport.width < 900;
-  const margin = viewport.width < 640 ? WINDOW_VIEWPORT_MARGIN_MOBILE : WINDOW_VIEWPORT_MARGIN_DESKTOP;
+  const compact = viewport.width < 640;
+  const margin = compact ? WINDOW_VIEWPORT_MARGIN_MOBILE : WINDOW_VIEWPORT_MARGIN_DESKTOP;
   const maxWidth = Math.max(280, viewport.width - margin * 2);
   const maxHeight = Math.max(280, viewport.height - margin * 2);
-  const defaultWidth = compact ? Math.min(720, maxWidth) : Math.min(920, maxWidth);
-  const defaultHeight = compact ? Math.min(660, maxHeight) : Math.min(730, maxHeight);
-  const minWidth = Math.min(compact ? 280 : 560, maxWidth);
-  const minHeight = Math.min(compact ? 280 : 420, maxHeight);
+  const defaultWidth = compact ? Math.min(420, maxWidth) : Math.min(560, maxWidth);
+  const defaultHeight = compact ? Math.min(400, maxHeight) : Math.min(480, maxHeight);
+  const minWidth = Math.min(compact ? 280 : 380, maxWidth);
+  const minHeight = Math.min(compact ? 260 : 340, maxHeight);
 
   return {
     compact,
     margin,
-    defaultSize: {
-      width: defaultWidth,
-      height: defaultHeight,
-    },
-    minSize: {
-      width: minWidth,
-      height: minHeight,
-    },
-    maxSize: {
-      width: maxWidth,
-      height: maxHeight,
-    },
+    defaultSize: { width: defaultWidth, height: defaultHeight },
+    minSize: { width: minWidth, height: minHeight },
+    maxSize: { width: maxWidth, height: maxHeight },
   };
 }
 
-function toWindowPosition(anchor: AskFlowerComposerAnchor | null | undefined, sizing: WindowSizing): { x: number; y: number } | undefined {
+function toWindowPosition(
+  anchor: AskFlowerComposerAnchor | null | undefined,
+  sizing: WindowSizing,
+): { x: number; y: number } | undefined {
   if (!anchor) return undefined;
   if (typeof window === 'undefined') return undefined;
 
@@ -94,49 +78,33 @@ function toWindowPosition(anchor: AskFlowerComposerAnchor | null | undefined, si
 }
 
 function sourceLabel(source: AskFlowerIntent['source']): string {
-  if (source === 'file_browser') return 'File Browser';
-  if (source === 'file_preview') return 'File Preview';
+  if (source === 'file_browser') return 'Files';
+  if (source === 'file_preview') return 'Preview';
   return 'Terminal';
 }
 
-function contextLine(item: AskFlowerContextItem): string {
+// Build a compact chip label for a single context item.
+function contextChipLabel(item: AskFlowerContextItem): string {
   if (item.kind === 'file_path') {
-    if (item.isDirectory) return `Directory: ${item.path}`;
-    return `File: ${item.path}`;
+    const segments = item.path.split('/');
+    const name = segments[segments.length - 1] || item.path;
+    return item.isDirectory ? name : name;
   }
   if (item.kind === 'file_selection') {
-    return `Selected ${Math.max(0, item.selectionChars)} chars from ${item.path}`;
+    const segments = item.path.split('/');
+    const name = segments[segments.length - 1] || item.path;
+    return `${name} (${item.selectionChars} chars)`;
   }
-
-  const workingDir = String(item.workingDir ?? '').trim() || '/';
-  if (Math.max(0, item.selectionChars) > 0) {
-    return `Selected ${Math.max(0, item.selectionChars)} terminal chars (working directory: ${workingDir})`;
+  if (item.selectionChars > 0) {
+    return `${item.selectionChars} chars selected`;
   }
-  return `Terminal working directory: ${workingDir}`;
+  return item.workingDir || '/';
 }
 
-function attachmentLine(files: File[]): string | null {
-  if (files.length <= 0) return null;
-  if (files.length === 1) return `Queued attachment: ${files[0]?.name ?? '1 file'}`;
-  return `Queued attachments: ${files.length} files`;
-}
-
-function summarizeContextItems(items: AskFlowerContextItem[]): { filePaths: number; fileSelections: number; terminalSelections: number } {
-  let filePaths = 0;
-  let fileSelections = 0;
-  let terminalSelections = 0;
-  for (const item of items) {
-    if (item.kind === 'file_path') {
-      filePaths += 1;
-      continue;
-    }
-    if (item.kind === 'file_selection') {
-      fileSelections += 1;
-      continue;
-    }
-    terminalSelections += 1;
-  }
-  return { filePaths, fileSelections, terminalSelections };
+function contextChipIcon(item: AskFlowerContextItem): 'folder' | 'file' | 'terminal' {
+  if (item.kind === 'file_path') return item.isDirectory ? 'folder' : 'file';
+  if (item.kind === 'file_selection') return 'file';
+  return 'terminal';
 }
 
 function isPointerInsideComposer(event: PointerEvent): boolean {
@@ -146,13 +114,16 @@ function isPointerInsideComposer(event: PointerEvent): boolean {
       return true;
     }
   }
-
   const target = event.target;
-  if (target instanceof Element) {
-    return !!target.closest('.ask-flower-composer-window');
-  }
-
+  if (target instanceof Element) return !!target.closest('.ask-flower-composer-window');
   return false;
+}
+
+// Truncate a path to the last N segments for display.
+function truncatePath(fullPath: string, maxSegments: number = 2): string {
+  const segments = fullPath.split('/').filter(Boolean);
+  if (segments.length <= maxSegments) return fullPath;
+  return '.../' + segments.slice(-maxSegments).join('/');
 }
 
 export function AskFlowerComposerWindow(props: AskFlowerComposerWindowProps) {
@@ -160,17 +131,14 @@ export function AskFlowerComposerWindow(props: AskFlowerComposerWindowProps) {
   const [validationError, setValidationError] = createSignal('');
   const [sending, setSending] = createSignal(false);
   const [viewport, setViewport] = createSignal(currentViewportSize());
+  const [detailsOpen, setDetailsOpen] = createSignal(false);
   let textareaEl: HTMLTextAreaElement | undefined;
 
   onMount(() => {
-    const syncViewport = () => {
-      setViewport(currentViewportSize());
-    };
-
+    const syncViewport = () => setViewport(currentViewportSize());
     syncViewport();
     window.addEventListener('resize', syncViewport);
     window.addEventListener('orientationchange', syncViewport);
-
     onCleanup(() => {
       window.removeEventListener('resize', syncViewport);
       window.removeEventListener('orientationchange', syncViewport);
@@ -178,42 +146,7 @@ export function AskFlowerComposerWindow(props: AskFlowerComposerWindowProps) {
   });
 
   const windowSizing = createMemo(() => resolveWindowSizing(viewport()));
-  const compactMode = createMemo(() => windowSizing().compact);
   const position = createMemo(() => toWindowPosition(props.anchor ?? null, windowSizing()));
-
-  const contextLines = createMemo(() => {
-    const intent = props.intent;
-    if (!intent) return [] as string[];
-
-    const lines: string[] = [`Source: ${sourceLabel(intent.source)}`];
-    if (intent.contextItems.length > 0) {
-      lines.push(...intent.contextItems.map((item) => contextLine(item)));
-    }
-
-    const suggestedWorkingDir = resolveSuggestedWorkingDirAbsolute({
-      suggestedWorkingDirAbs: intent.suggestedWorkingDirAbs,
-      suggestedWorkingDirVirtual: intent.suggestedWorkingDirVirtual,
-      fsRootAbs: intent.fsRootAbs,
-    });
-    if (suggestedWorkingDir) {
-      lines.push(`Suggested working directory: ${suggestedWorkingDir}`);
-    }
-
-    const attachments = attachmentLine(intent.pendingAttachments);
-    if (attachments) {
-      lines.push(attachments);
-    }
-
-    return lines;
-  });
-
-  const contextSummary = createMemo(() => {
-    const intent = props.intent;
-    if (!intent) {
-      return { filePaths: 0, fileSelections: 0, terminalSelections: 0 };
-    }
-    return summarizeContextItems(intent.contextItems);
-  });
 
   const suggestedWorkingDir = createMemo(() => {
     const intent = props.intent;
@@ -241,11 +174,17 @@ export function AskFlowerComposerWindow(props: AskFlowerComposerWindowProps) {
       .filter((note) => !!note);
   });
 
-  const promptCharCount = createMemo(() => String(userPrompt() ?? '').trim().length);
+  // Total count of context items + attachments for the toggle label.
+  const contextCount = createMemo(() => {
+    const intent = props.intent;
+    if (!intent) return 0;
+    return intent.contextItems.length + intent.pendingAttachments.length;
+  });
 
   const resetDraft = (intent: AskFlowerIntent | null) => {
     setValidationError('');
     setSending(false);
+    setDetailsOpen(false);
     setUserPrompt(String(intent?.userPrompt ?? '').trim());
     requestAnimationFrame(() => {
       textareaEl?.focus();
@@ -267,28 +206,23 @@ export function AskFlowerComposerWindow(props: AskFlowerComposerWindowProps) {
 
   createEffect(() => {
     if (!props.open) return;
-
     const onPointerDown = (event: PointerEvent) => {
       if (sending()) return;
       if (isPointerInsideComposer(event)) return;
       props.onClose();
     };
-
     window.addEventListener('pointerdown', onPointerDown, true);
-    onCleanup(() => {
-      window.removeEventListener('pointerdown', onPointerDown, true);
-    });
+    onCleanup(() => window.removeEventListener('pointerdown', onPointerDown, true));
   });
 
   const submit = async () => {
     if (sending()) return;
     const trimmedPrompt = String(userPrompt()).trim();
     if (!trimmedPrompt) {
-      setValidationError('Please enter your question before sending.');
+      setValidationError('Please enter a question.');
       requestAnimationFrame(() => textareaEl?.focus());
       return;
     }
-
     setSending(true);
     try {
       await props.onSend(trimmedPrompt);
@@ -314,144 +248,148 @@ export function AskFlowerComposerWindow(props: AskFlowerComposerWindowProps) {
           class="ask-flower-composer-window"
           zIndex={130}
           footer={(
-            <>
-              <Button variant="ghost" onClick={props.onClose} disabled={sending()}>
-                Cancel
-              </Button>
-              <Button variant="primary" onClick={() => void submit()} disabled={sending()}>
-                {sending() ? 'Sending...' : 'Send'}
-              </Button>
-            </>
+            <div class="flex w-full items-center justify-between">
+              <span class="text-[11px] text-muted-foreground select-none">
+                {sending() ? 'Sending...' : '\u2318/Ctrl + \u23CE'}
+              </span>
+              <div class="flex items-center gap-2">
+                <Button variant="ghost" size="sm" onClick={props.onClose} disabled={sending()}>
+                  Cancel
+                </Button>
+                <Button variant="primary" size="sm" onClick={() => void submit()} disabled={sending()}>
+                  <Send class="size-3.5" />
+                  <span class="ml-1.5">Send</span>
+                </Button>
+              </div>
+            </div>
           )}
         >
-          <div class="h-full min-h-0 flex flex-col gap-3 sm:gap-4">
-            <div class="rounded-2xl border border-primary/20 bg-gradient-to-br from-primary/12 via-primary/[0.06] to-background px-3 py-3 sm:px-4 sm:py-4 shadow-sm">
-              <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                <div class="space-y-1">
-                  <div class="text-sm font-semibold text-foreground">Ask exactly what you need</div>
-                  <div class="text-xs text-muted-foreground">
-                    Flower will include your selected context automatically.
-                  </div>
-                </div>
-                <div class="inline-flex w-fit items-center rounded-full border border-primary/25 bg-primary/10 px-3 py-1 text-[11px] font-medium text-primary">
+          <div class="h-full min-h-0 flex flex-col">
+            {/* ── Textarea area ── */}
+            <div class="flex-1 min-h-0 flex flex-col px-0.5">
+              <textarea
+                ref={textareaEl}
+                id={`ask-flower-prompt-${intent.id}`}
+                class="flex-1 min-h-[80px] w-full resize-none rounded-lg border-none bg-transparent px-2 py-2 text-sm leading-relaxed text-foreground placeholder:text-muted-foreground/60 focus:outline-none"
+                value={userPrompt()}
+                placeholder="Ask Flower anything..."
+                disabled={sending()}
+                onInput={(event) => {
+                  setUserPrompt(event.currentTarget.value);
+                  if (validationError()) setValidationError('');
+                }}
+                onKeyDown={(event) => {
+                  if (event.isComposing) return;
+                  if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+                    event.preventDefault();
+                    void submit();
+                  }
+                }}
+              />
+              <Show when={validationError()}>
+                <div class="px-2 pb-1 text-[11px] text-error">{validationError()}</div>
+              </Show>
+            </div>
+
+            {/* ── Context chips & details ── */}
+            <div class="shrink-0 border-t border-border/50 pt-2.5 pb-0.5 px-1">
+              {/* Inline context chips */}
+              <div class="flex flex-wrap items-center gap-1.5 px-1">
+                <span class="text-[11px] font-medium text-muted-foreground/70 select-none mr-0.5">Context</span>
+
+                <For each={intent.contextItems}>
+                  {(item) => {
+                    const icon = contextChipIcon(item);
+                    return (
+                      <span class="inline-flex items-center gap-1 rounded-md bg-muted/40 px-1.5 py-0.5 text-[11px] text-muted-foreground max-w-[180px]">
+                        {icon === 'folder' && <Folder class="size-3 shrink-0 text-muted-foreground/60" />}
+                        {icon === 'file' && <FileText class="size-3 shrink-0 text-muted-foreground/60" />}
+                        {icon === 'terminal' && <Terminal class="size-3 shrink-0 text-muted-foreground/60" />}
+                        <span class="truncate">{contextChipLabel(item)}</span>
+                      </span>
+                    );
+                  }}
+                </For>
+
+                <Show when={attachmentNames().length > 0}>
+                  <span class="inline-flex items-center gap-1 rounded-md bg-muted/40 px-1.5 py-0.5 text-[11px] text-muted-foreground">
+                    <Paperclip class="size-3 shrink-0 text-muted-foreground/60" />
+                    <span>{attachmentNames().length === 1 ? attachmentNames()[0] : `${attachmentNames().length} files`}</span>
+                  </span>
+                </Show>
+
+                <Show when={suggestedWorkingDir()}>
+                  <span class="inline-flex items-center gap-1 rounded-md bg-muted/40 px-1.5 py-0.5 text-[11px] font-mono text-muted-foreground max-w-[200px]">
+                    <Folder class="size-3 shrink-0 text-muted-foreground/60" />
+                    <span class="truncate">{truncatePath(suggestedWorkingDir())}</span>
+                  </span>
+                </Show>
+
+                {/* Source badge */}
+                <span class="inline-flex items-center rounded-md bg-primary/8 px-1.5 py-0.5 text-[11px] font-medium text-primary/70">
                   {sourceLabel(intent.source)}
-                </div>
+                </span>
+
+                {/* Toggle for details */}
+                <Show when={contextCount() > 0 || cleanedNotes().length > 0}>
+                  <button
+                    type="button"
+                    class="ml-auto inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[11px] text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/30 transition-colors"
+                    onClick={() => setDetailsOpen((prev) => !prev)}
+                  >
+                    {detailsOpen() ? <ChevronUp class="size-3" /> : <ChevronDown class="size-3" />}
+                  </button>
+                </Show>
               </div>
 
-              <div class="mt-3 rounded-xl border border-border/70 bg-background/90 p-3 sm:p-4 shadow-inner">
-                <label class="text-xs font-medium text-foreground" for={`ask-flower-user-prompt-${intent.id}`}>
-                  Your question
-                </label>
-                <textarea
-                  ref={textareaEl}
-                  id={`ask-flower-user-prompt-${intent.id}`}
-                  class="mt-2 w-full min-h-[150px] sm:min-h-[190px] max-h-[42vh] resize-y rounded-xl border border-border/80 bg-background px-3.5 py-3 text-sm leading-6 text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                  value={userPrompt()}
-                  placeholder="What do you want Flower to help you with?"
-                  disabled={sending()}
-                  onInput={(event) => {
-                    setUserPrompt(event.currentTarget.value);
-                    if (validationError()) {
-                      setValidationError('');
-                    }
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.isComposing) return;
-                    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
-                      event.preventDefault();
-                      void submit();
-                    }
-                  }}
-                />
-                <div class="mt-2 flex items-center gap-2 text-[11px]">
-                  <Show when={validationError()}>
-                    <span class="text-error">{validationError()}</span>
+              {/* Expandable detail panel */}
+              <Show when={detailsOpen()}>
+                <div class="mt-2 mx-1 max-h-[28vh] overflow-auto rounded-lg bg-muted/15 px-2.5 py-2 space-y-2">
+                  <For each={intent.contextItems}>
+                    {(item) => (
+                      <div class="text-[11px] text-muted-foreground break-all leading-relaxed">
+                        <Show when={item.kind === 'file_path' && item.kind === 'file_path'}>
+                          <span class="text-foreground/70">
+                            {(item as Extract<AskFlowerContextItem, { kind: 'file_path' }>).isDirectory ? 'Dir' : 'File'}:
+                          </span>{' '}
+                          {(item as Extract<AskFlowerContextItem, { kind: 'file_path' }>).path}
+                        </Show>
+                        <Show when={item.kind === 'file_selection'}>
+                          <span class="text-foreground/70">Selection:</span>{' '}
+                          {(item as Extract<AskFlowerContextItem, { kind: 'file_selection' }>).selectionChars} chars from{' '}
+                          {(item as Extract<AskFlowerContextItem, { kind: 'file_selection' }>).path}
+                        </Show>
+                        <Show when={item.kind === 'terminal_selection'}>
+                          <span class="text-foreground/70">Terminal:</span>{' '}
+                          {(item as Extract<AskFlowerContextItem, { kind: 'terminal_selection' }>).selectionChars > 0
+                            ? `${(item as Extract<AskFlowerContextItem, { kind: 'terminal_selection' }>).selectionChars} chars`
+                            : (item as Extract<AskFlowerContextItem, { kind: 'terminal_selection' }>).workingDir || '/'}
+                        </Show>
+                      </div>
+                    )}
+                  </For>
+
+                  <Show when={suggestedWorkingDir()}>
+                    <div class="text-[11px] text-muted-foreground break-all">
+                      <span class="text-foreground/70">Working dir:</span>{' '}
+                      <span class="font-mono">{suggestedWorkingDir()}</span>
+                    </div>
                   </Show>
-                  <span class="ml-auto text-muted-foreground">{promptCharCount()} chars</span>
+
+                  <Show when={attachmentNames().length > 0}>
+                    <div class="text-[11px] text-muted-foreground">
+                      <span class="text-foreground/70">Attachments:</span>{' '}
+                      {attachmentNames().join(', ')}
+                    </div>
+                  </Show>
+
+                  <For each={cleanedNotes()}>
+                    {(note) => (
+                      <div class="text-[11px] text-muted-foreground/80 italic break-words">{note}</div>
+                    )}
+                  </For>
                 </div>
-              </div>
-            </div>
-
-            <div class="min-h-0 flex-1 overflow-auto pr-0.5">
-              <div class="grid grid-cols-1 gap-3 xl:grid-cols-2">
-                <div class="rounded-xl border border-border/70 bg-card/70 p-3 sm:p-3.5">
-                  <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Context overview</div>
-                  <div class="mt-2 flex flex-wrap gap-2">
-                    <div class="rounded-full border border-border bg-muted/35 px-2.5 py-1 text-[11px] text-muted-foreground">
-                      File paths: {contextSummary().filePaths}
-                    </div>
-                    <div class="rounded-full border border-border bg-muted/35 px-2.5 py-1 text-[11px] text-muted-foreground">
-                      File selections: {contextSummary().fileSelections}
-                    </div>
-                    <div class="rounded-full border border-border bg-muted/35 px-2.5 py-1 text-[11px] text-muted-foreground">
-                      Terminal context: {contextSummary().terminalSelections}
-                    </div>
-                  </div>
-
-                  <div class="mt-3 max-h-[26vh] sm:max-h-[30vh] overflow-auto rounded-lg border border-border/60 bg-muted/20 p-2.5">
-                    <Show
-                      when={contextLines().length > 0}
-                      fallback={<div class="text-xs text-muted-foreground">No context lines available.</div>}
-                    >
-                      <ul class="space-y-2">
-                        <For each={contextLines()}>
-                          {(line) => (
-                            <li class="rounded-md border border-border/50 bg-background/80 px-2.5 py-2 text-xs text-foreground/90 break-all">
-                              {line}
-                            </li>
-                          )}
-                        </For>
-                      </ul>
-                    </Show>
-                  </div>
-                </div>
-
-                <div class="rounded-xl border border-border/70 bg-card/70 p-3 sm:p-3.5 flex flex-col gap-3">
-                  <div>
-                    <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Working directory</div>
-                    <div class="mt-1 rounded-lg border border-border/60 bg-muted/20 px-2.5 py-2 text-xs font-mono text-foreground break-all">
-                      {suggestedWorkingDir() || 'Use environment default working directory'}
-                    </div>
-                  </div>
-
-                  <div>
-                    <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Attachments</div>
-                    <div class="mt-1 rounded-lg border border-border/60 bg-muted/20 p-2.5 max-h-[18vh] sm:max-h-[20vh] overflow-auto">
-                      <Show
-                        when={attachmentNames().length > 0}
-                        fallback={<div class="text-xs text-muted-foreground">No attachments queued.</div>}
-                      >
-                        <ul class="space-y-1">
-                          <For each={attachmentNames()}>
-                            {(name) => <li class="text-xs text-foreground break-all">{name}</li>}
-                          </For>
-                        </ul>
-                      </Show>
-                    </div>
-                  </div>
-
-                  <div class="min-h-0 flex-1">
-                    <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Notes</div>
-                    <div class="mt-1 min-h-0 max-h-[20vh] sm:max-h-[24vh] rounded-lg border border-border/60 bg-muted/20 p-2.5 overflow-auto">
-                      <Show
-                        when={cleanedNotes().length > 0}
-                        fallback={<div class="text-xs text-muted-foreground">No extra notes.</div>}
-                      >
-                        <ul class="space-y-1">
-                          <For each={cleanedNotes()}>
-                            {(note) => <li class="text-xs text-muted-foreground break-words">{note}</li>}
-                          </For>
-                        </ul>
-                      </Show>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div class="rounded-lg border border-border/70 bg-background/70 px-3 py-2 text-[11px] text-muted-foreground flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-              <span>Tip: Press Cmd/Ctrl + Enter to send.</span>
-              <span>{sending() ? 'Flower is preparing your request...' : compactMode() ? 'Review and send.' : 'Review the context and send when ready.'}</span>
+              </Show>
             </div>
           </div>
         </FloatingWindow>
