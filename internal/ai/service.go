@@ -121,6 +121,7 @@ type Service struct {
 	memoryExtractor    *contextextractor.MemoryExtractor
 	snapshotCompactor  *contextcompactor.SnapshotCompactor
 	capabilityResolver *contextadapter.Resolver
+	skillManager       *skillManager
 }
 
 type resolvedRunModel struct {
@@ -249,6 +250,10 @@ func NewService(opts Options) (*Service, error) {
 		memoryExtractor:              memoryExtractor,
 		snapshotCompactor:            snapshotCompactor,
 		capabilityResolver:           capabilityResolver,
+		skillManager:                 newSkillManager(strings.TrimSpace(opts.FSRoot), strings.TrimSpace(opts.StateDir)),
+	}
+	if svc.skillManager != nil {
+		svc.skillManager.Discover()
 	}
 	svc.threadMgr = newThreadManager(svc)
 	return svc, nil
@@ -485,6 +490,76 @@ func (s *Service) ListModels() (*ModelsResponse, error) {
 	return out, nil
 }
 
+func (s *Service) skills() (*skillManager, error) {
+	if s == nil {
+		return nil, errors.New("nil service")
+	}
+	s.mu.Lock()
+	mgr := s.skillManager
+	s.mu.Unlock()
+	if mgr == nil {
+		return nil, errors.New("skill manager not ready")
+	}
+	return mgr, nil
+}
+
+func (s *Service) ListSkillsCatalog() (*SkillCatalog, error) {
+	mgr, err := s.skills()
+	if err != nil {
+		return nil, err
+	}
+	catalog := mgr.Catalog()
+	if catalog.CatalogVersion == 0 {
+		catalog = mgr.Reload()
+	}
+	return &catalog, nil
+}
+
+func (s *Service) ReloadSkillsCatalog() (*SkillCatalog, error) {
+	mgr, err := s.skills()
+	if err != nil {
+		return nil, err
+	}
+	catalog := mgr.Reload()
+	return &catalog, nil
+}
+
+func (s *Service) PatchSkillToggles(patches []SkillTogglePatch) (*SkillCatalog, error) {
+	mgr, err := s.skills()
+	if err != nil {
+		return nil, err
+	}
+	catalog, err := mgr.PatchToggles(patches)
+	if err != nil {
+		return nil, err
+	}
+	return &catalog, nil
+}
+
+func (s *Service) CreateSkill(scope string, name string, description string, body string) (*SkillCatalog, error) {
+	mgr, err := s.skills()
+	if err != nil {
+		return nil, err
+	}
+	catalog, err := mgr.Create(scope, name, description, body)
+	if err != nil {
+		return nil, err
+	}
+	return &catalog, nil
+}
+
+func (s *Service) DeleteSkill(scope string, name string) (*SkillCatalog, error) {
+	mgr, err := s.skills()
+	if err != nil {
+		return nil, err
+	}
+	catalog, err := mgr.Delete(scope, name)
+	if err != nil {
+		return nil, err
+	}
+	return &catalog, nil
+}
+
 // NewRunID generates a cryptographically random run id.
 func NewRunID() (string, error) {
 	b := make([]byte, 18)
@@ -668,6 +743,7 @@ func (s *Service) prepareRun(meta *session.Meta, runID string, req RunStartReque
 		UploadsDir:          uploadsDir,
 		ThreadsDB:           db,
 		PersistOpTimeout:    persistTO,
+		SkillManager:        s.skillManager,
 		OnStreamEvent: func(ev any) {
 			s.broadcastStreamEvent(endpointID, threadID, runID, ev)
 		},
