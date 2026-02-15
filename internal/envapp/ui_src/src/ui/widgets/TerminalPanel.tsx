@@ -33,7 +33,7 @@ import { useEnvContext } from '../pages/EnvContext';
 import { isPermissionDeniedError } from '../utils/permission';
 import { PermissionEmptyState } from './PermissionEmptyState';
 import type { AskFlowerIntent } from '../pages/askFlowerIntent';
-import { normalizeVirtualPath as normalizeAskFlowerVirtualPath } from '../utils/askFlowerPath';
+import { normalizeAbsolutePath as normalizeAskFlowerAbsolutePath } from '../utils/askFlowerPath';
 
 type session_loading_state = 'idle' | 'initializing' | 'attaching' | 'loading_history';
 
@@ -1105,7 +1105,7 @@ function TerminalPanelInner(props: TerminalPanelInnerProps = {}) {
     if (!sid) return;
 
     const session = sessions().find((item) => item.id === sid);
-    const workingDir = normalizeAskFlowerVirtualPath(String(session?.workingDir ?? '').trim() || '/');
+    const workingDir = normalizeAskFlowerAbsolutePath(String(session?.workingDir ?? '').trim()) || '/';
 
     let selection = '';
     try {
@@ -1180,7 +1180,7 @@ function TerminalPanelInner(props: TerminalPanelInnerProps = {}) {
       id: crypto.randomUUID(),
       source: 'terminal',
       mode: 'append',
-      suggestedWorkingDir: menu.workingDir,
+      suggestedWorkingDirAbs: menu.workingDir,
       contextItems,
       pendingAttachments,
       notes,

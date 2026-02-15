@@ -40,7 +40,7 @@ import { useRedevenRpc } from './protocol/redeven_v1';
 import { AuditLogDialog } from './widgets/AuditLogDialog';
 import { AskFlowerComposerWindow } from './widgets/AskFlowerComposerWindow';
 import { buildAskFlowerDraftMarkdown } from './utils/askFlowerContextTemplate';
-import { normalizeVirtualPath as normalizeAskFlowerVirtualPath } from './utils/askFlowerPath';
+import { resolveSuggestedWorkingDirAbsolute } from './utils/askFlowerPath';
 import { fetchGatewayJSON } from './services/gatewayApi';
 import { getSandboxWindowInfo } from './services/sandboxWindowRegistry';
 import {
@@ -255,10 +255,25 @@ export function EnvAppShell() {
     throw new Error('No available model. Configure AI in Settings first.');
   };
 
-  const createAskFlowerThread = async (params: { modelId: string; suggestedWorkingDir: string }): Promise<string> => {
+  const validateAskFlowerWorkingDir = async (workingDir: string): Promise<string> => {
+    const normalizedWorkingDir = String(workingDir ?? '').trim();
+    if (!normalizedWorkingDir) return '';
+
+    const resp = await fetchGatewayJSON<Readonly<{ working_dir: string }>>('/_redeven_proxy/api/ai/validate_working_dir', {
+      method: 'POST',
+      body: JSON.stringify({ working_dir: normalizedWorkingDir }),
+    });
+    const cleaned = String(resp?.working_dir ?? '').trim();
+    if (!cleaned) {
+      throw new Error('Invalid working directory.');
+    }
+    return cleaned;
+  };
+
+  const createAskFlowerThread = async (params: { modelId: string; workingDir: string }): Promise<string> => {
     const body: Record<string, unknown> = { title: '' };
     if (params.modelId) body.model_id = params.modelId;
-    if (params.suggestedWorkingDir) body.working_dir = params.suggestedWorkingDir;
+    if (params.workingDir) body.working_dir = params.workingDir;
 
     const resp = await fetchGatewayJSON<CreateThreadResponse>('/_redeven_proxy/api/ai/threads', {
       method: 'POST',
@@ -292,11 +307,13 @@ export function EnvAppShell() {
 
     try {
       const modelId = await resolveAskFlowerModel();
-      const suggestedWorkingDirRaw = String(intent.suggestedWorkingDir ?? '').trim();
-      const suggestedWorkingDir = suggestedWorkingDirRaw
-        ? normalizeAskFlowerVirtualPath(suggestedWorkingDirRaw)
-        : '';
-      const threadId = await createAskFlowerThread({ modelId, suggestedWorkingDir });
+      const suggestedWorkingDir = resolveSuggestedWorkingDirAbsolute({
+        suggestedWorkingDirAbs: intent.suggestedWorkingDirAbs,
+        suggestedWorkingDirVirtual: intent.suggestedWorkingDirVirtual,
+        fsRootAbs: intent.fsRootAbs,
+      });
+      const validatedWorkingDir = await validateAskFlowerWorkingDir(suggestedWorkingDir);
+      const threadId = await createAskFlowerThread({ modelId, workingDir: validatedWorkingDir });
 
       const uploadedAttachments: Array<{ name: string; mimeType: string; url: string }> = [];
       for (const file of intent.pendingAttachments) {
