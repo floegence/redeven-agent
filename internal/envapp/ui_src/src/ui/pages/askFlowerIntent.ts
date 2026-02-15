@@ -26,7 +26,9 @@ export type AskFlowerIntent = {
   source: AskFlowerIntentSource;
   mode: AskFlowerIntentMode;
   userPrompt?: string;
-  suggestedWorkingDir?: string;
+  suggestedWorkingDirAbs?: string;
+  suggestedWorkingDirVirtual?: string;
+  fsRootAbs?: string;
   contextItems: AskFlowerContextItem[];
   pendingAttachments: File[];
   notes: string[];
