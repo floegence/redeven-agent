@@ -43,9 +43,9 @@ Follow this skill.`
 		t.Fatalf("write skill file: %v", err)
 	}
 
-	mgr := newSkillManager(workspace)
+	mgr := newSkillManager(workspace, workspace)
 	mgr.Discover()
-	list := mgr.List()
+	list := mgr.List("")
 	if len(list) == 0 {
 		t.Fatalf("expected discovered skills")
 	}
@@ -62,7 +62,7 @@ Follow this skill.`
 		t.Fatalf("skill %q not discovered", skillName)
 	}
 
-	activation, alreadyActive, err := mgr.Activate(skillName)
+	activation, alreadyActive, err := mgr.Activate(skillName, "", false)
 	if err != nil {
 		t.Fatalf("Activate: %v", err)
 	}
@@ -73,12 +73,112 @@ Follow this skill.`
 		t.Fatalf("unexpected activation content: %q", activation.Content)
 	}
 
-	_, alreadyActive, err = mgr.Activate(skillName)
+	_, alreadyActive, err = mgr.Activate(skillName, "", false)
 	if err != nil {
 		t.Fatalf("Activate second: %v", err)
 	}
 	if !alreadyActive {
 		t.Fatalf("second activation should be already active")
+	}
+}
+
+func TestSkillManager_ModeAwareFallbackAndToggles(t *testing.T) {
+	t.Parallel()
+
+	workspace := t.TempDir()
+	primaryDir := filepath.Join(workspace, ".redeven", "skills", "mode-skill")
+	fallbackDir := filepath.Join(workspace, ".agents", "skills", "mode-skill")
+	if err := os.MkdirAll(primaryDir, 0o755); err != nil {
+		t.Fatalf("mkdir primary dir: %v", err)
+	}
+	if err := os.MkdirAll(fallbackDir, 0o755); err != nil {
+		t.Fatalf("mkdir fallback dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(primaryDir, "SKILL.md"), []byte(`---
+name: mode-skill
+description: act variant
+mode_hint:
+  - act
+---
+
+# act skill`), 0o600); err != nil {
+		t.Fatalf("write primary skill: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(fallbackDir, "SKILL.md"), []byte(`---
+name: mode-skill
+description: plan variant
+mode_hint:
+  - plan
+---
+
+# plan skill`), 0o600); err != nil {
+		t.Fatalf("write fallback skill: %v", err)
+	}
+
+	mgr := newSkillManager(workspace, workspace)
+	catalog := mgr.Reload()
+	if len(catalog.Skills) < 2 {
+		t.Fatalf("expected at least two catalog skills")
+	}
+
+	actList := mgr.List("act")
+	if len(actList) != 1 || strings.TrimSpace(actList[0].Description) != "act variant" {
+		t.Fatalf("unexpected act skills: %#v", actList)
+	}
+	planList := mgr.List("plan")
+	if len(planList) != 1 || strings.TrimSpace(planList[0].Description) != "plan variant" {
+		t.Fatalf("unexpected plan skills: %#v", planList)
+	}
+
+	_, err := mgr.PatchToggles([]SkillTogglePatch{{Path: filepath.Join(primaryDir, "SKILL.md"), Enabled: false}})
+	if err != nil {
+		t.Fatalf("PatchToggles disable primary: %v", err)
+	}
+	actList = mgr.List("act")
+	if len(actList) != 0 {
+		t.Fatalf("act list should be empty after disabling primary, got %#v", actList)
+	}
+	planList = mgr.List("plan")
+	if len(planList) != 1 || strings.TrimSpace(planList[0].Description) != "plan variant" {
+		t.Fatalf("unexpected plan skills after toggle: %#v", planList)
+	}
+}
+
+func TestSkillManager_CreateDeleteAndStatePersistence(t *testing.T) {
+	t.Parallel()
+
+	workspace := t.TempDir()
+	stateDir := t.TempDir()
+	mgr := newSkillManager(workspace, stateDir)
+	if _, err := mgr.Create("workspace", "created-skill", "skill created in test", ""); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	skillPath := filepath.Join(workspace, ".redeven", "skills", "created-skill", "SKILL.md")
+	if _, err := os.Stat(skillPath); err != nil {
+		t.Fatalf("created skill missing: %v", err)
+	}
+
+	if _, err := mgr.PatchToggles([]SkillTogglePatch{{Path: skillPath, Enabled: false}}); err != nil {
+		t.Fatalf("PatchToggles disable created skill: %v", err)
+	}
+
+	mgr2 := newSkillManager(workspace, stateDir)
+	catalog := mgr2.Reload()
+	foundDisabled := false
+	for _, item := range catalog.Skills {
+		if strings.TrimSpace(item.Path) == skillPath && !item.Enabled {
+			foundDisabled = true
+		}
+	}
+	if !foundDisabled {
+		t.Fatalf("expected persisted disabled state for %s", skillPath)
+	}
+
+	if _, err := mgr2.Delete("workspace", "created-skill"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(workspace, ".redeven", "skills", "created-skill")); !os.IsNotExist(err) {
+		t.Fatalf("created skill directory should be deleted")
 	}
 }
 

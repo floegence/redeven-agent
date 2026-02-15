@@ -59,6 +59,36 @@ type AIConfig = Readonly<{
 }>;
 type AISecretsView = Readonly<{ provider_api_key_set: Record<string, boolean> }>;
 
+type SkillCatalogNotice = Readonly<{
+  name?: string;
+  path?: string;
+  message?: string;
+  winner_path?: string;
+}>;
+
+type SkillCatalogEntry = Readonly<{
+  id: string;
+  name: string;
+  description: string;
+  path: string;
+  scope: string;
+  priority?: number;
+  mode_hints?: string[];
+  allow_implicit_invocation?: boolean;
+  dependencies?: ReadonlyArray<Readonly<{ name?: string; transport?: string; command?: string; url?: string }>>;
+  dependency_state?: string;
+  enabled: boolean;
+  effective: boolean;
+  shadowed_by?: string;
+}>;
+
+type SkillsCatalogResponse = Readonly<{
+  catalog_version: number;
+  skills: SkillCatalogEntry[];
+  conflicts?: SkillCatalogNotice[];
+  errors?: SkillCatalogNotice[];
+}>;
+
 type SettingsResponse = Readonly<{
   config_path: string;
   connection: Readonly<{
@@ -115,6 +145,7 @@ const SETTINGS_NAV_ITEMS: readonly SettingsNavItem[] = [
   { id: 'logging', label: 'Logging', icon: Database },
   { id: 'codespaces', label: 'Codespaces', icon: Code },
   { id: 'permission_policy', label: 'Permission Policy', icon: Shield },
+  { id: 'skills', label: 'Skills', icon: Layers },
   { id: 'ai', label: 'Flower', icon: FlowerIcon },
 ];
 
@@ -220,6 +251,15 @@ function mapToPermissionRows(m: Record<string, PermissionSet> | undefined): Perm
     write: !!m[k]?.write,
     execute: !!m[k]?.execute,
   }));
+}
+
+function skillScopeLabel(scope: string): string {
+  const v = String(scope ?? '').trim().toLowerCase();
+  if (v === 'workspace') return 'Workspace (.redeven)';
+  if (v === 'workspace_agents') return 'Workspace (.agents)';
+  if (v === 'user') return 'User (.redeven)';
+  if (v === 'user_agents') return 'User (.agents)';
+  return v || 'unknown';
 }
 
 // ============================================================================
@@ -769,6 +809,23 @@ export function EnvSettingsPage() {
   const [webSearchKeyDraft, setWebSearchKeyDraft] = createSignal<Record<string, string>>({});
   const [webSearchKeySaving, setWebSearchKeySaving] = createSignal<Record<string, boolean>>({});
 
+  const [skillsCatalog, setSkillsCatalog] = createSignal<SkillsCatalogResponse | null>(null);
+  const [skillsLoading, setSkillsLoading] = createSignal(false);
+  const [skillsReloading, setSkillsReloading] = createSignal(false);
+  const [skillsError, setSkillsError] = createSignal<string | null>(null);
+  const [skillQuery, setSkillQuery] = createSignal('');
+  const [skillScopeFilter, setSkillScopeFilter] = createSignal<'all' | 'workspace' | 'workspace_agents' | 'user' | 'user_agents'>('all');
+  const [skillToggleSaving, setSkillToggleSaving] = createSignal<Record<string, boolean>>({});
+  const [skillCreateOpen, setSkillCreateOpen] = createSignal(false);
+  const [skillCreateScope, setSkillCreateScope] = createSignal<'workspace' | 'workspace_agents' | 'user' | 'user_agents'>('workspace');
+  const [skillCreateName, setSkillCreateName] = createSignal('');
+  const [skillCreateDescription, setSkillCreateDescription] = createSignal('');
+  const [skillCreateBody, setSkillCreateBody] = createSignal('');
+  const [skillCreateSaving, setSkillCreateSaving] = createSignal(false);
+  const [skillDeleteOpen, setSkillDeleteOpen] = createSignal(false);
+  const [skillDeleteSaving, setSkillDeleteSaving] = createSignal(false);
+  const [skillDeleteTarget, setSkillDeleteTarget] = createSignal<SkillCatalogEntry | null>(null);
+
   // JSON editor values
   const [runtimeJSON, setRuntimeJSON] = createSignal('');
   const [loggingJSON, setLoggingJSON] = createSignal('');
@@ -1226,6 +1283,143 @@ export function EnvSettingsPage() {
     }
     void updateWebSearchKey(id, null);
   };
+
+  const filteredSkills = createMemo(() => {
+    const list = skillsCatalog()?.skills ?? [];
+    const q = String(skillQuery() ?? '').trim().toLowerCase();
+    const scope = skillScopeFilter();
+    return list
+      .filter((item) => {
+        if (scope !== 'all' && item.scope !== scope) return false;
+        if (!q) return true;
+        return (
+          String(item.name ?? '').toLowerCase().includes(q) ||
+          String(item.description ?? '').toLowerCase().includes(q) ||
+          String(item.path ?? '').toLowerCase().includes(q)
+        );
+      })
+      .sort((a, b) => {
+        if (!!a.effective !== !!b.effective) return a.effective ? -1 : 1;
+        const pa = Number(a.priority ?? 0);
+        const pb = Number(b.priority ?? 0);
+        if (pa !== pb) return pb - pa;
+        return String(a.name ?? '').localeCompare(String(b.name ?? ''));
+      });
+  });
+
+  const refreshSkillsCatalog = async (forceReload: boolean) => {
+    if (forceReload) setSkillsReloading(true);
+    else setSkillsLoading(true);
+    setSkillsError(null);
+    try {
+      const endpoint = forceReload ? '/_redeven_proxy/api/ai/skills/reload' : '/_redeven_proxy/api/ai/skills';
+      const method = forceReload ? 'POST' : 'GET';
+      const data = await fetchGatewayJSON<SkillsCatalogResponse>(endpoint, { method });
+      setSkillsCatalog(data);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setSkillsError(msg || 'Failed to load skills.');
+    } finally {
+      setSkillsReloading(false);
+      setSkillsLoading(false);
+    }
+  };
+
+  const toggleSkill = async (entry: SkillCatalogEntry, enabled: boolean) => {
+    const path = String(entry.path ?? '').trim();
+    if (!path) return;
+    if (!canAdmin()) {
+      notify.error('Permission denied', 'Admin permission required.');
+      return;
+    }
+    setSkillToggleSaving((prev) => ({ ...prev, [path]: true }));
+    try {
+      const data = await fetchGatewayJSON<SkillsCatalogResponse>('/_redeven_proxy/api/ai/skills/toggles', {
+        method: 'PUT',
+        body: JSON.stringify({ patches: [{ path, enabled }] }),
+      });
+      setSkillsCatalog(data);
+      notify.success('Saved', `Skill ${enabled ? 'enabled' : 'disabled'}.`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      notify.error('Save failed', msg || 'Request failed.');
+    } finally {
+      setSkillToggleSaving((prev) => ({ ...prev, [path]: false }));
+    }
+  };
+
+  const createSkill = async () => {
+    if (!canAdmin()) {
+      notify.error('Permission denied', 'Admin permission required.');
+      return;
+    }
+    const scope = String(skillCreateScope() ?? '').trim();
+    const name = String(skillCreateName() ?? '').trim();
+    const description = String(skillCreateDescription() ?? '').trim();
+    const body = String(skillCreateBody() ?? '').trim();
+    if (!name) {
+      notify.error('Invalid name', 'Skill name is required.');
+      return;
+    }
+    if (!description) {
+      notify.error('Invalid description', 'Skill description is required.');
+      return;
+    }
+    setSkillCreateSaving(true);
+    try {
+      const data = await fetchGatewayJSON<SkillsCatalogResponse>('/_redeven_proxy/api/ai/skills', {
+        method: 'POST',
+        body: JSON.stringify({ scope, name, description, body }),
+      });
+      setSkillsCatalog(data);
+      setSkillCreateOpen(false);
+      setSkillCreateName('');
+      setSkillCreateDescription('');
+      setSkillCreateBody('');
+      notify.success('Created', `Skill "${name}" created.`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      notify.error('Create failed', msg || 'Request failed.');
+    } finally {
+      setSkillCreateSaving(false);
+    }
+  };
+
+  const askDeleteSkill = (entry: SkillCatalogEntry) => {
+    setSkillDeleteTarget(entry);
+    setSkillDeleteOpen(true);
+  };
+
+  const deleteSkill = async () => {
+    const target = skillDeleteTarget();
+    if (!target) return;
+    if (!canAdmin()) {
+      notify.error('Permission denied', 'Admin permission required.');
+      return;
+    }
+    setSkillDeleteSaving(true);
+    try {
+      const data = await fetchGatewayJSON<SkillsCatalogResponse>('/_redeven_proxy/api/ai/skills', {
+        method: 'DELETE',
+        body: JSON.stringify({ scope: target.scope, name: target.name }),
+      });
+      setSkillsCatalog(data);
+      setSkillDeleteOpen(false);
+      setSkillDeleteTarget(null);
+      notify.success('Deleted', `Skill "${target.name}" deleted.`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      notify.error('Delete failed', msg || 'Request failed.');
+    } finally {
+      setSkillDeleteSaving(false);
+    }
+  };
+
+  createEffect(() => {
+    const current = key();
+    if (current == null) return;
+    void refreshSkillsCatalog(false);
+  });
 
   // Reset local state when settings are loaded (but do not overwrite user edits).
   createEffect(() => {
@@ -2427,6 +2621,140 @@ export function EnvSettingsPage() {
           </SettingsCard>
         </div>
 
+        {/* Skills Card */}
+        <div id={settingsSectionElementID('skills')} class="scroll-mt-6">
+          <SettingsCard
+            icon={Layers}
+            title="Skills"
+            description="Manage Flower skills: enable or disable skills, reload catalog, and create or delete local skills."
+            badge={skillsReloading() || skillsLoading() ? 'Loading' : `${skillsCatalog()?.skills?.length ?? 0} skills`}
+            error={skillsError()}
+            actions={
+              <>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void refreshSkillsCatalog(true)}
+                  loading={skillsReloading()}
+                  disabled={!canInteract()}
+                >
+                  Reload
+                </Button>
+                <Button size="sm" variant="default" onClick={() => setSkillCreateOpen(true)} disabled={!canInteract() || !canAdmin()}>
+                  Create Skill
+                </Button>
+              </>
+            }
+          >
+            <div class="space-y-4">
+              <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div class="md:col-span-2">
+                  <FieldLabel>Search</FieldLabel>
+                  <Input
+                    value={skillQuery()}
+                    onInput={(e) => setSkillQuery(e.currentTarget.value)}
+                    placeholder="Search by name, description, or path"
+                    size="sm"
+                    class="w-full"
+                    disabled={!canInteract()}
+                  />
+                </div>
+                <div>
+                  <FieldLabel>Scope</FieldLabel>
+                  <Select
+                    value={skillScopeFilter()}
+                    onChange={(v) => setSkillScopeFilter(v as 'all' | 'workspace' | 'workspace_agents' | 'user' | 'user_agents')}
+                    disabled={!canInteract()}
+                    options={[
+                      { value: 'all', label: 'All scopes' },
+                      { value: 'workspace', label: 'Workspace (.redeven)' },
+                      { value: 'workspace_agents', label: 'Workspace (.agents)' },
+                      { value: 'user', label: 'User (.redeven)' },
+                      { value: 'user_agents', label: 'User (.agents)' },
+                    ]}
+                    class="w-full"
+                  />
+                </div>
+              </div>
+
+              <Show when={skillsLoading()}>
+                <div class="text-xs text-muted-foreground">Loading skills catalog...</div>
+              </Show>
+
+              <Show when={!skillsLoading() && filteredSkills().length > 0} fallback={<p class="text-xs text-muted-foreground italic">No skills found for current filters.</p>}>
+                <div class="space-y-2">
+                  <For each={filteredSkills()}>
+                    {(item) => (
+                      <div class="rounded-lg border border-border bg-muted/20 p-3 space-y-2">
+                        <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                          <div class="min-w-0">
+                            <div class="flex items-center gap-2 flex-wrap">
+                              <div class="text-sm font-semibold text-foreground">{item.name}</div>
+                              <Show when={item.effective}>
+                                <span class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">Effective</span>
+                              </Show>
+                              <Show when={!item.enabled}>
+                                <span class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-warning/10 text-warning border border-warning/20">Disabled</span>
+                              </Show>
+                              <Show when={item.dependency_state === 'degraded'}>
+                                <span class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-warning/10 text-warning border border-warning/20">Dependency degraded</span>
+                              </Show>
+                            </div>
+                            <div class="text-xs text-muted-foreground mt-1">{item.description || 'No description.'}</div>
+                            <div class="text-[11px] text-muted-foreground mt-1 font-mono break-all">{item.path}</div>
+                            <div class="text-[11px] text-muted-foreground mt-1">{skillScopeLabel(item.scope)}</div>
+                            <Show when={item.shadowed_by}>
+                              <div class="text-[11px] text-warning mt-1 break-all">Shadowed by: {item.shadowed_by}</div>
+                            </Show>
+                          </div>
+                          <div class="flex items-center gap-2">
+                            <Checkbox
+                              checked={!!item.enabled}
+                              onChange={(v) => {
+                                void toggleSkill(item, v);
+                              }}
+                              disabled={!canInteract() || !canAdmin() || !!skillToggleSaving()?.[item.path]}
+                              label={item.enabled ? 'Enabled' : 'Disabled'}
+                              size="sm"
+                            />
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              class="text-muted-foreground hover:text-destructive"
+                              onClick={() => askDeleteSkill(item)}
+                              disabled={!canInteract() || !canAdmin() || !!skillToggleSaving()?.[item.path]}
+                            >
+                              Delete
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </For>
+                </div>
+              </Show>
+
+              <Show when={(skillsCatalog()?.conflicts?.length ?? 0) > 0}>
+                <div class="rounded-lg border border-warning/40 bg-warning/10 p-3 space-y-1">
+                  <div class="text-xs font-semibold text-warning">Conflicts detected: {skillsCatalog()?.conflicts?.length ?? 0}</div>
+                  <For each={(skillsCatalog()?.conflicts ?? []).slice(0, 5)}>
+                    {(item) => <div class="text-[11px] text-warning break-all">{item.name}: {item.path}</div>}
+                  </For>
+                </div>
+              </Show>
+
+              <Show when={(skillsCatalog()?.errors?.length ?? 0) > 0}>
+                <div class="rounded-lg border border-destructive/40 bg-destructive/10 p-3 space-y-1">
+                  <div class="text-xs font-semibold text-destructive">Catalog errors: {skillsCatalog()?.errors?.length ?? 0}</div>
+                  <For each={(skillsCatalog()?.errors ?? []).slice(0, 5)}>
+                    {(item) => <div class="text-[11px] text-destructive break-all">{item.path}: {item.message}</div>}
+                  </For>
+                </div>
+              </Show>
+            </div>
+          </SettingsCard>
+        </div>
+
         {/* Flower Card */}
         <div id={settingsSectionElementID('ai')} class="scroll-mt-6">
           <SettingsCard
@@ -2942,6 +3270,76 @@ export function EnvSettingsPage() {
         <div class="space-y-3">
           <p class="text-sm">This will restart the agent and terminate all running activities. Continue?</p>
           <p class="text-xs text-muted-foreground">You will reconnect automatically after the agent comes back online.</p>
+        </div>
+      </ConfirmDialog>
+
+      {/* Create Skill Dialog */}
+      <ConfirmDialog
+        open={skillCreateOpen()}
+        onOpenChange={(open) => setSkillCreateOpen(open)}
+        title="Create skill"
+        confirmText="Create"
+        loading={skillCreateSaving()}
+        onConfirm={() => void createSkill()}
+      >
+        <div class="space-y-3">
+          <div>
+            <FieldLabel>Scope</FieldLabel>
+            <Select
+              value={skillCreateScope()}
+              onChange={(v) => setSkillCreateScope(v as 'workspace' | 'workspace_agents' | 'user' | 'user_agents')}
+              options={[
+                { value: 'workspace', label: 'Workspace (.redeven)' },
+                { value: 'workspace_agents', label: 'Workspace (.agents)' },
+                { value: 'user', label: 'User (.redeven)' },
+                { value: 'user_agents', label: 'User (.agents)' },
+              ]}
+              class="w-full"
+            />
+          </div>
+          <div>
+            <FieldLabel>Name</FieldLabel>
+            <Input value={skillCreateName()} onInput={(e) => setSkillCreateName(e.currentTarget.value)} placeholder="incident-response" size="sm" class="w-full" />
+          </div>
+          <div>
+            <FieldLabel>Description</FieldLabel>
+            <Input
+              value={skillCreateDescription()}
+              onInput={(e) => setSkillCreateDescription(e.currentTarget.value)}
+              placeholder="Brief description"
+              size="sm"
+              class="w-full"
+            />
+          </div>
+          <div>
+            <FieldLabel hint="optional">Initial body</FieldLabel>
+            <textarea
+              class="w-full font-mono text-xs border border-border rounded-lg px-3 py-2.5 bg-muted/30 resize-y focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+              style={{ 'min-height': '7rem' }}
+              value={skillCreateBody()}
+              onInput={(e) => setSkillCreateBody(e.currentTarget.value)}
+              spellcheck={false}
+            />
+          </div>
+        </div>
+      </ConfirmDialog>
+
+      {/* Delete Skill Confirmation Dialog */}
+      <ConfirmDialog
+        open={skillDeleteOpen()}
+        onOpenChange={(open) => {
+          setSkillDeleteOpen(open);
+          if (!open) setSkillDeleteTarget(null);
+        }}
+        title="Delete skill"
+        confirmText="Delete"
+        variant="destructive"
+        loading={skillDeleteSaving()}
+        onConfirm={() => void deleteSkill()}
+      >
+        <div class="space-y-3">
+          <p class="text-sm">Delete this skill permanently?</p>
+          <p class="text-xs text-muted-foreground">{skillDeleteTarget()?.name} — {skillDeleteTarget()?.path}</p>
         </div>
       </ConfirmDialog>
 

@@ -14,7 +14,7 @@ func (r *run) ensureSkillManager() *skillManager {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.skillManager == nil {
-		r.skillManager = newSkillManager(r.fsRoot)
+		r.skillManager = newSkillManager(r.fsRoot, r.stateDir)
 		r.skillManager.Discover()
 	}
 	return r.skillManager
@@ -25,7 +25,7 @@ func (r *run) listSkills() []SkillMeta {
 	if mgr == nil {
 		return nil
 	}
-	return mgr.List()
+	return mgr.List(r.runMode)
 }
 
 func (r *run) activeSkills() []SkillActivation {
@@ -44,7 +44,7 @@ func (r *run) activateSkill(name string) (SkillActivation, bool, error) {
 	if mgr == nil {
 		return SkillActivation{}, false, errors.New("skill manager unavailable")
 	}
-	activation, alreadyActive, err := mgr.Activate(name)
+	activation, alreadyActive, err := mgr.Activate(name, r.runMode, false)
 	if err != nil {
 		r.persistRunEvent("skill.activate.error", RealtimeStreamKindLifecycle, map[string]any{"name": strings.TrimSpace(name), "error": err.Error()})
 		return SkillActivation{}, false, err
