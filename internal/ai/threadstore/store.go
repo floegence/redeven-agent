@@ -420,6 +420,35 @@ func normalizeRunStatus(status string) string {
 	}
 }
 
+// ResetStaleActiveThreadRunStates marks startup-orphaned active thread states as canceled.
+//
+// Why this exists:
+// - Active runs are held in memory during normal execution.
+// - If the agent process restarts, those in-memory runs are gone.
+// - Any persisted thread state that still looks "active" must be reset so UI does not show phantom running threads.
+func (s *Store) ResetStaleActiveThreadRunStates(ctx context.Context) (int64, error) {
+	if s == nil || s.db == nil {
+		return 0, errors.New("store not initialized")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	now := time.Now().UnixMilli()
+	res, err := s.db.ExecContext(ctx, `
+UPDATE ai_threads
+SET run_status = 'canceled',
+    run_updated_at_unix_ms = ?,
+    run_error = '',
+    updated_at_unix_ms = ?
+WHERE run_status IN ('accepted', 'running', 'waiting_approval', 'recovering')
+`, now, now)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
 func (s *Store) UpdateThreadRunState(ctx context.Context, endpointID string, threadID string, runStatus string, runError string, updatedByID string, updatedByEmail string) error {
 	if s == nil || s.db == nil {
 		return errors.New("store not initialized")
