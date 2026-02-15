@@ -1,6 +1,7 @@
 import { For, Show, createEffect, createSignal, onCleanup } from 'solid-js';
 import { useDeck, useNotification, useResolvedFloeConfig } from '@floegence/floe-webapp-core';
-import { FileBrowser, type BuiltinContextMenuAction, type ContextMenuCallbacks, type FileItem } from '@floegence/floe-webapp-core/file-browser';
+import { Sparkles } from '@floegence/floe-webapp-core/icons';
+import { FileBrowser, type BuiltinContextMenuAction, type ContextMenuCallbacks, type ContextMenuItem, type FileItem } from '@floegence/floe-webapp-core/file-browser';
 import { LoadingOverlay } from '@floegence/floe-webapp-core/loading';
 import { Button, ConfirmDialog, Dialog, DirectoryPicker, FileSavePicker, FloatingWindow } from '@floegence/floe-webapp-core/ui';
 import type { Client } from '@floegence/flowersec-core';
@@ -1500,10 +1501,19 @@ export function RemoteFileBrowser(props: RemoteFileBrowserProps = {}) {
         setCopyToDialogOpen(true);
       }
     },
-    onAskAgent: (items: FileItem[]) => {
-      void askFlowerFromFileBrowser(items);
-    },
   };
+
+  const customContextMenuItems: ContextMenuItem[] = [
+    {
+      id: 'ask-flower',
+      label: 'Ask Flower',
+      type: 'custom',
+      icon: (props) => <Sparkles class={props.class} />,
+      onAction: (items: FileItem[]) => {
+        void askFlowerFromFileBrowser(items);
+      },
+    },
+  ];
 
   return (
     <div class="h-full relative">
@@ -1531,8 +1541,9 @@ export function RemoteFileBrowser(props: RemoteFileBrowserProps = {}) {
                 onOpen={(item) => void openPreview(item)}
                 onDragMove={(items, targetPath) => void handleDragMove(items, targetPath)}
                 contextMenuCallbacks={ctxMenu}
+                customContextMenuItems={customContextMenuItems}
                 hideContextMenuItems={(items: FileItem[]): BuiltinContextMenuAction[] => {
-                  const hidden: BuiltinContextMenuAction[] = [];
+                  const hidden: BuiltinContextMenuAction[] = ['ask-agent'];
                   if (items.some((i) => i.type === 'folder')) {
                     hidden.push('duplicate', 'copy-to');
                   }
