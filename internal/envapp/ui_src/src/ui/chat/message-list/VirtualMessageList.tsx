@@ -80,8 +80,20 @@ export const VirtualMessageList: Component<VirtualMessageListProps> = (props) =>
   }
 
   // ResizeObserver for tracking individual message heights
+  let followToBottomRaf: number | null = null;
+  const scheduleFollowToBottom = () => {
+    if (followToBottomRaf !== null) return;
+    followToBottomRaf = requestAnimationFrame(() => {
+      followToBottomRaf = null;
+      if (virtualList.isAtBottom()) {
+        virtualList.scrollToBottom();
+      }
+    });
+  };
+
   const resizeObserverMap = new Map<Element, number>();
   const resizeObserver = new ResizeObserver((entries) => {
+    let anyHeightChanged = false;
     for (const entry of entries) {
       const el = entry.target as HTMLElement;
       const index = resizeObserverMap.get(el);
@@ -100,13 +112,24 @@ export const VirtualMessageList: Component<VirtualMessageListProps> = (props) =>
           }
           ctx.setMessageHeight(msg.id, height);
           virtualList.setItemHeight(index, height);
+          anyHeightChanged = true;
         }
       }
+    }
+
+    // Keep the view anchored to the bottom while streaming (worker-based markdown rendering
+    // may update DOM height asynchronously after the last stream event).
+    if (anyHeightChanged && virtualList.isAtBottom()) {
+      scheduleFollowToBottom();
     }
   });
 
   onCleanup(() => {
     resizeObserver.disconnect();
+    if (followToBottomRaf !== null) {
+      cancelAnimationFrame(followToBottomRaf);
+      followToBottomRaf = null;
+    }
   });
 
   // Ref callback for message items — observe resizes
