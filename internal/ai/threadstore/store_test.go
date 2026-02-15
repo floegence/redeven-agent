@@ -464,6 +464,59 @@ func TestStore_ListRecentThreadToolCalls(t *testing.T) {
 	}
 }
 
+func TestStore_GetToolCall(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "threads.sqlite")
+	s, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = s.Close() }()
+
+	ctx := context.Background()
+	if err := s.UpsertRun(ctx, RunRecord{
+		RunID:      "run_a",
+		EndpointID: "env_1",
+		ThreadID:   "th_1",
+		MessageID:  "msg_a",
+		State:      "running",
+	}); err != nil {
+		t.Fatalf("UpsertRun: %v", err)
+	}
+	if err := s.UpsertToolCall(ctx, ToolCallRecord{
+		RunID:      "run_a",
+		ToolID:     "tool_a",
+		ToolName:   "terminal.exec",
+		Status:     "success",
+		ArgsJSON:   `{"command":"pwd","cwd":"/tmp"}`,
+		ResultJSON: `{"stdout":"ok\n","exit_code":0}`,
+	}); err != nil {
+		t.Fatalf("UpsertToolCall: %v", err)
+	}
+
+	rec, err := s.GetToolCall(ctx, "env_1", "run_a", "tool_a")
+	if err != nil {
+		t.Fatalf("GetToolCall: %v", err)
+	}
+	if rec == nil {
+		t.Fatalf("GetToolCall returned nil record")
+	}
+	if rec.ToolName != "terminal.exec" {
+		t.Fatalf("ToolName=%q, want terminal.exec", rec.ToolName)
+	}
+	if rec.ResultJSON != `{"stdout":"ok\n","exit_code":0}` {
+		t.Fatalf("ResultJSON=%q", rec.ResultJSON)
+	}
+
+	if _, err := s.GetToolCall(ctx, "env_1", "run_a", "missing"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("GetToolCall missing err=%v, want sql.ErrNoRows", err)
+	}
+	if _, err := s.GetToolCall(ctx, "env_2", "run_a", "tool_a"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("GetToolCall endpoint mismatch err=%v, want sql.ErrNoRows", err)
+	}
+}
+
 func TestBuildPreview_AssistantUsesLatestMarkdownBlock(t *testing.T) {
 	t.Parallel()
 
