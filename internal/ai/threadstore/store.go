@@ -1250,6 +1250,55 @@ LIMIT ?
 	return out, nil
 }
 
+func (s *Store) GetToolCall(ctx context.Context, endpointID string, runID string, toolID string) (*ToolCallRecord, error) {
+	if s == nil || s.db == nil {
+		return nil, errors.New("store not initialized")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	endpointID = strings.TrimSpace(endpointID)
+	runID = strings.TrimSpace(runID)
+	toolID = strings.TrimSpace(toolID)
+	if endpointID == "" || runID == "" || toolID == "" {
+		return nil, errors.New("invalid request")
+	}
+
+	var (
+		rec          ToolCallRecord
+		retryableInt int
+	)
+	err := s.db.QueryRowContext(ctx, `
+SELECT tc.run_id, tc.tool_id, tc.tool_name, tc.status,
+       tc.args_json, tc.result_json, tc.error_code, tc.error_message,
+       tc.retryable, tc.recovery_action,
+       tc.started_at_unix_ms, tc.ended_at_unix_ms, tc.latency_ms
+FROM ai_tool_calls tc
+JOIN ai_runs r ON r.run_id = tc.run_id
+WHERE r.endpoint_id = ? AND tc.run_id = ? AND tc.tool_id = ?
+LIMIT 1
+`, endpointID, runID, toolID).Scan(
+		&rec.RunID,
+		&rec.ToolID,
+		&rec.ToolName,
+		&rec.Status,
+		&rec.ArgsJSON,
+		&rec.ResultJSON,
+		&rec.ErrorCode,
+		&rec.ErrorMessage,
+		&retryableInt,
+		&rec.RecoveryAction,
+		&rec.StartedAtUnixMs,
+		&rec.EndedAtUnixMs,
+		&rec.LatencyMS,
+	)
+	if err != nil {
+		return nil, err
+	}
+	rec.Retryable = retryableInt != 0
+	return &rec, nil
+}
+
 func (s *Store) AppendRunEvent(ctx context.Context, rec RunEventRecord) error {
 	if s == nil || s.db == nil {
 		return errors.New("store not initialized")
