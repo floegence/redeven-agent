@@ -14,7 +14,7 @@ type AskFlowerComposerWindowProps = {
   intent: AskFlowerIntent | null;
   anchor?: AskFlowerComposerAnchor | null;
   onClose: () => void;
-  onSubmit: (userPrompt: string) => void;
+  onSend: (userPrompt: string) => Promise<void>;
 };
 
 function clamp(value: number, min: number, max: number): number {
@@ -70,6 +70,7 @@ function attachmentLine(files: File[]): string | null {
 export function AskFlowerComposerWindow(props: AskFlowerComposerWindowProps) {
   const [userPrompt, setUserPrompt] = createSignal('');
   const [validationError, setValidationError] = createSignal('');
+  const [sending, setSending] = createSignal(false);
   let textareaEl: HTMLTextAreaElement | undefined;
 
   const position = createMemo(() => toWindowPosition(props.anchor ?? null));
@@ -98,6 +99,7 @@ export function AskFlowerComposerWindow(props: AskFlowerComposerWindowProps) {
 
   const resetDraft = (intent: AskFlowerIntent | null) => {
     setValidationError('');
+    setSending(false);
     setUserPrompt(String(intent?.userPrompt ?? '').trim());
     requestAnimationFrame(() => {
       textareaEl?.focus();
@@ -120,6 +122,7 @@ export function AskFlowerComposerWindow(props: AskFlowerComposerWindowProps) {
   createEffect(() => {
     if (!props.open) return;
     const onPointerDown = (event: PointerEvent) => {
+      if (sending()) return;
       const target = event.target as Node | null;
       if (!target) {
         props.onClose();
@@ -136,14 +139,20 @@ export function AskFlowerComposerWindow(props: AskFlowerComposerWindowProps) {
     });
   });
 
-  const submit = () => {
+  const submit = async () => {
+    if (sending()) return;
     const trimmedPrompt = String(userPrompt()).trim();
     if (!trimmedPrompt) {
-      setValidationError('Please enter your question before continuing.');
+      setValidationError('Please enter your question before sending.');
       requestAnimationFrame(() => textareaEl?.focus());
       return;
     }
-    props.onSubmit(trimmedPrompt);
+    setSending(true);
+    try {
+      await props.onSend(trimmedPrompt);
+    } finally {
+      setSending(false);
+    }
   };
 
   return (
@@ -152,6 +161,7 @@ export function AskFlowerComposerWindow(props: AskFlowerComposerWindowProps) {
         <FloatingWindow
           open
           onOpenChange={(next) => {
+            if (sending()) return;
             if (!next) props.onClose();
           }}
           title="Ask Flower"
@@ -163,11 +173,11 @@ export function AskFlowerComposerWindow(props: AskFlowerComposerWindowProps) {
           zIndex={130}
           footer={(
             <>
-              <Button variant="ghost" onClick={props.onClose}>
+              <Button variant="ghost" onClick={props.onClose} disabled={sending()}>
                 Cancel
               </Button>
-              <Button variant="primary" onClick={submit}>
-                Continue to Flower
+              <Button variant="primary" onClick={() => void submit()} disabled={sending()}>
+                {sending() ? 'Sending...' : 'Send'}
               </Button>
             </>
           )}
@@ -194,6 +204,7 @@ export function AskFlowerComposerWindow(props: AskFlowerComposerWindowProps) {
                 class="w-full min-h-[160px] flex-1 resize-none rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                 value={userPrompt()}
                 placeholder="Describe what you want Flower to do..."
+                disabled={sending()}
                 onInput={(event) => {
                   setUserPrompt(event.currentTarget.value);
                   if (validationError()) {
@@ -204,7 +215,7 @@ export function AskFlowerComposerWindow(props: AskFlowerComposerWindowProps) {
                   if (event.isComposing) return;
                   if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
                     event.preventDefault();
-                    submit();
+                    void submit();
                   }
                 }}
               />
@@ -213,7 +224,7 @@ export function AskFlowerComposerWindow(props: AskFlowerComposerWindowProps) {
               </Show>
             </div>
 
-            <div class="text-[11px] text-muted-foreground">Tip: Press Cmd/Ctrl + Enter to continue.</div>
+            <div class="text-[11px] text-muted-foreground">Tip: Press Cmd/Ctrl + Enter to send.</div>
           </div>
         </FloatingWindow>
       )}
