@@ -643,6 +643,7 @@ function TerminalPanelInner(props: TerminalPanelInnerProps = {}) {
     selection: string;
   } | null>(null);
   let terminalAskMenuEl: HTMLDivElement | null = null;
+  let terminalContextMenuHostEl: HTMLDivElement | null = null;
 
   let searchLastAppliedKey = '';
   let searchBoundCore: TerminalCore | null = null;
@@ -690,6 +691,24 @@ function TerminalPanelInner(props: TerminalPanelInnerProps = {}) {
       window.removeEventListener('pointerdown', onPointerDown, true);
       window.removeEventListener('resize', closeMenu);
       window.removeEventListener('scroll', closeMenu, true);
+    });
+  });
+
+  createEffect(() => {
+    if (!connected()) return;
+    const host = terminalContextMenuHostEl;
+    if (!host) return;
+
+    const onContextMenuCapture = (event: MouseEvent) => {
+      const target = event.target as Element | null;
+      if (!target) return;
+      if (!target.closest('.redeven-terminal-surface')) return;
+      openTerminalAskMenu(event);
+    };
+
+    host.addEventListener('contextmenu', onContextMenuCapture, true);
+    onCleanup(() => {
+      host.removeEventListener('contextmenu', onContextMenuCapture, true);
     });
   });
 
@@ -1440,7 +1459,12 @@ function TerminalPanelInner(props: TerminalPanelInnerProps = {}) {
       </div>
 
       <Show when={connected()} fallback={<div class="p-4 text-xs text-muted-foreground">Not connected.</div>}>
-        <div class="flex-1 min-h-0 relative" onContextMenu={openTerminalAskMenu}>
+        <div
+          ref={(el) => {
+            terminalContextMenuHostEl = el;
+          }}
+          class="flex-1 min-h-0 relative"
+        >
           <Show when={searchOpen()}>
             <div class="absolute top-2 right-2 z-20 flex items-center gap-1 rounded-md border border-white/15 bg-[#0b0f14]/95 px-2 py-1 shadow-md backdrop-blur">
               <Input
