@@ -1331,18 +1331,23 @@ func (r *run) persistToolCallSnapshot(toolID string, toolName string, status Too
 	if r == nil {
 		return
 	}
+	argsPersistLimit := 4000
+	resultPersistLimit := 4000
 	argsRedacted := any(redactAnyForLog("args", args, 0))
 	if strings.TrimSpace(toolName) == "terminal.exec" {
 		argsRedacted = redactAnyForPersist("args", args, 0)
+		// Terminal output is fetched lazily from persistence; keep complete payload.
+		argsPersistLimit = 0
+		resultPersistLimit = 0
 	}
-	argsPersist := marshalPersistJSON(argsRedacted, 4000)
+	argsPersist := marshalPersistJSON(argsRedacted, argsPersistLimit)
 	resultPersist := ""
 	if result != nil {
 		resultRedacted := any(redactAnyForLog("result", result, 0))
 		if strings.TrimSpace(toolName) == "terminal.exec" {
 			resultRedacted = redactAnyForPersist("result", result, 0)
 		}
-		resultPersist = marshalPersistJSON(resultRedacted, 4000)
+		resultPersist = marshalPersistJSON(resultRedacted, resultPersistLimit)
 	}
 	errCode := ""
 	errMsg := ""
@@ -1701,6 +1706,9 @@ func (r *run) handleToolCall(ctx context.Context, toolID string, toolName string
 	block.Result = result
 	block.Error = ""
 	block.ErrorDetails = nil
+	if toolName == "terminal.exec" {
+		block.Result = buildTerminalExecBlockResult(strings.TrimSpace(r.id), strings.TrimSpace(toolID), result)
+	}
 
 	if toolName == "web.search" {
 		if parsed, ok := parseWebSearchResult(result); ok {
@@ -2682,6 +2690,35 @@ func (r *run) toolTerminalExec(ctx context.Context, command string, stdin string
 		"truncated":   lim.Truncated(),
 		"timed_out":   timedOut,
 	}, nil
+}
+
+func buildTerminalExecBlockResult(runID string, toolID string, raw any) map[string]any {
+	out := map[string]any{
+		"output_ref": map[string]any{
+			"run_id":  strings.TrimSpace(runID),
+			"tool_id": strings.TrimSpace(toolID),
+		},
+	}
+	resultMap, _ := raw.(map[string]any)
+	if resultMap == nil {
+		return out
+	}
+	copyField := func(key string) {
+		if v, ok := resultMap[key]; ok {
+			out[key] = v
+		}
+	}
+	copyField("exit_code")
+	copyField("duration_ms")
+	copyField("timed_out")
+	copyField("truncated")
+	if stdout, _ := resultMap["stdout"].(string); stdout != "" {
+		out["stdout_bytes"] = len(stdout)
+	}
+	if stderr, _ := resultMap["stderr"].(string); stderr != "" {
+		out["stderr_bytes"] = len(stderr)
+	}
+	return out
 }
 
 func prependRedevenBinToEnv(baseEnv []string) []string {

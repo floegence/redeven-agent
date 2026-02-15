@@ -1,12 +1,21 @@
 // ShellBlock — terminal-style command display with collapsible output and status indicators.
 
-import { For, Show, createMemo, createSignal } from 'solid-js';
+import { For, Show, createEffect, createMemo, createSignal } from 'solid-js';
 import type { Component } from 'solid-js';
 import { cn } from '@floegence/floe-webapp-core';
 
 export interface ShellBlockProps {
   command: string;
   output?: string;
+  outputRef?: {
+    runId: string;
+    toolId: string;
+  };
+  cwd?: string;
+  timeoutMs?: number;
+  durationMs?: number;
+  timedOut?: boolean;
+  truncated?: boolean;
   exitCode?: number;
   status: 'running' | 'success' | 'error';
   class?: string;
@@ -33,6 +42,20 @@ interface ShellToken {
 interface RawToken {
   readonly kind: 'space' | 'word' | 'string' | 'substitution' | 'operator';
   readonly text: string;
+}
+
+interface TerminalToolOutputPayload {
+  run_id?: string;
+  tool_id?: string;
+  stdout?: string;
+  stderr?: string;
+  exit_code?: number;
+  duration_ms?: number;
+  timed_out?: boolean;
+  truncated?: boolean;
+  cwd?: string;
+  timeout_ms?: number;
+  raw_result?: string;
 }
 
 const MULTI_CHAR_OPERATORS = ['&&', '||', '>>', '<<', '>|', '|&', '2>', '1>', '&>'] as const;
@@ -242,6 +265,40 @@ function tokenClass(kind: ShellTokenKind): string {
   }
 }
 
+function composeDeferredOutput(parts: {
+  stdout: string;
+  stderr: string;
+  rawResult: string;
+  cwd: string;
+  timeoutMs?: number;
+  durationMs?: number;
+  timedOut: boolean;
+  truncated: boolean;
+}): string {
+  const info: string[] = [];
+  if (parts.cwd) info.push(`[cwd] ${parts.cwd}`);
+  if (typeof parts.timeoutMs === 'number' && Number.isFinite(parts.timeoutMs) && parts.timeoutMs > 0) {
+    info.push(`[timeout] ${Math.round(parts.timeoutMs)}ms`);
+  }
+  if (typeof parts.durationMs === 'number' && Number.isFinite(parts.durationMs) && parts.durationMs >= 0) {
+    info.push(`[duration] ${Math.round(parts.durationMs)}ms`);
+  }
+  if (parts.timedOut) info.push('[status] timed out');
+  if (parts.truncated) info.push('[notice] output truncated');
+
+  const sections: string[] = [];
+  if (info.length > 0) sections.push(info.join('\n'));
+
+  const stdout = String(parts.stdout ?? '').trimEnd();
+  const stderr = String(parts.stderr ?? '').trimEnd();
+  const rawResult = String(parts.rawResult ?? '').trim();
+  if (stdout) sections.push(stdout);
+  if (stderr) sections.push(stdout ? `[stderr]\n${stderr}` : stderr);
+  if (rawResult && !stdout && !stderr) sections.push(rawResult);
+
+  return sections.join('\n\n').trim();
+}
+
 /**
  * Renders a terminal-style block showing a shell command, its output,
  * and exit code. Output is collapsed by default and can be toggled
@@ -249,10 +306,18 @@ function tokenClass(kind: ShellTokenKind): string {
  */
 export const ShellBlock: Component<ShellBlockProps> = (props) => {
   const [expanded, setExpanded] = createSignal(false);
+  const [loadingOutput, setLoadingOutput] = createSignal(false);
+  const [loadedOutput, setLoadedOutput] = createSignal<string | undefined>(undefined);
+  const [loadError, setLoadError] = createSignal<string>('');
+  const [loadAttempted, setLoadAttempted] = createSignal(false);
   const commandTokens = createMemo(() => tokenizeShellCommand(props.command));
 
-  const hasOutput = () => !!props.output;
-  const canToggle = () => hasOutput() || props.status === 'running';
+  const hasOutputRef = () =>
+    String(props.outputRef?.runId ?? '').trim().length > 0 &&
+    String(props.outputRef?.toolId ?? '').trim().length > 0;
+  const resolvedOutput = () => props.output ?? loadedOutput();
+  const hasOutput = () => String(resolvedOutput() ?? '').trim().length > 0;
+  const canToggle = () => hasOutput() || hasOutputRef() || props.status === 'running';
 
   const statusClass = () => {
     switch (props.status) {
@@ -267,9 +332,72 @@ export const ShellBlock: Component<ShellBlockProps> = (props) => {
 
   const toggleLabel = () => (expanded() ? 'Hide output' : 'Show output');
 
+  const ensureOutputLoaded = async () => {
+    if (props.output || loadedOutput() || loadingOutput()) return;
+    if (!hasOutputRef()) return;
+    if (props.status === 'running') return;
+
+    const runID = String(props.outputRef?.runId ?? '').trim();
+    const toolID = String(props.outputRef?.toolId ?? '').trim();
+    if (!runID || !toolID) return;
+
+    setLoadingOutput(true);
+    setLoadError('');
+    setLoadAttempted(true);
+    try {
+      const resp = await fetch(
+        `/_redeven_proxy/api/ai/runs/${encodeURIComponent(runID)}/tools/${encodeURIComponent(toolID)}/output`,
+        { method: 'GET', credentials: 'omit', cache: 'no-store' },
+      );
+      const raw = await resp.text();
+      let payload: any = null;
+      try {
+        payload = raw ? JSON.parse(raw) : null;
+      } catch {
+        payload = null;
+      }
+      if (!resp.ok || payload?.ok === false) {
+        throw new Error(String(payload?.error ?? `HTTP ${resp.status}`));
+      }
+      const data = (payload?.data ?? {}) as TerminalToolOutputPayload;
+      const output = composeDeferredOutput({
+        stdout: String(data.stdout ?? ''),
+        stderr: String(data.stderr ?? ''),
+        rawResult: String(data.raw_result ?? ''),
+        cwd: String(data.cwd ?? props.cwd ?? ''),
+        timeoutMs:
+          typeof data.timeout_ms === 'number' ? data.timeout_ms : props.timeoutMs,
+        durationMs:
+          typeof data.duration_ms === 'number' ? data.duration_ms : props.durationMs,
+        timedOut:
+          typeof data.timed_out === 'boolean' ? data.timed_out : !!props.timedOut,
+        truncated:
+          typeof data.truncated === 'boolean' ? data.truncated : !!props.truncated,
+      });
+      setLoadedOutput(output || 'No output captured.');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setLoadError(message || 'Failed to load output.');
+    } finally {
+      setLoadingOutput(false);
+    }
+  };
+
+  createEffect(() => {
+    if (!expanded()) return;
+    if (props.status === 'running') return;
+    void ensureOutputLoaded();
+  });
+
   const handleHeaderClick = () => {
     if (!canToggle()) return;
-    setExpanded((value) => !value);
+    setExpanded((value) => {
+      const next = !value;
+      if (next) {
+        void ensureOutputLoaded();
+      }
+      return next;
+    });
   };
 
   return (
@@ -360,11 +488,21 @@ export const ShellBlock: Component<ShellBlockProps> = (props) => {
         >
           <div class="chat-shell-output-inner">
             <Show
-              when={props.output}
+              when={resolvedOutput()}
               fallback={
-                <Show when={props.status === 'running'}>
-                  <div class="chat-shell-output chat-shell-output-muted">
-                    <pre>Waiting for output...</pre>
+                <Show
+                  when={props.status === 'running' || loadingOutput() || loadAttempted() || loadError()}
+                >
+                  <div class={cn('chat-shell-output', loadError() ? 'chat-shell-output-error' : 'chat-shell-output-muted')}>
+                    <pre>
+                      {props.status === 'running'
+                        ? 'Waiting for output...'
+                        : loadingOutput()
+                          ? 'Loading output...'
+                          : loadError()
+                            ? `[error] ${loadError()}`
+                            : 'No output captured.'}
+                    </pre>
                   </div>
                 </Show>
               }
@@ -375,7 +513,7 @@ export const ShellBlock: Component<ShellBlockProps> = (props) => {
                   props.status === 'error' && 'chat-shell-output-error',
                 )}
               >
-                <pre>{props.output}</pre>
+                <pre>{resolvedOutput()}</pre>
               </div>
             </Show>
           </div>

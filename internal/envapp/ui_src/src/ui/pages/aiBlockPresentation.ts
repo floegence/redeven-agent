@@ -127,6 +127,9 @@ function buildTerminalExecShellBlock(block: ChatToolCallBlock): MessageBlock | n
   const durationMs = readNumber(result, ['duration_ms', 'durationMs']);
   const timedOut = readBoolean(result, ['timed_out', 'timedOut']);
   const truncated = readBoolean(result, ['truncated']);
+  const outputRef = readOutputRef(result);
+  const hasInlineOutput = stdout !== '' || stderr !== '' || String(block.error ?? '').trim() !== '';
+  const shouldInlineOutput = hasInlineOutput || !outputRef;
   const output = composeTerminalOutput({
     stdout,
     stderr,
@@ -141,7 +144,13 @@ function buildTerminalExecShellBlock(block: ChatToolCallBlock): MessageBlock | n
   return {
     type: 'shell',
     command,
-    output: output || undefined,
+    output: shouldInlineOutput ? output || undefined : undefined,
+    outputRef: outputRef || undefined,
+    cwd: cwd || undefined,
+    timeoutMs: typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0 ? Math.round(timeoutMs) : undefined,
+    durationMs: typeof durationMs === 'number' && Number.isFinite(durationMs) && durationMs >= 0 ? Math.round(durationMs) : undefined,
+    timedOut,
+    truncated,
     exitCode: typeof exitCode === 'number' && Number.isFinite(exitCode) ? Math.round(exitCode) : undefined,
     status: toShellStatus(block.status),
   };
@@ -266,6 +275,20 @@ function readBoolean(from: AnyRecord, keys: string[]): boolean {
     }
   }
   return false;
+}
+
+function readOutputRef(from: AnyRecord): { runId: string; toolId: string } | null {
+  const raw = from.output_ref;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return null;
+  }
+  const rec = raw as Record<string, unknown>;
+  const runId = String(rec.run_id ?? rec.runId ?? '').trim();
+  const toolId = String(rec.tool_id ?? rec.toolId ?? '').trim();
+  if (!runId || !toolId) {
+    return null;
+  }
+  return { runId, toolId };
 }
 
 function toShellStatus(status: ChatToolCallBlock['status']): 'running' | 'success' | 'error' {
