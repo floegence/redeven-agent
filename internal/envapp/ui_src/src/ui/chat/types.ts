@@ -58,6 +58,15 @@ export interface ShellBlock {
   type: 'shell';
   command: string;
   output?: string;
+  outputRef?: {
+    runId: string;
+    toolId: string;
+  };
+  cwd?: string;
+  timeoutMs?: number;
+  durationMs?: number;
+  timedOut?: boolean;
+  truncated?: boolean;
   exitCode?: number;
   status: 'running' | 'success' | 'error';
 }

@@ -1576,6 +1576,44 @@ func (g *Gateway) handleAPI(w http.ResponseWriter, r *http.Request) {
 		if len(parts) > 1 {
 			action = strings.TrimSpace(parts[1])
 		}
+		if runID == "" {
+			writeJSON(w, http.StatusNotFound, apiResp{OK: false, Error: "not found"})
+			return
+		}
+
+		if r.Method == http.MethodGet && len(parts) == 4 && action == "tools" && strings.TrimSpace(parts[3]) == "output" {
+			meta, ok := g.requirePermission(w, r, requiredPermissionFull)
+			if !ok {
+				return
+			}
+			toolID := strings.TrimSpace(parts[2])
+			if toolID == "" {
+				writeJSON(w, http.StatusBadRequest, apiResp{OK: false, Error: "missing tool_id"})
+				return
+			}
+			out, err := g.ai.GetTerminalToolOutput(r.Context(), meta, runID, toolID)
+			if err != nil {
+				g.appendAudit(meta, "ai_terminal_output", "failure", map[string]any{
+					"run_id":  runID,
+					"tool_id": toolID,
+				}, err)
+				status := http.StatusBadRequest
+				if errors.Is(err, sql.ErrNoRows) {
+					status = http.StatusNotFound
+				}
+				writeJSON(w, status, apiResp{OK: false, Error: err.Error()})
+				return
+			}
+			g.appendAudit(meta, "ai_terminal_output", "success", map[string]any{
+				"run_id":      runID,
+				"tool_id":     toolID,
+				"status":      strings.TrimSpace(out.Status),
+				"stdout_size": len(out.Stdout),
+				"stderr_size": len(out.Stderr),
+			}, nil)
+			writeJSON(w, http.StatusOK, apiResp{OK: true, Data: out})
+			return
+		}
 
 		if r.Method == http.MethodPost && action == "cancel" {
 			meta, ok := g.requirePermission(w, r, requiredPermissionFull)
