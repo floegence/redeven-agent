@@ -38,7 +38,7 @@ type PermissionPolicy = Readonly<{
   by_app?: Record<string, PermissionSet>;
 }>;
 
-type AIProviderType = 'openai' | 'anthropic' | 'openai_compatible';
+type AIProviderType = 'openai' | 'anthropic' | 'openai_compatible' | 'moonshot';
 type AIProviderModel = Readonly<{ model_name: string; is_default?: boolean }>;
 type AIProvider = Readonly<{ id: string; name?: string; type: AIProviderType; base_url?: string; models: AIProviderModel[] }>;
 type AIExecutionPolicy = Readonly<{
@@ -1143,10 +1143,10 @@ export function EnvSettingsPage() {
       providerIDs.add(id);
       if (name && name.length > 80) throw new Error(`Provider "${id}" name is too long.`);
 
-      if (typ !== 'openai' && typ !== 'anthropic' && typ !== 'openai_compatible') {
+      if (typ !== 'openai' && typ !== 'anthropic' && typ !== 'openai_compatible' && typ !== 'moonshot') {
         throw new Error(`Invalid provider type: ${typ || '(empty)'}`);
       }
-      if (typ === 'openai_compatible' && !baseURL) throw new Error(`Provider "${id}" requires base_url.`);
+      if ((typ === 'openai_compatible' || typ === 'moonshot') && !baseURL) throw new Error(`Provider "${id}" requires base_url.`);
       if (baseURL) {
         let u: URL;
         try {
@@ -3383,6 +3383,7 @@ export function EnvSettingsPage() {
                                   { value: 'openai', label: 'openai' },
 	                                  { value: 'anthropic', label: 'anthropic' },
 	                                  { value: 'openai_compatible', label: 'openai_compatible' },
+                                  { value: 'moonshot', label: 'moonshot' },
 	                                ]}
 	                                class="w-full"
 	                              />
@@ -3392,7 +3393,7 @@ export function EnvSettingsPage() {
 	                              <Input value={String(p().id ?? '')} size="sm" class="w-full font-mono" disabled />
 	                            </div>
 	                            <div class="md:col-span-2">
-	                              <FieldLabel hint={p().type === 'openai_compatible' ? 'required' : 'optional'}>base_url</FieldLabel>
+	                              <FieldLabel hint={p().type === 'openai_compatible' || p().type === 'moonshot' ? 'required' : 'optional'}>base_url</FieldLabel>
                               <Input
                                 value={p().base_url}
                                 onInput={(e) => {
@@ -3400,7 +3401,7 @@ export function EnvSettingsPage() {
                                   setAiProviders((prev) => prev.map((it, i) => (i === idx ? { ...it, base_url: v } : it)));
                                   setAiDirty(true);
                                 }}
-                                placeholder={p().type === 'openai_compatible' ? 'https://api.example.com/v1' : 'https://api.openai.com/v1'}
+                                placeholder={p().type === 'openai_compatible' ? 'https://api.example.com/v1' : p().type === 'moonshot' ? 'https://api.moonshot.cn/v1' : 'https://api.openai.com/v1'}
                                 size="sm"
                                 class="w-full"
                                 disabled={!canInteract()}

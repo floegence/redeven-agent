@@ -402,6 +402,8 @@ func (s *Service) ListModels() (*ModelsResponse, error) {
 				if name == "" {
 					name = "OpenAI compatible"
 				}
+			case "moonshot":
+				name = "Moonshot"
 			}
 		}
 		if name == "" {
@@ -1324,7 +1326,7 @@ func (s *Service) classifyRunIntentByModel(ctx context.Context, resolved resolve
 	}
 	providerType := strings.ToLower(strings.TrimSpace(resolved.Provider.Type))
 	switch providerType {
-	case "openai", "openai_compatible", "anthropic":
+	case "openai", "openai_compatible", "anthropic", "moonshot":
 	default:
 		return intentDecision{}, fmt.Errorf("unsupported provider type %q", strings.TrimSpace(resolved.Provider.Type))
 	}

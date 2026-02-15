@@ -48,6 +48,7 @@ func TestNewProviderAdapter_OpenAIStrictPolicy(t *testing.T) {
 		{name: "openai_official_default_base_url", typ: "openai", baseURL: "", expected: true},
 		{name: "openai_custom_gateway", typ: "openai", baseURL: "https://codex-api.packycode.com/v1", expected: false},
 		{name: "openai_compatible", typ: "openai_compatible", baseURL: "https://example.com/v1", expected: false},
+		{name: "moonshot", typ: "moonshot", baseURL: "https://api.moonshot.cn/v1", expected: false},
 		{name: "openai_custom_gateway_override_true", typ: "openai", baseURL: "https://gateway.example/v1", override: boolPtr(true), expected: true},
 		{name: "openai_official_override_false", typ: "openai", baseURL: "https://api.openai.com/v1", override: boolPtr(false), expected: false},
 	}
@@ -60,12 +61,17 @@ func TestNewProviderAdapter_OpenAIStrictPolicy(t *testing.T) {
 			if err != nil {
 				t.Fatalf("newProviderAdapter error: %v", err)
 			}
-			openAIProvider, ok := provider.(*openAIProvider)
-			if !ok {
-				t.Fatalf("expected *openAIProvider, got %T", provider)
+			strict := false
+			switch p := provider.(type) {
+			case *openAIProvider:
+				strict = p.strictToolSchema
+			case *moonshotProvider:
+				strict = p.strictToolSchema
+			default:
+				t.Fatalf("unexpected provider type %T", provider)
 			}
-			if openAIProvider.strictToolSchema != tc.expected {
-				t.Fatalf("strictToolSchema mismatch, got=%v want=%v", openAIProvider.strictToolSchema, tc.expected)
+			if strict != tc.expected {
+				t.Fatalf("strictToolSchema mismatch, got=%v want=%v", strict, tc.expected)
 			}
 		})
 	}
