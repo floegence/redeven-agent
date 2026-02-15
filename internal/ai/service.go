@@ -203,6 +203,16 @@ func NewService(opts Options) (*Service, error) {
 	if persistTO <= 0 {
 		persistTO = defaultPersistOpTimeout
 	}
+	resetCtx, cancelReset := context.WithTimeout(context.Background(), persistTO)
+	resetCount, resetErr := ts.ResetStaleActiveThreadRunStates(resetCtx)
+	cancelReset()
+	if resetErr != nil {
+		_ = ts.Close()
+		return nil, resetErr
+	}
+	if resetCount > 0 {
+		logger.Info("ai: reset stale active thread run states after restart", "count", resetCount)
+	}
 
 	contextRepo := contextstore.NewRepository(ts)
 	snapshotCompactor := contextcompactor.New(contextRepo)
