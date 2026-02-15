@@ -11,6 +11,7 @@ export type EnvSettingsSection =
   | 'logging'
   | 'codespaces'
   | 'permission_policy'
+  | 'skills'
   | 'ai';
 
 export type EnvContextValue = {

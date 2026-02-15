@@ -60,6 +60,7 @@ type runOptions struct {
 	SubagentDepth         int
 	AllowSubagentDelegate bool
 	ToolAllowlist         []string
+	SkillManager          *skillManager
 }
 
 type steerInput struct {
@@ -186,6 +187,7 @@ func newRun(opts runOptions) *run {
 		collectedWebSources:     make(map[string]SourceRef),
 		collectedWebSourceOrder: make([]string, 0, 8),
 		subagentDepth:           opts.SubagentDepth,
+		skillManager:            opts.SkillManager,
 		allowSubagentDelegate: func() bool {
 			if opts.AllowSubagentDelegate {
 				return true
