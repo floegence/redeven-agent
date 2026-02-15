@@ -75,6 +75,11 @@ func defaultCapability(provider config.AIProvider, modelName string) model.Model
 		cap.PreferredToolSchemaMode = "relaxed_json"
 		cap.MaxContextTokens = 200000
 		cap.MaxOutputTokens = 8192
+	case "moonshot":
+		cap.SupportsStrictJSONSchema = false
+		cap.PreferredToolSchemaMode = "relaxed_json"
+		cap.MaxContextTokens = 64000
+		cap.MaxOutputTokens = 4096
 	case "openai_compatible":
 		cap.SupportsStrictJSONSchema = false
 		cap.PreferredToolSchemaMode = "relaxed_json"

@@ -385,6 +385,280 @@ func (p *openAIProvider) StreamTurn(ctx context.Context, req TurnRequest, onEven
 	return result, nil
 }
 
+type moonshotProvider struct {
+	client           openai.Client
+	strictToolSchema bool
+}
+
+func (p *moonshotProvider) StreamTurn(ctx context.Context, req TurnRequest, onEvent func(StreamEvent)) (TurnResult, error) {
+	if p == nil {
+		return TurnResult{}, errors.New("nil provider")
+	}
+	if strings.TrimSpace(req.Model) == "" {
+		return TurnResult{}, errors.New("missing model")
+	}
+
+	messages := buildOpenAIChatMessages(req.Messages)
+	if len(messages) == 0 {
+		messages = append(messages, openai.UserMessage("Continue."))
+	}
+
+	params := openai.ChatCompletionNewParams{
+		Model:             oshared.ChatModel(strings.TrimSpace(req.Model)),
+		Messages:          messages,
+		ParallelToolCalls: openai.Bool(false),
+	}
+	if req.Budgets.MaxOutputToken > 0 {
+		params.MaxTokens = openai.Int(int64(req.Budgets.MaxOutputToken))
+	}
+	if req.ProviderControls.Temperature != nil {
+		params.Temperature = openai.Float(*req.ProviderControls.Temperature)
+	}
+	if req.ProviderControls.TopP != nil {
+		params.TopP = openai.Float(*req.ProviderControls.TopP)
+	}
+	switch strings.ToLower(strings.TrimSpace(req.ProviderControls.ResponseFormat)) {
+	case "":
+		// default behavior
+	case "text":
+		txt := oshared.NewResponseFormatTextParam()
+		params.ResponseFormat = openai.ChatCompletionNewParamsResponseFormatUnion{OfText: &txt}
+	case "json_object":
+		obj := oshared.NewResponseFormatJSONObjectParam()
+		params.ResponseFormat = openai.ChatCompletionNewParamsResponseFormatUnion{OfJSONObject: &obj}
+	default:
+		// json_schema requires an explicit schema; leave unset and let upper layers decide.
+	}
+
+	tools, aliasToReal := buildOpenAIChatTools(req.Tools, p.strictToolSchema)
+	if len(tools) > 0 {
+		params.Tools = tools
+	}
+
+	resp, err := p.client.Chat.Completions.New(ctx, params)
+	if err != nil {
+		return TurnResult{}, err
+	}
+
+	result := TurnResult{
+		FinishReason:    "unknown",
+		RawProviderDiag: map[string]any{},
+	}
+	if rid := strings.TrimSpace(resp.ID); rid != "" {
+		result.RawProviderDiag["response_id"] = rid
+	}
+	result.Usage = TurnUsage{
+		InputTokens:     resp.Usage.PromptTokens,
+		OutputTokens:    resp.Usage.CompletionTokens,
+		ReasoningTokens: resp.Usage.CompletionTokensDetails.ReasoningTokens,
+	}
+
+	if len(resp.Choices) > 0 {
+		choice := resp.Choices[0]
+		result.FinishReason = mapOpenAIChatFinishReason(choice.FinishReason)
+		if txt := strings.TrimSpace(choice.Message.Content); txt != "" {
+			result.Text = txt
+			emitProviderEvent(onEvent, StreamEvent{Type: StreamEventTextDelta, Text: txt})
+		}
+		for _, tc := range choice.Message.ToolCalls {
+			callID := strings.TrimSpace(tc.ID)
+			if callID == "" {
+				callID = fmt.Sprintf("moonshot_call_%d", len(result.ToolCalls)+1)
+			}
+			name := strings.TrimSpace(tc.Function.Name)
+			if realName, ok := aliasToReal[name]; ok {
+				name = realName
+			}
+			argsRaw := strings.TrimSpace(tc.Function.Arguments)
+			args := map[string]any{}
+			if argsRaw != "" {
+				_ = json.Unmarshal([]byte(argsRaw), &args)
+			}
+			call := ToolCall{ID: callID, Name: name, Args: args}
+			result.ToolCalls = append(result.ToolCalls, call)
+			emitProviderEvent(onEvent, StreamEvent{Type: StreamEventToolCallStart, ToolCall: &PartialToolCall{ID: call.ID, Name: call.Name}})
+			emitProviderEvent(onEvent, StreamEvent{Type: StreamEventToolCallDelta, ToolCall: &PartialToolCall{ID: call.ID, Name: call.Name, ArgumentsJSON: argsRaw, Arguments: cloneAnyMap(args)}})
+			emitProviderEvent(onEvent, StreamEvent{Type: StreamEventToolCallEnd, ToolCall: &PartialToolCall{ID: call.ID, Name: call.Name, Arguments: cloneAnyMap(args)}})
+		}
+	}
+	if len(result.ToolCalls) > 0 {
+		result.FinishReason = "tool_calls"
+	}
+	if result.FinishReason == "unknown" && result.Text != "" {
+		result.FinishReason = "stop"
+	}
+	emitProviderEvent(onEvent, StreamEvent{Type: StreamEventUsage, Usage: &PartialUsage{InputTokens: result.Usage.InputTokens, OutputTokens: result.Usage.OutputTokens, ReasoningTokens: result.Usage.ReasoningTokens}})
+	emitProviderEvent(onEvent, StreamEvent{Type: StreamEventFinishReason, FinishHint: result.FinishReason})
+	return result, nil
+}
+
+func buildOpenAIChatTools(defs []ToolDef, strict bool) ([]openai.ChatCompletionToolParam, map[string]string) {
+	out := make([]openai.ChatCompletionToolParam, 0, len(defs))
+	aliasToReal := make(map[string]string, len(defs))
+	for _, def := range defs {
+		name := strings.TrimSpace(def.Name)
+		if name == "" {
+			continue
+		}
+		schema := map[string]any{}
+		if len(def.InputSchema) > 0 {
+			_ = json.Unmarshal(def.InputSchema, &schema)
+		}
+		alias := sanitizeProviderToolName(name)
+		fn := oshared.FunctionDefinitionParam{
+			Name:        alias,
+			Description: openai.String(strings.TrimSpace(def.Description)),
+			Strict:      openai.Bool(strict),
+		}
+		if len(schema) > 0 {
+			fn.Parameters = oshared.FunctionParameters(schema)
+		}
+		out = append(out, openai.ChatCompletionToolParam{Function: fn})
+		aliasToReal[alias] = name
+	}
+	return out, aliasToReal
+}
+
+func buildOpenAIChatMessages(messages []Message) []openai.ChatCompletionMessageParamUnion {
+	out := make([]openai.ChatCompletionMessageParamUnion, 0, len(messages)+2)
+	for _, msg := range messages {
+		role := strings.ToLower(strings.TrimSpace(msg.Role))
+		switch role {
+		case "system":
+			if txt := joinMessageText(msg); txt != "" {
+				out = append(out, openai.SystemMessage(txt))
+			}
+		case "tool":
+			for _, part := range msg.Content {
+				if strings.ToLower(strings.TrimSpace(part.Type)) != "tool_result" {
+					continue
+				}
+				callID := strings.TrimSpace(part.ToolCallID)
+				if callID == "" {
+					callID = strings.TrimSpace(part.ToolUseID)
+				}
+				if callID == "" {
+					continue
+				}
+				output := strings.TrimSpace(part.Text)
+				if output == "" && len(part.JSON) > 0 {
+					output = string(part.JSON)
+				}
+				if output == "" {
+					output = "{}"
+				}
+				out = append(out, openai.ToolMessage(output, callID))
+			}
+		case "assistant":
+			var textBuf strings.Builder
+			toolCalls := make([]openai.ChatCompletionMessageToolCallParam, 0, 2)
+			appendAssistantText := func(text string) {
+				text = strings.TrimSpace(text)
+				if text == "" {
+					return
+				}
+				if textBuf.Len() > 0 {
+					textBuf.WriteString("\n")
+				}
+				textBuf.WriteString(text)
+			}
+			for _, part := range msg.Content {
+				switch strings.ToLower(strings.TrimSpace(part.Type)) {
+				case "text":
+					appendAssistantText(part.Text)
+				case "tool_call":
+					callID := strings.TrimSpace(part.ToolCallID)
+					if callID == "" {
+						callID = strings.TrimSpace(part.ToolUseID)
+					}
+					if callID == "" {
+						callID = fmt.Sprintf("assistant_call_%d", len(toolCalls)+1)
+					}
+					name := strings.TrimSpace(part.ToolName)
+					if name == "" {
+						name = strings.TrimSpace(part.Text)
+					}
+					name = sanitizeProviderToolName(name)
+					if name == "" {
+						continue
+					}
+					argsRaw := strings.TrimSpace(part.ArgsJSON)
+					if argsRaw == "" && len(part.JSON) > 0 {
+						argsRaw = strings.TrimSpace(string(part.JSON))
+					}
+					if argsRaw == "" {
+						argsRaw = "{}"
+					}
+					if !json.Valid([]byte(argsRaw)) {
+						argsRaw = "{}"
+					}
+					toolCalls = append(toolCalls, openai.ChatCompletionMessageToolCallParam{
+						ID: callID,
+						Function: openai.ChatCompletionMessageToolCallFunctionParam{
+							Name:      name,
+							Arguments: argsRaw,
+						},
+					})
+				}
+			}
+			content := strings.TrimSpace(textBuf.String())
+			if len(toolCalls) == 0 {
+				if content != "" {
+					out = append(out, openai.AssistantMessage(content))
+				}
+				continue
+			}
+			assistant := openai.ChatCompletionAssistantMessageParam{ToolCalls: toolCalls}
+			if content != "" {
+				assistant.Content = openai.ChatCompletionAssistantMessageParamContentUnion{OfString: openai.String(content)}
+			}
+			out = append(out, openai.ChatCompletionMessageParamUnion{OfAssistant: &assistant})
+		default:
+			contentParts := make([]openai.ChatCompletionContentPartUnionParam, 0, len(msg.Content))
+			for _, part := range msg.Content {
+				switch strings.ToLower(strings.TrimSpace(part.Type)) {
+				case "text":
+					if txt := strings.TrimSpace(part.Text); txt != "" {
+						contentParts = append(contentParts, openai.TextContentPart(txt))
+					}
+				case "image":
+					if uri := strings.TrimSpace(part.FileURI); uri != "" {
+						contentParts = append(contentParts, openai.ImageContentPart(openai.ChatCompletionContentPartImageImageURLParam{URL: uri}))
+					}
+				case "file":
+					if uri := strings.TrimSpace(part.FileURI); uri != "" {
+						contentParts = append(contentParts, openai.TextContentPart("Attachment reference: "+uri))
+					}
+				}
+			}
+			if len(contentParts) == 0 {
+				if txt := joinMessageText(msg); txt != "" {
+					out = append(out, openai.UserMessage(txt))
+				}
+				continue
+			}
+			if len(contentParts) == 1 {
+				if txt := contentParts[0].GetText(); txt != nil {
+					out = append(out, openai.UserMessage(*txt))
+					continue
+				}
+			}
+			out = append(out, openai.UserMessage(contentParts))
+		}
+	}
+	return out
+}
+
+func mapOpenAIChatFinishReason(reason string) string {
+	reason = strings.TrimSpace(strings.ToLower(reason))
+	switch reason {
+	case "stop", "length", "tool_calls", "content_filter", "function_call":
+		return reason
+	default:
+		return "unknown"
+	}
+}
+
 func emitProviderEvent(onEvent func(StreamEvent), event StreamEvent) {
 	if onEvent != nil {
 		onEvent(event)
@@ -979,7 +1253,7 @@ func (r *run) shouldUseNativeRuntime(provider *config.AIProvider) bool {
 		return false
 	}
 	switch strings.ToLower(strings.TrimSpace(provider.Type)) {
-	case "openai", "openai_compatible", "anthropic":
+	case "openai", "openai_compatible", "anthropic", "moonshot":
 		return true
 	default:
 		return false
@@ -1011,6 +1285,15 @@ func newProviderAdapter(providerType string, baseURL string, apiKey string, stri
 			client:           openai.NewClient(opts...),
 			strictToolSchema: strictToolSchema,
 		}, nil
+	case "moonshot":
+		opts := []ooption.RequestOption{ooption.WithAPIKey(strings.TrimSpace(apiKey))}
+		if strings.TrimSpace(baseURL) != "" {
+			opts = append(opts, ooption.WithBaseURL(strings.TrimSpace(baseURL)))
+		}
+		return &moonshotProvider{
+			client:           openai.NewClient(opts...),
+			strictToolSchema: strictToolSchema,
+		}, nil
 	case "anthropic":
 		opts := []aoption.RequestOption{aoption.WithAPIKey(strings.TrimSpace(apiKey))}
 		if strings.TrimSpace(baseURL) != "" {
@@ -1033,6 +1316,10 @@ func shouldUseStrictOpenAIToolSchema(providerType string, baseURL string) bool {
 	providerType = strings.ToLower(strings.TrimSpace(providerType))
 	if providerType == "openai_compatible" {
 		// Compatible gateways vary widely in strict function schema support; disable strict mode by default.
+		return false
+	}
+	if providerType == "moonshot" {
+		// Moonshot uses a chat-completions-compatible endpoint; strict schema is not guaranteed.
 		return false
 	}
 	if providerType != "openai" {
