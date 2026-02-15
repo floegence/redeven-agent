@@ -88,9 +88,14 @@ function shouldAnimateStandaloneBlock(message: Message, block: MessageBlock): bo
 export const MessageBubble: Component<MessageBubbleProps> = (props) => {
   const prefersReducedMotion = readPrefersReducedMotion();
   const [animatedSlots, setAnimatedSlots] = createSignal<Record<number, true>>({});
+  let lastMessageId = String(props.message.id ?? '');
 
   createEffect(() => {
-    props.message.id;
+    const currentMessageId = String(props.message.id ?? '');
+    if (currentMessageId === lastMessageId) {
+      return;
+    }
+    lastMessageId = currentMessageId;
     setAnimatedSlots({});
   });
 
@@ -142,7 +147,7 @@ export const MessageBubble: Component<MessageBubbleProps> = (props) => {
                   block={block()}
                   messageId={props.message.id}
                   blockIndex={index}
-                  isStreaming={props.message.status === 'streaming'}
+                  isStreaming={block().type === 'markdown' ? props.message.status === 'streaming' : undefined}
                 />
               </div>
             }
@@ -161,7 +166,7 @@ export const MessageBubble: Component<MessageBubbleProps> = (props) => {
                 block={block()}
                 messageId={props.message.id}
                 blockIndex={index}
-                isStreaming={props.message.status === 'streaming'}
+                isStreaming={block().type === 'markdown' ? props.message.status === 'streaming' : undefined}
               />
             </Motion.div>
           </Show>
