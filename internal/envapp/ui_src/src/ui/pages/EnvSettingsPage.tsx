@@ -219,6 +219,7 @@ type AIPreservedUIFields = {
 const DEFAULT_CODE_SERVER_PORT_MIN = 20000;
 const DEFAULT_CODE_SERVER_PORT_MAX = 21000;
 const RELEASE_VERSION_RE = /^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+const AUTO_SAVE_DELAY_MS = 700;
 
 type SettingsNavItem = Readonly<{
   id: EnvSettingsSection;
@@ -252,6 +253,15 @@ function formatUnknownError(err: unknown): string {
   if (err instanceof Error) return String(err.message || '').trim();
   if (typeof err === 'string') return String(err).trim();
   return '';
+}
+
+function formatSavedTime(unixMs: number | null): string {
+  if (!unixMs) return '';
+  try {
+    return new Date(unixMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  } catch {
+    return '';
+  }
 }
 
 function newProviderID(): string {
@@ -387,6 +397,31 @@ function ViewToggle(props: { value: () => ViewMode; disabled?: boolean; onChange
       </button>
     </div>
   );
+}
+
+function AutoSaveIndicator(props: { dirty: boolean; saving: boolean; error?: string | null; savedAt: number | null; enabled?: boolean }) {
+  const badgeClass = createMemo(() => {
+    if (props.saving) return 'border-primary/30 bg-primary/10 text-primary';
+    if (!props.enabled) return 'border-border bg-muted/40 text-muted-foreground';
+    if (props.error) return 'border-destructive/30 bg-destructive/10 text-destructive';
+    if (props.dirty) return 'border-warning/30 bg-warning/10 text-warning';
+    if (props.savedAt) return 'border-success/30 bg-success/10 text-success';
+    return 'border-border bg-muted/40 text-muted-foreground';
+  });
+
+  const label = createMemo(() => {
+    if (props.saving) return 'Saving...';
+    if (!props.enabled) return 'Auto-save paused';
+    if (props.error) return 'Needs attention';
+    if (props.dirty) return 'Unsaved changes';
+    if (props.savedAt) {
+      const t = formatSavedTime(props.savedAt);
+      return t ? `Saved ${t}` : 'Saved';
+    }
+    return 'Auto-save on';
+  });
+
+  return <span class={`inline-flex items-center rounded-md border px-2 py-1 text-[11px] font-medium ${badgeClass()}`}>{label()}</span>;
 }
 
 interface SettingsCardProps {
@@ -901,6 +936,8 @@ export function EnvSettingsPage() {
   const [aiEnforcePlanModeGuard, setAiEnforcePlanModeGuard] = createSignal(false);
   const [aiBlockDangerousCommands, setAiBlockDangerousCommands] = createSignal(false);
   const [aiWebSearchProvider, setAiWebSearchProvider] = createSignal<'prefer_openai' | 'brave' | 'disabled'>('prefer_openai');
+  const [aiProviderDialogOpen, setAiProviderDialogOpen] = createSignal(false);
+  const [aiProviderDialogIndex, setAiProviderDialogIndex] = createSignal<number | null>(null);
 
   // AI provider keys (stored locally in secrets.json; never returned in plaintext).
   const [aiProviderKeySet, setAiProviderKeySet] = createSignal<Record<string, boolean>>({});
@@ -966,6 +1003,11 @@ export function EnvSettingsPage() {
   const [codespacesSaving, setCodespacesSaving] = createSignal(false);
   const [policySaving, setPolicySaving] = createSignal(false);
   const [aiSaving, setAiSaving] = createSignal(false);
+  const [runtimeSavedAt, setRuntimeSavedAt] = createSignal<number | null>(null);
+  const [loggingSavedAt, setLoggingSavedAt] = createSignal<number | null>(null);
+  const [codespacesSavedAt, setCodespacesSavedAt] = createSignal<number | null>(null);
+  const [policySavedAt, setPolicySavedAt] = createSignal<number | null>(null);
+  const [aiSavedAt, setAiSavedAt] = createSignal<number | null>(null);
   const [disableAIOpen, setDisableAIOpen] = createSignal(false);
   const [disableAISaving, setDisableAISaving] = createSignal(false);
 
@@ -977,6 +1019,13 @@ export function EnvSettingsPage() {
   const [aiError, setAiError] = createSignal<string | null>(null);
 
   const aiEnabled = createMemo(() => !!settings()?.ai);
+  const aiProviderDialogProvider = createMemo(() => {
+    const idx = aiProviderDialogIndex();
+    if (idx == null) return null;
+    const list = aiProviders();
+    if (idx < 0 || idx >= list.length) return null;
+    return list[idx];
+  });
 
   const configPath = () => String(settings()?.config_path ?? '').trim();
 
@@ -1330,6 +1379,36 @@ export function EnvSettingsPage() {
       return;
     }
     void updateAIProviderKey(id, null);
+  };
+
+  const openAIProviderDialog = (index: number) => {
+    setAiProviderDialogIndex(index);
+    setAiProviderDialogOpen(true);
+  };
+
+  const closeAIProviderDialog = () => {
+    setAiProviderDialogOpen(false);
+    setAiProviderDialogIndex(null);
+  };
+
+  const addAIProviderAndOpenDialog = () => {
+    let createdIndex = 0;
+    const id = newProviderID();
+    setAiProviders((prev) => {
+      createdIndex = prev.length;
+      return normalizeAIProviders([
+        ...prev,
+        {
+          id,
+          name: '',
+          type: 'openai',
+          base_url: 'https://api.openai.com/v1',
+          models: [{ model_name: '', is_default: false }],
+        },
+      ]);
+    });
+    setAiDirty(true);
+    openAIProviderDialog(createdIndex);
   };
 
   const refreshWebSearchKeyStatus = async (providerIDs: string[]) => {
@@ -1831,6 +1910,20 @@ export function EnvSettingsPage() {
     }
   });
 
+  createEffect(() => {
+    const idx = aiProviderDialogIndex();
+    if (idx == null) return;
+    if (idx < 0 || idx >= aiProviders().length) {
+      closeAIProviderDialog();
+    }
+  });
+
+  createEffect(() => {
+    if (aiView() !== 'ui' && aiProviderDialogOpen()) {
+      closeAIProviderDialog();
+    }
+  });
+
   // Focus/scroll to the requested section when opened via "Open Settings" from other pages.
   createEffect(() => {
     const seq = env.settingsFocusSeq();
@@ -2005,158 +2098,203 @@ export function EnvSettingsPage() {
   };
 
   // Save handlers
+  const buildRuntimeDraft = () => {
+    const body = runtimeView() === 'json' ? parseJSONOrThrow(runtimeJSON()) : buildRuntimePatch();
+    if (!isJSONObject(body)) throw new Error('Runtime JSON must be an object.');
+    return { body, signature: JSON.stringify(body) };
+  };
+
+  const buildLoggingDraft = () => {
+    const body = loggingView() === 'json' ? parseJSONOrThrow(loggingJSON()) : buildLoggingPatch();
+    if (!isJSONObject(body)) throw new Error('Logging JSON must be an object.');
+    return { body, signature: JSON.stringify(body) };
+  };
+
+  const buildCodespacesDraft = () => {
+    let body: any = null;
+    if (codespacesView() === 'json') {
+      body = parseJSONOrThrow(codespacesJSON());
+      if (!isJSONObject(body)) throw new Error('Codespaces JSON must be an object.');
+    } else {
+      if (!useDefaultCodePorts()) {
+        const min = codePortMin();
+        const max = codePortMax();
+        if (min === '' || max === '') throw new Error('Please provide both port min and port max.');
+        const n = normalizePortRange(Number(min), Number(max));
+        if (n.is_default) throw new Error('Invalid port range.');
+      }
+      body = buildCodespacesPatch();
+    }
+    return { body, signature: JSON.stringify(body) };
+  };
+
+  const buildPolicyDraft = () => {
+    let body: any = null;
+    if (policyView() === 'json') {
+      const v = parseJSONOrThrow(policyJSON());
+      if (!isJSONObject(v)) throw new Error('Permission policy JSON must be an object.');
+      body = { permission_policy: v };
+    } else {
+      const v = buildPolicyValue();
+      body = { permission_policy: v };
+    }
+    return { body, signature: JSON.stringify(body) };
+  };
+
+  const buildAIDraft = () => {
+    let cfg: AIConfig | null = null;
+    if (aiView() === 'json') {
+      const v = parseJSONOrThrow(aiJSON());
+      if (!isJSONObject(v)) throw new Error('Flower JSON must be an object.');
+      cfg = v as AIConfig;
+    } else {
+      cfg = buildAIValue();
+    }
+    validateAIValue(cfg);
+    const body = { ai: cfg };
+    return { body, signature: JSON.stringify(body) };
+  };
+
   const saveRuntime = async () => {
-    setRuntimeError(null);
+    let draft: { body: any; signature: string };
+    try {
+      draft = buildRuntimeDraft();
+      setRuntimeError(null);
+    } catch (e) {
+      setRuntimeError(formatUnknownError(e) || 'Save failed.');
+      return;
+    }
     setRuntimeSaving(true);
     try {
-      const body = runtimeView() === 'json' ? parseJSONOrThrow(runtimeJSON()) : buildRuntimePatch();
-      if (!isJSONObject(body)) throw new Error('Runtime JSON must be an object.');
-      await saveSettings(body);
-      setRuntimeDirty(false);
-      notify.success('Saved', 'Runtime settings saved. Restart required.');
+      await saveSettings(draft.body);
+      const now = Date.now();
+      setRuntimeSavedAt(now);
+      setRuntimeError(null);
+      let unchanged = false;
+      try {
+        unchanged = buildRuntimeDraft().signature === draft.signature;
+      } catch {
+        unchanged = false;
+      }
+      setRuntimeDirty(!unchanged);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setRuntimeError(msg || 'Save failed.');
-      notify.error('Save failed', msg || 'Request failed.');
+      setRuntimeError(formatUnknownError(e) || 'Save failed.');
     } finally {
       setRuntimeSaving(false);
     }
   };
 
-  const resetRuntime = () => {
-    setRuntimeError(null);
-    setRootDir('');
-    setShell('');
-    setRuntimeDirty(true);
-    if (runtimeView() === 'json') setRuntimeJSON(JSON.stringify({ root_dir: '', shell: '' }, null, 2));
-  };
-
   const saveLogging = async () => {
-    setLoggingError(null);
+    let draft: { body: any; signature: string };
+    try {
+      draft = buildLoggingDraft();
+      setLoggingError(null);
+    } catch (e) {
+      setLoggingError(formatUnknownError(e) || 'Save failed.');
+      return;
+    }
     setLoggingSaving(true);
     try {
-      const body = loggingView() === 'json' ? parseJSONOrThrow(loggingJSON()) : buildLoggingPatch();
-      if (!isJSONObject(body)) throw new Error('Logging JSON must be an object.');
-      await saveSettings(body);
-      setLoggingDirty(false);
-      notify.success('Saved', 'Logging settings saved. Restart required.');
+      await saveSettings(draft.body);
+      const now = Date.now();
+      setLoggingSavedAt(now);
+      setLoggingError(null);
+      let unchanged = false;
+      try {
+        unchanged = buildLoggingDraft().signature === draft.signature;
+      } catch {
+        unchanged = false;
+      }
+      setLoggingDirty(!unchanged);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setLoggingError(msg || 'Save failed.');
-      notify.error('Save failed', msg || 'Request failed.');
+      setLoggingError(formatUnknownError(e) || 'Save failed.');
     } finally {
       setLoggingSaving(false);
     }
   };
 
-  const resetLogging = () => {
-    setLoggingError(null);
-    setLogFormat('');
-    setLogLevel('');
-    setLoggingDirty(true);
-    if (loggingView() === 'json') setLoggingJSON(JSON.stringify({ log_format: '', log_level: '' }, null, 2));
-  };
-
   const saveCodespaces = async () => {
-    setCodespacesError(null);
+    let draft: { body: any; signature: string };
+    try {
+      draft = buildCodespacesDraft();
+      setCodespacesError(null);
+    } catch (e) {
+      setCodespacesError(formatUnknownError(e) || 'Save failed.');
+      return;
+    }
     setCodespacesSaving(true);
     try {
-      let body: any = null;
-      if (codespacesView() === 'json') {
-        body = parseJSONOrThrow(codespacesJSON());
-        if (!isJSONObject(body)) throw new Error('Codespaces JSON must be an object.');
-      } else {
-        if (!useDefaultCodePorts()) {
-          const min = codePortMin();
-          const max = codePortMax();
-          if (min === '' || max === '') throw new Error('Please provide both port min and port max.');
-          const n = normalizePortRange(Number(min), Number(max));
-          if (n.is_default) throw new Error('Invalid port range.');
-        }
-        body = buildCodespacesPatch();
+      await saveSettings(draft.body);
+      const now = Date.now();
+      setCodespacesSavedAt(now);
+      setCodespacesError(null);
+      let unchanged = false;
+      try {
+        unchanged = buildCodespacesDraft().signature === draft.signature;
+      } catch {
+        unchanged = false;
       }
-
-      await saveSettings(body);
-      setCodespacesDirty(false);
-      notify.success('Saved', 'Codespaces settings saved. Restart required.');
+      setCodespacesDirty(!unchanged);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setCodespacesError(msg || 'Save failed.');
-      notify.error('Save failed', msg || 'Request failed.');
+      setCodespacesError(formatUnknownError(e) || 'Save failed.');
     } finally {
       setCodespacesSaving(false);
     }
   };
 
-  const resetCodespaces = () => {
-    setCodespacesError(null);
-    setUseDefaultCodePorts(true);
-    setCodePortMin('');
-    setCodePortMax('');
-    setCodespacesDirty(true);
-    if (codespacesView() === 'json') {
-      setCodespacesJSON(JSON.stringify({ code_server_port_min: 0, code_server_port_max: 0 }, null, 2));
-    }
-  };
-
   const savePolicy = async () => {
-    setPolicyError(null);
+    let draft: { body: any; signature: string };
+    try {
+      draft = buildPolicyDraft();
+      setPolicyError(null);
+    } catch (e) {
+      setPolicyError(formatUnknownError(e) || 'Save failed.');
+      return;
+    }
     setPolicySaving(true);
     try {
-      let body: any = null;
-      if (policyView() === 'json') {
-        const v = parseJSONOrThrow(policyJSON());
-        if (!isJSONObject(v)) throw new Error('Permission policy JSON must be an object.');
-        body = { permission_policy: v };
-      } else {
-        const v = buildPolicyValue();
-        body = { permission_policy: v };
+      await saveSettings(draft.body);
+      const now = Date.now();
+      setPolicySavedAt(now);
+      setPolicyError(null);
+      let unchanged = false;
+      try {
+        unchanged = buildPolicyDraft().signature === draft.signature;
+      } catch {
+        unchanged = false;
       }
-
-      await saveSettings(body);
-      setPolicyDirty(false);
-      notify.success('Saved', 'Permission policy saved. Restart required.');
+      setPolicyDirty(!unchanged);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setPolicyError(msg || 'Save failed.');
-      notify.error('Save failed', msg || 'Request failed.');
+      setPolicyError(formatUnknownError(e) || 'Save failed.');
     } finally {
       setPolicySaving(false);
     }
   };
 
-  const resetPolicy = () => {
-    setPolicyError(null);
-    const d = defaultPermissionPolicy();
-    setPolicyLocalRead(d.local_max.read);
-    setPolicyLocalWrite(d.local_max.write);
-    setPolicyLocalExecute(d.local_max.execute);
-    setPolicyByUser([]);
-    setPolicyByApp([]);
-    setPolicyDirty(true);
-    if (policyView() === 'json') setPolicyJSON(JSON.stringify(d, null, 2));
-  };
-
   const saveAI = async () => {
-    setAiError(null);
+    let draft: { body: { ai: AIConfig | null }; signature: string };
+    try {
+      draft = buildAIDraft();
+      setAiError(null);
+    } catch (e) {
+      setAiError(formatUnknownError(e) || 'Save failed.');
+      return;
+    }
     setAiSaving(true);
     try {
-      let cfg: AIConfig | null = null;
-      if (aiView() === 'json') {
-        const v = parseJSONOrThrow(aiJSON());
-        if (!isJSONObject(v)) throw new Error('Flower JSON must be an object.');
-        cfg = v as AIConfig;
-      } else {
-        cfg = buildAIValue();
+      await saveSettings(draft.body);
+      const now = Date.now();
+      setAiSavedAt(now);
+      setAiError(null);
+      let unchanged = false;
+      try {
+        unchanged = buildAIDraft().signature === draft.signature;
+      } catch {
+        unchanged = false;
       }
-      validateAIValue(cfg);
-      await saveSettings({ ai: cfg });
-      setAiDirty(false);
-      notify.success('Saved', aiEnabled() ? 'Flower settings updated.' : 'Flower has been enabled.');
+      setAiDirty(!unchanged);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setAiError(msg || 'Save failed.');
-      notify.error('Save failed', msg || 'Request failed.');
+      setAiError(formatUnknownError(e) || 'Save failed.');
     } finally {
       setAiSaving(false);
     }
@@ -2167,6 +2305,7 @@ export function EnvSettingsPage() {
     setAiError(null);
     try {
       await saveSettings({ ai: null });
+      setAiSavedAt(Date.now());
       setAiDirty(false);
       setDisableAIOpen(false);
       notify.success('Disabled', 'Flower has been disabled.');
@@ -2179,31 +2318,139 @@ export function EnvSettingsPage() {
     }
   };
 
-  const resetAI = () => {
-    setAiError(null);
-    const d = defaultAIConfig();
-    const executionPolicy = readAIExecutionPolicy(d);
-    setAiRequireUserApproval(!!executionPolicy.require_user_approval);
-    setAiEnforcePlanModeGuard(!!executionPolicy.enforce_plan_mode_guard);
-    setAiBlockDangerousCommands(!!executionPolicy.block_dangerous_commands);
-    setAiPreservedFields(readAIPreservedFields(d));
-    setAiWebSearchProvider(normalizeWebSearchProvider((d as any).web_search_provider));
-    const rows: AIProviderRow[] = (d.providers ?? []).map((p) => ({
-      id: String(p.id ?? ''),
-      name: String(p.name ?? ''),
-      type: p.type,
-      base_url: String(p.base_url ?? ''),
-      models: (p.models ?? []).map((m) => ({
-        model_name: String(m.model_name ?? ''),
-        is_default: !!m.is_default,
-      })),
-    }));
-    setAiProviders(normalizeAIProviders(rows));
-    setAiDirty(true);
-    void refreshAIProviderKeyStatus(d.providers.map((p) => String(p.id ?? '')));
-    void refreshWebSearchKeyStatus(['brave']);
-    if (aiView() === 'json') setAiJSON(JSON.stringify(d, null, 2));
+  let runtimeAutoSaveTimer: number | null = null;
+  let loggingAutoSaveTimer: number | null = null;
+  let codespacesAutoSaveTimer: number | null = null;
+  let policyAutoSaveTimer: number | null = null;
+  let aiAutoSaveTimer: number | null = null;
+
+  const clearAutoSaveTimer = (timer: number | null): null => {
+    if (timer != null) window.clearTimeout(timer);
+    return null;
   };
+
+  createEffect(() => {
+    const dirty = runtimeDirty();
+    const canAutoSave = canInteract() && !runtimeSaving();
+    if (!dirty || !canAutoSave) {
+      runtimeAutoSaveTimer = clearAutoSaveTimer(runtimeAutoSaveTimer);
+      return;
+    }
+    try {
+      buildRuntimeDraft();
+      setRuntimeError(null);
+    } catch (e) {
+      runtimeAutoSaveTimer = clearAutoSaveTimer(runtimeAutoSaveTimer);
+      setRuntimeError(formatUnknownError(e) || 'Save failed.');
+      return;
+    }
+    runtimeAutoSaveTimer = clearAutoSaveTimer(runtimeAutoSaveTimer);
+    runtimeAutoSaveTimer = window.setTimeout(() => {
+      runtimeAutoSaveTimer = null;
+      if (!runtimeDirty() || runtimeSaving() || !canInteract()) return;
+      void saveRuntime();
+    }, AUTO_SAVE_DELAY_MS);
+  });
+
+  createEffect(() => {
+    const dirty = loggingDirty();
+    const canAutoSave = canInteract() && !loggingSaving();
+    if (!dirty || !canAutoSave) {
+      loggingAutoSaveTimer = clearAutoSaveTimer(loggingAutoSaveTimer);
+      return;
+    }
+    try {
+      buildLoggingDraft();
+      setLoggingError(null);
+    } catch (e) {
+      loggingAutoSaveTimer = clearAutoSaveTimer(loggingAutoSaveTimer);
+      setLoggingError(formatUnknownError(e) || 'Save failed.');
+      return;
+    }
+    loggingAutoSaveTimer = clearAutoSaveTimer(loggingAutoSaveTimer);
+    loggingAutoSaveTimer = window.setTimeout(() => {
+      loggingAutoSaveTimer = null;
+      if (!loggingDirty() || loggingSaving() || !canInteract()) return;
+      void saveLogging();
+    }, AUTO_SAVE_DELAY_MS);
+  });
+
+  createEffect(() => {
+    const dirty = codespacesDirty();
+    const canAutoSave = canInteract() && !codespacesSaving();
+    if (!dirty || !canAutoSave) {
+      codespacesAutoSaveTimer = clearAutoSaveTimer(codespacesAutoSaveTimer);
+      return;
+    }
+    try {
+      buildCodespacesDraft();
+      setCodespacesError(null);
+    } catch (e) {
+      codespacesAutoSaveTimer = clearAutoSaveTimer(codespacesAutoSaveTimer);
+      setCodespacesError(formatUnknownError(e) || 'Save failed.');
+      return;
+    }
+    codespacesAutoSaveTimer = clearAutoSaveTimer(codespacesAutoSaveTimer);
+    codespacesAutoSaveTimer = window.setTimeout(() => {
+      codespacesAutoSaveTimer = null;
+      if (!codespacesDirty() || codespacesSaving() || !canInteract()) return;
+      void saveCodespaces();
+    }, AUTO_SAVE_DELAY_MS);
+  });
+
+  createEffect(() => {
+    const dirty = policyDirty();
+    const canAutoSave = canInteract() && !policySaving();
+    if (!dirty || !canAutoSave) {
+      policyAutoSaveTimer = clearAutoSaveTimer(policyAutoSaveTimer);
+      return;
+    }
+    try {
+      buildPolicyDraft();
+      setPolicyError(null);
+    } catch (e) {
+      policyAutoSaveTimer = clearAutoSaveTimer(policyAutoSaveTimer);
+      setPolicyError(formatUnknownError(e) || 'Save failed.');
+      return;
+    }
+    policyAutoSaveTimer = clearAutoSaveTimer(policyAutoSaveTimer);
+    policyAutoSaveTimer = window.setTimeout(() => {
+      policyAutoSaveTimer = null;
+      if (!policyDirty() || policySaving() || !canInteract()) return;
+      void savePolicy();
+    }, AUTO_SAVE_DELAY_MS);
+  });
+
+  createEffect(() => {
+    const dirty = aiDirty();
+    const canAutoSave = canInteract() && !aiSaving() && !disableAISaving();
+    if (!dirty || !canAutoSave) {
+      aiAutoSaveTimer = clearAutoSaveTimer(aiAutoSaveTimer);
+      return;
+    }
+    try {
+      buildAIDraft();
+      setAiError(null);
+    } catch (e) {
+      aiAutoSaveTimer = clearAutoSaveTimer(aiAutoSaveTimer);
+      setAiError(formatUnknownError(e) || 'Save failed.');
+      return;
+    }
+    aiAutoSaveTimer = clearAutoSaveTimer(aiAutoSaveTimer);
+    aiAutoSaveTimer = window.setTimeout(() => {
+      aiAutoSaveTimer = null;
+      if (!aiDirty() || aiSaving() || disableAISaving() || !canInteract()) return;
+      void saveAI();
+    }, AUTO_SAVE_DELAY_MS);
+  });
+
+  onCleanup(() => {
+    runtimeAutoSaveTimer = clearAutoSaveTimer(runtimeAutoSaveTimer);
+    loggingAutoSaveTimer = clearAutoSaveTimer(loggingAutoSaveTimer);
+    codespacesAutoSaveTimer = clearAutoSaveTimer(codespacesAutoSaveTimer);
+    policyAutoSaveTimer = clearAutoSaveTimer(policyAutoSaveTimer);
+    aiAutoSaveTimer = clearAutoSaveTimer(aiAutoSaveTimer);
+  });
 
   // When local max is tightened, clamp row-level caps to avoid confusing "true but ineffective" UI.
   createEffect(() => {
@@ -2274,7 +2521,7 @@ export function EnvSettingsPage() {
           <div>
             <h1 class="text-xl font-semibold text-foreground tracking-tight">Settings</h1>
             <p class="text-sm text-muted-foreground mt-1 leading-relaxed">
-              Configure your agent. Flower changes apply immediately; other changes require a restart.
+              Configure your agent. Settings are auto-saved when valid, and most runtime changes require a restart.
             </p>
           </div>
           <Button size="sm" variant="outline" onClick={() => void refetch()} disabled={settings.loading} class="gap-1.5 self-start">
@@ -2449,12 +2696,13 @@ export function EnvSettingsPage() {
             actions={
               <>
                 <ViewToggle value={runtimeView} disabled={!canInteract()} onChange={(v) => switchRuntimeView(v)} />
-                <Button size="sm" variant="outline" onClick={() => resetRuntime()} disabled={!canInteract()}>
-                  Reset
-                </Button>
-                <Button size="sm" variant="default" onClick={() => void saveRuntime()} loading={runtimeSaving()} disabled={!canInteract()}>
-                  Save
-                </Button>
+                <AutoSaveIndicator
+                  dirty={runtimeDirty()}
+                  saving={runtimeSaving()}
+                  error={runtimeError()}
+                  savedAt={runtimeSavedAt()}
+                  enabled={canInteract()}
+                />
               </>
             }
           >
@@ -2518,12 +2766,13 @@ export function EnvSettingsPage() {
             actions={
               <>
                 <ViewToggle value={loggingView} disabled={!canInteract()} onChange={(v) => switchLoggingView(v)} />
-                <Button size="sm" variant="outline" onClick={() => resetLogging()} disabled={!canInteract()}>
-                  Reset
-                </Button>
-                <Button size="sm" variant="default" onClick={() => void saveLogging()} loading={loggingSaving()} disabled={!canInteract()}>
-                  Save
-                </Button>
+                <AutoSaveIndicator
+                  dirty={loggingDirty()}
+                  saving={loggingSaving()}
+                  error={loggingError()}
+                  savedAt={loggingSavedAt()}
+                  enabled={canInteract()}
+                />
               </>
             }
           >
@@ -2595,12 +2844,13 @@ export function EnvSettingsPage() {
             actions={
               <>
                 <ViewToggle value={codespacesView} disabled={!canInteract()} onChange={(v) => switchCodespacesView(v)} />
-                <Button size="sm" variant="outline" onClick={() => resetCodespaces()} disabled={!canInteract()}>
-                  Reset
-                </Button>
-                <Button size="sm" variant="default" onClick={() => void saveCodespaces()} loading={codespacesSaving()} disabled={!canInteract()}>
-                  Save
-                </Button>
+                <AutoSaveIndicator
+                  dirty={codespacesDirty()}
+                  saving={codespacesSaving()}
+                  error={codespacesError()}
+                  savedAt={codespacesSavedAt()}
+                  enabled={canInteract()}
+                />
               </>
             }
           >
@@ -2697,12 +2947,13 @@ export function EnvSettingsPage() {
             actions={
               <>
                 <ViewToggle value={policyView} disabled={!canInteract()} onChange={(v) => switchPolicyView(v)} />
-                <Button size="sm" variant="outline" onClick={() => resetPolicy()} disabled={!canInteract()}>
-                  Reset
-                </Button>
-                <Button size="sm" variant="default" onClick={() => void savePolicy()} loading={policySaving()} disabled={!canInteract()}>
-                  Save
-                </Button>
+                <AutoSaveIndicator
+                  dirty={policyDirty()}
+                  saving={policySaving()}
+                  error={policyError()}
+                  savedAt={policySavedAt()}
+                  enabled={canInteract()}
+                />
               </>
             }
           >
@@ -3117,24 +3368,25 @@ export function EnvSettingsPage() {
           <SettingsCard
             icon={FlowerIcon}
             title="Flower"
-            description="Configure Flower: providers, models, and API keys. Keys are stored locally and never sent to the control-plane. Model selection is stored per chat thread."
+            description="Configure Flower: providers, models, and API keys. Changes are auto-saved when the form is valid."
             badge={aiEnabled() ? 'Enabled' : 'Disabled'}
             badgeVariant={aiEnabled() ? 'success' : 'default'}
             error={aiError()}
             actions={
               <>
                 <ViewToggle value={aiView} disabled={!canInteract()} onChange={(v) => switchAIView(v)} />
-                <Button size="sm" variant="outline" onClick={() => resetAI()} disabled={!canInteract() || aiSaving()}>
-                  Reset
-                </Button>
+                <AutoSaveIndicator
+                  dirty={aiDirty()}
+                  saving={aiSaving()}
+                  error={aiError()}
+                  savedAt={aiSavedAt()}
+                  enabled={canInteract()}
+                />
                 <Show when={aiEnabled()}>
                   <Button size="sm" variant="destructive" onClick={() => setDisableAIOpen(true)} disabled={!canInteract() || aiSaving()}>
                     Disable Flower
                   </Button>
                 </Show>
-                <Button size="sm" variant="default" onClick={() => void saveAI()} loading={aiSaving()} disabled={!canInteract()}>
-                  {aiEnabled() ? 'Save' : 'Enable Flower'}
-                </Button>
               </>
             }
           >
@@ -3142,7 +3394,7 @@ export function EnvSettingsPage() {
               <div class="flex items-center gap-3 p-4 rounded-lg bg-muted/30 border border-border">
                 <Zap class="w-5 h-5 text-muted-foreground" />
                 <div class="text-sm text-muted-foreground">
-                  Flower is currently disabled. Configure the settings below and click <strong>Enable Flower</strong> to activate.
+                  Flower is currently disabled. Once the settings below become valid, Flower will be enabled automatically.
                 </div>
               </div>
             </Show>
@@ -3168,37 +3420,43 @@ export function EnvSettingsPage() {
                     title="Execution policy"
                     description="Runtime guardrails for approvals, plan-mode blocking, and dangerous commands."
                   />
-                  <div class="space-y-3 p-4 rounded-lg border border-border bg-muted/20">
-                    <Checkbox
-                      checked={aiRequireUserApproval()}
-                      onChange={(v) => {
-                        setAiRequireUserApproval(v);
-                        setAiDirty(true);
-                      }}
-                      disabled={!canInteract()}
-                      label="Require user approval for mutating tools"
-                      size="sm"
-                    />
-                    <Checkbox
-                      checked={aiEnforcePlanModeGuard()}
-                      onChange={(v) => {
-                        setAiEnforcePlanModeGuard(v);
-                        setAiDirty(true);
-                      }}
-                      disabled={!canInteract()}
-                      label="Enforce plan mode guard (block mutating tools in plan mode)"
-                      size="sm"
-                    />
-                    <Checkbox
-                      checked={aiBlockDangerousCommands()}
-                      onChange={(v) => {
-                        setAiBlockDangerousCommands(v);
-                        setAiDirty(true);
-                      }}
-                      disabled={!canInteract()}
-                      label="Block dangerous terminal commands"
-                      size="sm"
-                    />
+                  <div class="space-y-2 p-4 rounded-lg border border-border bg-muted/20">
+                    <div class="settings-policy-toggle-row">
+                      <Checkbox
+                        checked={aiRequireUserApproval()}
+                        onChange={(v) => {
+                          setAiRequireUserApproval(v);
+                          setAiDirty(true);
+                        }}
+                        disabled={!canInteract()}
+                        label="Require user approval for mutating tools"
+                        size="sm"
+                      />
+                    </div>
+                    <div class="settings-policy-toggle-row">
+                      <Checkbox
+                        checked={aiEnforcePlanModeGuard()}
+                        onChange={(v) => {
+                          setAiEnforcePlanModeGuard(v);
+                          setAiDirty(true);
+                        }}
+                        disabled={!canInteract()}
+                        label="Enforce plan mode guard (block mutating tools in plan mode)"
+                        size="sm"
+                      />
+                    </div>
+                    <div class="settings-policy-toggle-row">
+                      <Checkbox
+                        checked={aiBlockDangerousCommands()}
+                        onChange={(v) => {
+                          setAiBlockDangerousCommands(v);
+                          setAiDirty(true);
+                        }}
+                        disabled={!canInteract()}
+                        label="Block dangerous terminal commands"
+                        size="sm"
+                      />
+                    </div>
                   </div>
                   <Show when={!aiBlockDangerousCommands()}>
                     <div class="flex items-start gap-2.5 p-3 rounded-lg border border-warning/50 bg-warning/10">
@@ -3303,22 +3561,7 @@ export function EnvSettingsPage() {
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={() => {
-                          const id = newProviderID();
-                          setAiProviders((prev) =>
-                            normalizeAIProviders([
-                              ...prev,
-                              {
-                                id,
-                                name: '',
-                                type: 'openai',
-                                base_url: 'https://api.openai.com/v1',
-                                models: [{ model_name: '', is_default: false }],
-                              },
-                            ]),
-                          );
-                          setAiDirty(true);
-                        }}
+                        onClick={() => addAIProviderAndOpenDialog()}
                         disabled={!canInteract()}
                       >
                         Add Provider
@@ -3326,267 +3569,68 @@ export function EnvSettingsPage() {
                     }
                   />
 
-                  <div class="space-y-4">
-                    <Index each={aiProviders()}>
-                      {(p, idx) => (
-                        <div class="rounded-lg border border-border overflow-hidden">
-                          {/* Provider header */}
-                          <div class="flex items-center justify-between px-4 py-2.5 bg-muted/30 border-b border-border">
-                            <div class="flex items-center gap-2">
-                              <Layers class="w-3.5 h-3.5 text-muted-foreground" />
-                              <span class="text-xs font-semibold tracking-wide uppercase text-muted-foreground">Provider {idx + 1}</span>
-                              <Show when={p().name}>
-                                <span class="text-xs text-foreground font-medium">&mdash; {p().name}</span>
-                              </Show>
-                            </div>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              class="text-muted-foreground hover:text-destructive h-7 px-2 text-xs"
-                              onClick={() => {
-                                setAiProviders((prev) => normalizeAIProviders(prev.filter((_, i) => i !== idx)));
-                                setAiDirty(true);
-                              }}
-                              disabled={!canInteract() || aiProviders().length <= 1}
-                            >
-                              Remove
-                            </Button>
-                          </div>
-
-                          <div class="p-4 space-y-4">
-                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-	                            <div>
-                              <FieldLabel hint="optional">name</FieldLabel>
-                              <Input
-                                value={p().name}
-                                onInput={(e) => {
-                                  const v = e.currentTarget.value;
-                                  setAiProviders((prev) => prev.map((it, i) => (i === idx ? { ...it, name: v } : it)));
-                                  setAiDirty(true);
-                                }}
-                                placeholder="OpenAI"
-                                size="sm"
-                                class="w-full"
-                                disabled={!canInteract()}
-                              />
-                            </div>
-                            <div>
-                              <FieldLabel>type</FieldLabel>
-                              <Select
-                                value={p().type}
-                                onChange={(v) => {
-                                  setAiProviders((prev) => prev.map((it, i) => (i === idx ? { ...it, type: v as AIProviderType } : it)));
-                                  setAiDirty(true);
-                                }}
-                                disabled={!canInteract()}
-                                options={[
-                                  { value: 'openai', label: 'openai' },
-	                                  { value: 'anthropic', label: 'anthropic' },
-	                                  { value: 'openai_compatible', label: 'openai_compatible' },
-                                  { value: 'moonshot', label: 'moonshot' },
-	                                ]}
-	                                class="w-full"
-	                              />
-	                            </div>
-	                            <div class="md:col-span-2">
-	                              <FieldLabel hint="read-only">provider_id</FieldLabel>
-	                              <Input value={String(p().id ?? '')} size="sm" class="w-full font-mono" disabled />
-	                            </div>
-	                            <div class="md:col-span-2">
-	                              <FieldLabel hint={p().type === 'openai_compatible' || p().type === 'moonshot' ? 'required' : 'optional'}>base_url</FieldLabel>
-                              <Input
-                                value={p().base_url}
-                                onInput={(e) => {
-                                  const v = e.currentTarget.value;
-                                  setAiProviders((prev) => prev.map((it, i) => (i === idx ? { ...it, base_url: v } : it)));
-                                  setAiDirty(true);
-                                }}
-                                placeholder={p().type === 'openai_compatible' ? 'https://api.example.com/v1' : p().type === 'moonshot' ? 'https://api.moonshot.cn/v1' : 'https://api.openai.com/v1'}
-                                size="sm"
-                                class="w-full"
-                                disabled={!canInteract()}
-                              />
-	                            </div>
-
-	                            <div class="md:col-span-2 space-y-2">
-	                              <FieldLabel hint="stored locally, never shown again">api_key</FieldLabel>
-	                              <div class="flex flex-col sm:flex-row sm:items-center gap-2">
-	                                <div
-	                                  class={
-	                                    'text-xs px-2 py-1 rounded-md border ' +
-	                                    (aiProviderKeySet()?.[String(p().id ?? '').trim()]
-	                                      ? 'bg-success/10 border-success/50 text-success'
-	                                      : 'bg-muted/40 border-border text-muted-foreground')
-	                                  }
-	                                >
-	                                  {aiProviderKeySet()?.[String(p().id ?? '').trim()] ? 'Key set' : 'Key not set'}
-	                                </div>
-	                                <Input
-	                                  type="password"
-	                                  value={aiProviderKeyDraft()?.[String(p().id ?? '').trim()] ?? ''}
-	                                  onInput={(e) => {
-	                                    const id = String(p().id ?? '').trim();
-	                                    const v = e.currentTarget.value;
-	                                    if (!id) return;
-	                                    setAiProviderKeyDraft((prev) => ({ ...prev, [id]: v }));
-	                                  }}
-	                                  placeholder="Paste API key"
-	                                  size="sm"
-	                                  class="w-full"
-	                                  disabled={!canInteract() || !canAdmin() || !String(p().id ?? '').trim()}
-	                                />
-	                                <Button
-	                                  size="sm"
-	                                  variant="outline"
-	                                  onClick={() => saveAIProviderKey(String(p().id ?? '').trim())}
-	                                  loading={!!aiProviderKeySaving()?.[String(p().id ?? '').trim()]}
-	                                  disabled={!canInteract() || !canAdmin() || !String(p().id ?? '').trim()}
-	                                >
-	                                  Save key
-	                                </Button>
-	                                <Button
-	                                  size="sm"
-	                                  variant="ghost"
-	                                  class="text-muted-foreground hover:text-destructive"
-	                                  onClick={() => clearAIProviderKey(String(p().id ?? '').trim())}
-	                                  disabled={!canInteract() || !canAdmin() || !String(p().id ?? '').trim()}
-	                                >
-	                                  Clear
-	                                </Button>
-	                              </div>
-		                              <p class="text-xs text-muted-foreground">
-		                                Keys are saved in a separate local secrets file and are never written to config.json. The Go AI runtime resolves them per run.
-		                              </p>
-		                            </div>
-
-                                <div class="md:col-span-2 space-y-3">
-                                  <SubSectionHeader
-                                    title="Models"
-                                    description="Shown in Flower Chat. Mark one model as default."
-                                    actions={
-                                      <Button
-                                        size="sm"
-                                        variant="outline"
-                                        onClick={() => {
-                                          setAiProviders((prev) =>
-                                            normalizeAIProviders(
-                                              prev.map((it, i) => {
-                                                if (i !== idx) return it;
-                                                const models = Array.isArray(it.models) ? it.models : [];
-                                                return { ...it, models: [...models, { model_name: '', is_default: false }] };
-                                              }),
-                                            ),
-                                          );
-                                          setAiDirty(true);
-                                        }}
-                                        disabled={!canInteract()}
-                                      >
-                                        Add Model
-                                      </Button>
-                                    }
-                                  />
-
-                                  <div class="space-y-2">
-                                    <Index each={p().models}>
-                                      {(m, midx) => (
-                                        <div class="flex flex-col sm:flex-row sm:items-center gap-2 p-3 rounded-lg border border-border bg-background">
-                                          <div class="flex-1 min-w-0">
-                                            <Input
-                                              value={m().model_name}
-                                              onInput={(e) => {
-                                                const v = e.currentTarget.value;
-                                                setAiProviders((prev) =>
-                                                  prev.map((it, i) =>
-                                                    i !== idx
-                                                      ? it
-                                                      : {
-                                                          ...it,
-                                                          models: (Array.isArray(it.models) ? it.models : []).map((mm, j) =>
-                                                            j === midx ? { ...mm, model_name: v } : mm,
-                                                          ),
-                                                        },
-                                                  ),
-                                                );
-                                                setAiDirty(true);
-                                              }}
-                                              placeholder="model_name"
-                                              size="sm"
-                                              class="w-full font-mono text-xs"
-                                              disabled={!canInteract()}
-                                            />
-                                          </div>
-                                          <div class="flex items-center gap-2 flex-shrink-0">
-                                            <Show
-                                              when={m().is_default}
-                                              fallback={
-                                                <Button
-                                                  size="sm"
-                                                  variant="outline"
-                                                  class="h-6 px-2 text-[11px]"
-                                                  onClick={() => {
-                                                    setAiProviders((prev) =>
-                                                      normalizeAIProviders(
-                                                        prev.map((it, i) => ({
-                                                          ...it,
-                                                          models: (Array.isArray(it.models) ? it.models : []).map((mm, j) => ({
-                                                            ...mm,
-                                                            is_default: i === idx && j === midx,
-                                                          })),
-                                                        })),
-                                                      ),
-                                                    );
-                                                    setAiDirty(true);
-                                                  }}
-                                                  disabled={!canInteract()}
-                                                >
-                                                  Set default
-                                                </Button>
-                                              }
-                                            >
-                                              <span class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
-                                                Default
-                                              </span>
-                                            </Show>
-                                            <Button
-                                              size="sm"
-                                              variant="ghost"
-                                              class="text-muted-foreground hover:text-destructive h-7 w-7 p-0"
-                                              onClick={() => {
-                                                setAiProviders((prev) =>
-                                                  normalizeAIProviders(
-                                                    prev.map((it, i) => {
-                                                      if (i !== idx) return it;
-                                                      const models = (Array.isArray(it.models) ? it.models : []).filter((_, j) => j !== midx);
-                                                      return { ...it, models: models.length > 0 ? models : [{ model_name: '', is_default: false }] };
-                                                    }),
-                                                  ),
-                                                );
-                                                setAiDirty(true);
-                                              }}
-                                              disabled={!canInteract() || (p().models?.length ?? 0) <= 1}
-                                            >
-                                              &times;
-                                            </Button>
-                                          </div>
-                                          <Show when={m().model_name}>
-                                            <div class="text-[10px] text-muted-foreground font-mono sm:hidden">
-                                              {modelID(p().id, m().model_name)}
-                                            </div>
-                                          </Show>
-                                        </div>
-                                      )}
-                                    </Index>
+                  <div class="rounded-lg border border-border bg-muted/10 p-3 space-y-3">
+                    <div class="text-xs text-muted-foreground">{aiProviders().length} provider(s) configured.</div>
+                    <div class="space-y-2">
+                      <For each={aiProviders()}>
+                        {(provider, idx) => {
+                          const providerID = () => String(provider.id ?? '').trim();
+                          const displayName = () => String(provider.name ?? '').trim() || providerID() || `Provider ${idx() + 1}`;
+                          const defaultModel = () => String(provider.models?.find((m) => !!m.is_default)?.model_name ?? '').trim();
+                          return (
+                            <div class="rounded-lg border border-border bg-background px-3 py-2.5">
+                              <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                                <div class="min-w-0 space-y-1">
+                                  <div class="flex items-center gap-2 flex-wrap">
+                                    <span class="text-sm font-semibold text-foreground">{displayName()}</span>
+                                    <span class="text-[10px] font-medium px-2 py-0.5 rounded-full bg-muted text-muted-foreground border border-border">
+                                      {provider.type}
+                                    </span>
+                                    <Show when={aiProviderKeySet()?.[providerID()]}>
+                                      <span class="text-[10px] font-medium px-2 py-0.5 rounded-full bg-success/10 text-success border border-success/30">
+                                        Key set
+                                      </span>
+                                    </Show>
+                                  </div>
+                                  <div class="text-[11px] text-muted-foreground">
+                                    ID: <span class="font-mono">{providerID() || '—'}</span>
+                                  </div>
+                                  <div class="text-[11px] text-muted-foreground">
+                                    {provider.models?.length ?? 0} model(s)
+                                    <Show when={defaultModel()}>
+                                      <span class="ml-2">
+                                        Default: <span class="font-mono">{defaultModel()}</span>
+                                      </span>
+                                    </Show>
                                   </div>
                                 </div>
+                                <div class="flex items-center gap-2">
+                                  <Button size="sm" variant="outline" onClick={() => openAIProviderDialog(idx())} disabled={!canInteract()}>
+                                    Edit
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    class="text-muted-foreground hover:text-destructive"
+                                    onClick={() => {
+                                      setAiProviders((prev) => normalizeAIProviders(prev.filter((_, i) => i !== idx())));
+                                      setAiDirty(true);
+                                    }}
+                                    disabled={!canInteract() || aiProviders().length <= 1}
+                                  >
+                                    Remove
+                                  </Button>
+                                </div>
+                              </div>
                             </div>
-                          </div>
-                        </div>
-                      )}
-                    </Index>
+                          );
+                        }}
+                      </For>
+                    </div>
                   </div>
                 </div>
 
-	              </div>
+              </div>
             </Show>
           </SettingsCard>
         </div>
@@ -3594,6 +3638,279 @@ export function EnvSettingsPage() {
           </div>
         </div>
       </div>
+
+      <Dialog
+        open={aiProviderDialogOpen()}
+        onOpenChange={(open) => {
+          if (open) {
+            setAiProviderDialogOpen(true);
+            return;
+          }
+          closeAIProviderDialog();
+        }}
+        title="Edit provider"
+        footer={
+          <div class="flex justify-end">
+            <Button size="sm" variant="outline" onClick={() => closeAIProviderDialog()}>
+              Done
+            </Button>
+          </div>
+        }
+      >
+        <Show when={aiProviderDialogProvider()} fallback={<div class="text-sm text-muted-foreground">Provider was removed.</div>}>
+          {(provider) => {
+            const providerID = () => String(provider().id ?? '').trim();
+            const providerIndex = () => aiProviderDialogIndex();
+            return (
+              <div class="space-y-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <FieldLabel hint="optional">name</FieldLabel>
+                    <Input
+                      value={provider().name}
+                      onInput={(e) => {
+                        const idx = providerIndex();
+                        if (idx == null) return;
+                        const v = e.currentTarget.value;
+                        setAiProviders((prev) => prev.map((it, i) => (i === idx ? { ...it, name: v } : it)));
+                        setAiDirty(true);
+                      }}
+                      placeholder="OpenAI"
+                      size="sm"
+                      class="w-full"
+                      disabled={!canInteract()}
+                    />
+                  </div>
+                  <div>
+                    <FieldLabel>type</FieldLabel>
+                    <Select
+                      value={provider().type}
+                      onChange={(v) => {
+                        const idx = providerIndex();
+                        if (idx == null) return;
+                        setAiProviders((prev) => prev.map((it, i) => (i === idx ? { ...it, type: v as AIProviderType } : it)));
+                        setAiDirty(true);
+                      }}
+                      disabled={!canInteract()}
+                      options={[
+                        { value: 'openai', label: 'openai' },
+                        { value: 'anthropic', label: 'anthropic' },
+                        { value: 'openai_compatible', label: 'openai_compatible' },
+                        { value: 'moonshot', label: 'moonshot' },
+                      ]}
+                      class="w-full"
+                    />
+                  </div>
+                  <div class="md:col-span-2">
+                    <FieldLabel hint="read-only">provider_id</FieldLabel>
+                    <Input value={providerID()} size="sm" class="w-full font-mono" disabled />
+                  </div>
+                  <div class="md:col-span-2">
+                    <FieldLabel hint={provider().type === 'openai_compatible' || provider().type === 'moonshot' ? 'required' : 'optional'}>
+                      base_url
+                    </FieldLabel>
+                    <Input
+                      value={provider().base_url}
+                      onInput={(e) => {
+                        const idx = providerIndex();
+                        if (idx == null) return;
+                        const v = e.currentTarget.value;
+                        setAiProviders((prev) => prev.map((it, i) => (i === idx ? { ...it, base_url: v } : it)));
+                        setAiDirty(true);
+                      }}
+                      placeholder={
+                        provider().type === 'openai_compatible'
+                          ? 'https://api.example.com/v1'
+                          : provider().type === 'moonshot'
+                            ? 'https://api.moonshot.cn/v1'
+                            : 'https://api.openai.com/v1'
+                      }
+                      size="sm"
+                      class="w-full"
+                      disabled={!canInteract()}
+                    />
+                  </div>
+                </div>
+
+                <div class="space-y-2 rounded-lg border border-border bg-muted/20 p-3">
+                  <FieldLabel hint="stored locally, never shown again">api_key</FieldLabel>
+                  <div class="flex flex-col sm:flex-row sm:items-center gap-2">
+                    <div
+                      class={
+                        'text-xs px-2 py-1 rounded-md border ' +
+                        (aiProviderKeySet()?.[providerID()] ? 'bg-success/10 border-success/50 text-success' : 'bg-muted/40 border-border text-muted-foreground')
+                      }
+                    >
+                      {aiProviderKeySet()?.[providerID()] ? 'Key set' : 'Key not set'}
+                    </div>
+                    <Input
+                      type="password"
+                      value={aiProviderKeyDraft()?.[providerID()] ?? ''}
+                      onInput={(e) => {
+                        const id = providerID();
+                        if (!id) return;
+                        const v = e.currentTarget.value;
+                        setAiProviderKeyDraft((prev) => ({ ...prev, [id]: v }));
+                      }}
+                      placeholder="Paste API key"
+                      size="sm"
+                      class="w-full"
+                      disabled={!canInteract() || !canAdmin() || !providerID()}
+                    />
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => saveAIProviderKey(providerID())}
+                      loading={!!aiProviderKeySaving()?.[providerID()]}
+                      disabled={!canInteract() || !canAdmin() || !providerID()}
+                    >
+                      Save key
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      class="text-muted-foreground hover:text-destructive"
+                      onClick={() => clearAIProviderKey(providerID())}
+                      disabled={!canInteract() || !canAdmin() || !providerID()}
+                    >
+                      Clear
+                    </Button>
+                  </div>
+                  <p class="text-xs text-muted-foreground">
+                    Keys are saved in a separate local secrets file and are never written to config.json. The Go AI runtime resolves them per run.
+                  </p>
+                </div>
+
+                <div class="space-y-3">
+                  <SubSectionHeader
+                    title="Models"
+                    description="Shown in Flower Chat. Mark one model as default."
+                    actions={
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          const idx = providerIndex();
+                          if (idx == null) return;
+                          setAiProviders((prev) =>
+                            normalizeAIProviders(
+                              prev.map((it, i) => {
+                                if (i !== idx) return it;
+                                const models = Array.isArray(it.models) ? it.models : [];
+                                return { ...it, models: [...models, { model_name: '', is_default: false }] };
+                              }),
+                            ),
+                          );
+                          setAiDirty(true);
+                        }}
+                        disabled={!canInteract()}
+                      >
+                        Add Model
+                      </Button>
+                    }
+                  />
+
+                  <div class="space-y-2">
+                    <Index each={provider().models}>
+                      {(model, modelIndex) => (
+                        <div class="flex flex-col sm:flex-row sm:items-center gap-2 p-3 rounded-lg border border-border bg-background">
+                          <div class="flex-1 min-w-0">
+                            <Input
+                              value={model().model_name}
+                              onInput={(e) => {
+                                const idx = providerIndex();
+                                if (idx == null) return;
+                                const v = e.currentTarget.value;
+                                setAiProviders((prev) =>
+                                  prev.map((it, i) =>
+                                    i !== idx
+                                      ? it
+                                      : {
+                                          ...it,
+                                          models: (Array.isArray(it.models) ? it.models : []).map((itModel, j) =>
+                                            j === modelIndex ? { ...itModel, model_name: v } : itModel,
+                                          ),
+                                        },
+                                  ),
+                                );
+                                setAiDirty(true);
+                              }}
+                              placeholder="model_name"
+                              size="sm"
+                              class="w-full font-mono text-xs"
+                              disabled={!canInteract()}
+                            />
+                          </div>
+                          <div class="flex items-center gap-2 flex-shrink-0">
+                            <Show
+                              when={model().is_default}
+                              fallback={
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  class="h-6 px-2 text-[11px]"
+                                  onClick={() => {
+                                    const idx = providerIndex();
+                                    if (idx == null) return;
+                                    setAiProviders((prev) =>
+                                      normalizeAIProviders(
+                                        prev.map((it, i) => ({
+                                          ...it,
+                                          models: (Array.isArray(it.models) ? it.models : []).map((itModel, j) => ({
+                                            ...itModel,
+                                            is_default: i === idx && j === modelIndex,
+                                          })),
+                                        })),
+                                      ),
+                                    );
+                                    setAiDirty(true);
+                                  }}
+                                  disabled={!canInteract()}
+                                >
+                                  Set default
+                                </Button>
+                              }
+                            >
+                              <span class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
+                                Default
+                              </span>
+                            </Show>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              class="text-muted-foreground hover:text-destructive h-7 w-7 p-0"
+                              onClick={() => {
+                                const idx = providerIndex();
+                                if (idx == null) return;
+                                setAiProviders((prev) =>
+                                  normalizeAIProviders(
+                                    prev.map((it, i) => {
+                                      if (i !== idx) return it;
+                                      const models = (Array.isArray(it.models) ? it.models : []).filter((_, j) => j !== modelIndex);
+                                      return { ...it, models: models.length > 0 ? models : [{ model_name: '', is_default: false }] };
+                                    }),
+                                  ),
+                                );
+                                setAiDirty(true);
+                              }}
+                              disabled={!canInteract() || (provider().models?.length ?? 0) <= 1}
+                            >
+                              &times;
+                            </Button>
+                          </div>
+                          <Show when={model().model_name}>
+                            <div class="text-[10px] text-muted-foreground font-mono sm:hidden">{modelID(providerID(), model().model_name)}</div>
+                          </Show>
+                        </div>
+                      )}
+                    </Index>
+                  </div>
+                </div>
+              </div>
+            );
+          }}
+        </Show>
+      </Dialog>
 
       {/* Update Agent Confirmation Dialog */}
       <ConfirmDialog
