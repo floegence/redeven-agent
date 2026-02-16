@@ -77,6 +77,48 @@ func TestMaybeEscalateTaskComplexity(t *testing.T) {
 	}
 }
 
+func TestMaybeEscalateTaskComplexity_ReadonlyTerminalBurstStaysStandard(t *testing.T) {
+	t.Parallel()
+
+	state := runtimeState{
+		CompletedActionFacts: []string{
+			"terminal.exec: listed files",
+			"terminal.exec: checked cwd",
+			"terminal.exec: searched workspace",
+		},
+	}
+	calls := []ToolCall{
+		{Name: "terminal.exec", Args: map[string]any{"command": "ls -la"}},
+		{Name: "terminal.exec", Args: map[string]any{"command": "pwd"}},
+		{Name: "terminal.exec", Args: map[string]any{"command": "rg \"foo\" ."}},
+	}
+
+	if got := maybeEscalateTaskComplexity(TaskComplexityStandard, state, calls, 0); got != TaskComplexityStandard {
+		t.Fatalf("readonly terminal burst should stay standard, got %q", got)
+	}
+}
+
+func TestMaybeEscalateTaskComplexity_MutatingCallsCanBecomeComplex(t *testing.T) {
+	t.Parallel()
+
+	state := runtimeState{
+		CompletedActionFacts: []string{
+			"terminal.exec: created patch",
+			"apply_patch: updated runtime",
+			"terminal.exec: ran tests",
+		},
+	}
+	calls := []ToolCall{
+		{Name: "terminal.exec", Args: map[string]any{"command": "touch /tmp/redeven_test_file"}},
+		{Name: "apply_patch", Args: map[string]any{"patch": "*** Begin Patch\n*** End Patch\n"}},
+		{Name: "terminal.exec", Args: map[string]any{"command": "go test ./..."}},
+	}
+
+	if got := maybeEscalateTaskComplexity(TaskComplexityStandard, state, calls, 1); got != TaskComplexityComplex {
+		t.Fatalf("mutating multi-step calls should escalate to complex, got %q", got)
+	}
+}
+
 func TestRequiresStructuredTodoPlan(t *testing.T) {
 	t.Parallel()
 
@@ -110,5 +152,19 @@ func TestRequiresStructuredTodoPlan(t *testing.T) {
 				t.Fatalf("requiresStructuredTodoPlan(%q)=%v, want %v", tc.input, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestClassifyTaskComplexity_SystemQuestionIsNotHighDepthByKeyword(t *testing.T) {
+	t.Parallel()
+
+	got := classifyTaskComplexity("现在系统资源怎么样", nil, "")
+	if got.Level != TaskComplexitySimple {
+		t.Fatalf("level=%q, want %q (reasons=%v)", got.Level, TaskComplexitySimple, got.Reasons)
+	}
+	for _, reason := range got.Reasons {
+		if reason == "high_depth_requirements" {
+			t.Fatalf("unexpected high_depth_requirements for simple system question: %v", got.Reasons)
+		}
 	}
 }

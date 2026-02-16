@@ -2,6 +2,8 @@ package ai
 
 import (
 	"strings"
+
+	aitools "github.com/floegence/redeven-agent/internal/ai/tools"
 )
 
 const (
@@ -61,7 +63,7 @@ func classifyTaskComplexity(userInput string, attachments []RunAttachmentIn, ope
 	hasLongInput := len([]rune(raw)) >= 240
 	hasMultiLine := strings.Count(raw, "\n") >= 3
 	hasHighDepthRequirements := containsAny(raw, []string{
-		"全面", "完整", "系统", "深入", "详细", "最终", "分阶段", "多步骤",
+		"全面", "完整", "系统性", "深入", "详细", "最终", "分阶段", "多步骤",
 	}) || containsAny(lower, []string{
 		"comprehensive", "end-to-end", "thorough", "detailed", "final analysis", "deep dive", "multi-step",
 	})
@@ -188,6 +190,7 @@ func maybeEscalateTaskComplexity(current string, state runtimeState, normalCalls
 	}
 
 	actionFacts := len(state.CompletedActionFacts) + len(state.BlockedActionFacts)
+	substantialCalls := countSubstantialToolCalls(normalCalls)
 	if state.TodoTrackingEnabled {
 		if state.TodoOpenCount > 1 || actionFacts >= 3 || step >= 2 {
 			return TaskComplexityComplex
@@ -198,16 +201,53 @@ func maybeEscalateTaskComplexity(current string, state runtimeState, normalCalls
 	}
 
 	if level == TaskComplexitySimple {
-		if len(normalCalls) >= 2 || actionFacts >= 2 {
+		if substantialCalls >= 1 && (len(normalCalls) >= 2 || actionFacts >= 2) {
+			return TaskComplexityStandard
+		}
+		// A burst of readonly probes can still justify standard depth, but should not
+		// force complex todo workflows.
+		if substantialCalls == 0 && len(normalCalls) >= 3 && actionFacts >= 3 {
 			return TaskComplexityStandard
 		}
 	}
 
 	if level == TaskComplexityStandard {
-		if len(normalCalls) >= 3 || actionFacts >= 4 {
+		if substantialCalls >= 2 && (len(normalCalls) >= 3 || actionFacts >= 3) {
+			return TaskComplexityComplex
+		}
+		if substantialCalls >= 1 && actionFacts >= 4 {
 			return TaskComplexityComplex
 		}
 	}
 
 	return level
+}
+
+func countSubstantialToolCalls(calls []ToolCall) int {
+	count := 0
+	for _, call := range calls {
+		if isSubstantialToolCall(call) {
+			count++
+		}
+	}
+	return count
+}
+
+func isSubstantialToolCall(call ToolCall) bool {
+	toolName := strings.TrimSpace(strings.ToLower(call.Name))
+	switch toolName {
+	case "", "task_complete", "ask_user", "write_todos":
+		return false
+	case "terminal.exec":
+		command := ""
+		if call.Args != nil {
+			if raw, ok := call.Args["command"].(string); ok {
+				command = raw
+			}
+		}
+		risk := aitools.ClassifyTerminalCommandRisk(command)
+		return risk != aitools.TerminalCommandRiskReadonly
+	default:
+		return true
+	}
 }

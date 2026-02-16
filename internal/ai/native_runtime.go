@@ -1838,6 +1838,7 @@ mainLoop:
 		for _, call := range normalCalls {
 			state.ToolCallLedger[call.ID] = "proposed"
 		}
+		processedNormalCalls := false
 
 		if len(normalCalls) > 0 {
 			noToolRounds = 0
@@ -2008,7 +2009,10 @@ mainLoop:
 				}
 			}
 			isFirstRound = false
-			continue
+			if !hasSuccess {
+				continue
+			}
+			processedNormalCalls = true
 		}
 
 		if askUserCall != nil {
@@ -2123,6 +2127,12 @@ mainLoop:
 			r.emitLifecyclePhase("ended", map[string]any{"reason": "task_complete", "step_index": step})
 			r.sendStreamEvent(streamEventMessageEnd{Type: "message-end", MessageID: r.messageID})
 			return nil
+		}
+
+		if processedNormalCalls {
+			// This round executed normal tools successfully. If no signal tool ended
+			// the run in the same turn, continue with updated tool history.
+			continue
 		}
 
 		if todoRequired, todoReason := todoTrackingRequirement(taskComplexity, state); todoRequired {
