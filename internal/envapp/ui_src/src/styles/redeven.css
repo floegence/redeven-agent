@@ -199,7 +199,7 @@
 
 /* Shell block: command highlighting + collapsed output interaction. */
 .chat-shell-block {
-  margin: 0.25rem 0;
+  margin: 0.125rem 0;
   border-radius: 0.625rem;
   overflow: hidden;
   border: 1px solid #2d333b;
@@ -211,12 +211,16 @@
 }
 
 .chat-tool-call-block {
-  margin: 0.25rem 0;
+  margin: 0.125rem 0;
 }
 
 .chat-message-bubble-assistant > .chat-message-block-slot.chat-message-block-slot-compact {
-  padding-top: 0.375rem;
-  padding-bottom: 0.375rem;
+  padding-top: 0.1875rem;
+  padding-bottom: 0.1875rem;
+}
+
+.chat-message-bubble-assistant > .chat-message-block-slot.chat-message-block-slot-compact:first-child {
+  padding-top: 0.125rem;
 }
 
 .chat-shell-block * {
@@ -443,7 +447,7 @@
 
 /* ask_user: render as an in-message interaction block instead of input panel. */
 .chat-tool-ask-user-block {
-  margin: 0.25rem 0;
+  margin: 0.125rem 0;
   border-radius: 0.875rem;
   border: 1px solid color-mix(in srgb, var(--primary) 24%, var(--border));
   background: linear-gradient(
@@ -674,12 +678,16 @@ button.chat-tool-ask-user-custom-submit:disabled {
 
 /* Render write_todos snapshots as a structured table-like block. */
 .chat-todos-block {
-  margin: 0.5rem 0;
+  margin: 0.25rem 0;
   border-radius: 0.75rem;
   border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
   background: color-mix(in srgb, var(--card) 96%, var(--background));
   overflow: hidden;
   box-shadow: 0 1px 2px rgb(15 23 42 / 0.04), 0 4px 10px rgb(15 23 42 / 0.05);
+}
+
+.chat-sources-block {
+  margin: 0.25rem 0;
 }
 
 .chat-todos-header {
