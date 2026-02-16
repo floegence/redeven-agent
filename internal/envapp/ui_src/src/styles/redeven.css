@@ -11,6 +11,27 @@
   border-style: solid;
 }
 
+.settings-policy-toggle-row {
+  display: flex;
+  align-items: center;
+  border-radius: 0.625rem;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, var(--foreground) 20%);
+  background: color-mix(in srgb, var(--background) 88%, var(--muted) 12%);
+  padding: 0.5rem 0.625rem;
+}
+
+.settings-policy-toggle-row [role='checkbox'] {
+  border-color: color-mix(in srgb, var(--foreground) 35%, var(--border));
+  background: color-mix(in srgb, var(--background) 92%, black 8%);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--foreground) 14%, transparent);
+}
+
+.settings-policy-toggle-row [role='checkbox'][aria-checked='true'],
+.settings-policy-toggle-row [role='checkbox'][data-state='checked'] {
+  border-color: var(--primary);
+  background: var(--primary);
+}
+
 /* Hide the built-in Working... indicator and use the custom Neural+Waveform component. */
 .chat-working-indicator-wrapper {
   display: none !important;
