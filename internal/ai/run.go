@@ -1100,8 +1100,8 @@ func (r *run) appendTextDelta(delta string) error {
 		r.nextBlockIndex++
 		r.currentTextBlockIndex = idx
 		r.needNewTextBlock = false
-		r.sendStreamEvent(streamEventBlockStart{Type: "block-start", MessageID: r.messageID, BlockIndex: idx, BlockType: "markdown"})
 		r.persistSetMarkdownBlock(idx)
+		r.sendStreamEvent(streamEventBlockStart{Type: "block-start", MessageID: r.messageID, BlockIndex: idx, BlockType: "markdown"})
 	}
 	delta = r.normalizeMarkdownDelta(r.currentTextBlockIndex, delta)
 	if delta == "" {
@@ -1523,8 +1523,7 @@ func (r *run) handleToolCall(ctx context.Context, toolID string, toolName string
 		block.ApprovalState = "required"
 	}
 
-	r.sendStreamEvent(streamEventBlockSet{Type: "block-set", MessageID: r.messageID, BlockIndex: idx, Block: block})
-	r.persistSetToolBlock(idx, block)
+	r.emitPersistedToolBlockSet(idx, block)
 	r.persistToolCallSnapshot(toolID, toolName, block.Status, args, nil, nil, "", toolStartedAt, time.Now())
 
 	setToolError := func(toolErr *aitools.ToolError, recoveryAction string) {
@@ -1557,8 +1556,7 @@ func (r *run) handleToolCall(ctx context.Context, toolID string, toolName string
 		block.Status = ToolCallStatusError
 		block.Error = toolErr.Message
 		block.ErrorDetails = toolErr
-		r.sendStreamEvent(streamEventBlockSet{Type: "block-set", MessageID: r.messageID, BlockIndex: idx, Block: block})
-		r.persistSetToolBlock(idx, block)
+		r.emitPersistedToolBlockSet(idx, block)
 		r.persistToolCallSnapshot(toolID, toolName, block.Status, args, nil, toolErr, recoveryAction, toolStartedAt, time.Now())
 		r.persistRunEvent("tool.error", RealtimeStreamKindTool, map[string]any{
 			"tool_id":   toolID,
@@ -1685,8 +1683,7 @@ func (r *run) handleToolCall(ctx context.Context, toolID string, toolName string
 	endBusy := r.beginBusy()
 	defer endBusy()
 	block.Status = ToolCallStatusRunning
-	r.sendStreamEvent(streamEventBlockSet{Type: "block-set", MessageID: r.messageID, BlockIndex: idx, Block: block})
-	r.persistSetToolBlock(idx, block)
+	r.emitPersistedToolBlockSet(idx, block)
 	r.persistToolCallSnapshot(toolID, toolName, block.Status, args, nil, nil, "", toolStartedAt, time.Now())
 
 	result, toolErrRaw := r.execTool(ctx, meta, toolID, toolName, args)
@@ -1726,8 +1723,7 @@ func (r *run) handleToolCall(ctx context.Context, toolID string, toolName string
 		expanded := false
 		block.Collapsed = &expanded
 	}
-	r.sendStreamEvent(streamEventBlockSet{Type: "block-set", MessageID: r.messageID, BlockIndex: idx, Block: block})
-	r.persistSetToolBlock(idx, block)
+	r.emitPersistedToolBlockSet(idx, block)
 	r.persistToolCallSnapshot(toolID, toolName, block.Status, args, result, nil, "", toolStartedAt, time.Now())
 	r.persistRunEvent("tool.result", RealtimeStreamKindTool, map[string]any{
 		"tool_id":   toolID,
@@ -1827,6 +1823,15 @@ func (r *run) persistSetToolBlock(idx int, block ToolCallBlock) {
 	}
 	r.persistEnsureIndex(idx)
 	r.assistantBlocks[idx] = block
+}
+
+func (r *run) emitPersistedToolBlockSet(idx int, block ToolCallBlock) {
+	if r == nil || idx < 0 {
+		return
+	}
+	// Persist first so active-run snapshots cannot regress behind already emitted stream frames.
+	r.persistSetToolBlock(idx, block)
+	r.sendStreamEvent(streamEventBlockSet{Type: "block-set", MessageID: r.messageID, BlockIndex: idx, Block: block})
 }
 
 func (r *run) snapshotAssistantMessageJSON() (string, string, int64, error) {
@@ -2251,8 +2256,7 @@ func (r *run) emitSourcesToolBlock(source string) {
 	if md := formatSourcesMarkdown(sources); md != "" {
 		block.Children = []any{map[string]any{"type": "markdown", "content": md}}
 	}
-	r.sendStreamEvent(streamEventBlockSet{Type: "block-set", MessageID: r.messageID, BlockIndex: idx, Block: block})
-	r.persistSetToolBlock(idx, block)
+	r.emitPersistedToolBlockSet(idx, block)
 }
 
 func (r *run) execTool(ctx context.Context, meta *session.Meta, toolID string, toolName string, args map[string]any) (any, error) {

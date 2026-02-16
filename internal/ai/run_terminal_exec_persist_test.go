@@ -241,3 +241,97 @@ func TestHandleToolCall_TerminalExec_AlwaysEmitsOutputRefForStatusFrames(t *test
 		}
 	}
 }
+
+func TestHandleToolCall_PendingFrameVisibleInSnapshotImmediately(t *testing.T) {
+	t.Parallel()
+
+	runID := "run_terminal_snapshot_consistency"
+	toolID := "tool_terminal_snapshot_consistency"
+	workspace := t.TempDir()
+
+	var (
+		mu                 sync.Mutex
+		checkedPending     bool
+		snapshotConsistent = true
+	)
+
+	var r *run
+	r = newRun(runOptions{
+		Log:    slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{})),
+		RunID:  runID,
+		FSRoot: workspace,
+		Shell:  "bash",
+		SessionMeta: &session.Meta{
+			CanRead:    true,
+			CanWrite:   true,
+			CanExecute: true,
+		},
+		MessageID: "msg_terminal_snapshot_consistency",
+		OnStreamEvent: func(ev any) {
+			bs, ok := ev.(streamEventBlockSet)
+			if !ok {
+				return
+			}
+			block, ok := bs.Block.(ToolCallBlock)
+			if !ok {
+				return
+			}
+			if strings.TrimSpace(block.ToolID) != toolID || block.Status != ToolCallStatusPending {
+				return
+			}
+
+			raw, _, _, err := r.snapshotAssistantMessageJSON()
+
+			mu.Lock()
+			defer mu.Unlock()
+			checkedPending = true
+			if err != nil {
+				snapshotConsistent = false
+				return
+			}
+			var snapshot struct {
+				Blocks []json.RawMessage `json:"blocks"`
+			}
+			if err := json.Unmarshal([]byte(raw), &snapshot); err != nil {
+				snapshotConsistent = false
+				return
+			}
+			if bs.BlockIndex < 0 || bs.BlockIndex >= len(snapshot.Blocks) {
+				snapshotConsistent = false
+				return
+			}
+			rawBlock := snapshot.Blocks[bs.BlockIndex]
+			if len(rawBlock) == 0 || strings.EqualFold(strings.TrimSpace(string(rawBlock)), "null") {
+				snapshotConsistent = false
+				return
+			}
+			var persisted ToolCallBlock
+			if err := json.Unmarshal(rawBlock, &persisted); err != nil {
+				snapshotConsistent = false
+				return
+			}
+			if strings.TrimSpace(persisted.ToolID) != toolID || persisted.Status != ToolCallStatusPending {
+				snapshotConsistent = false
+			}
+		},
+	})
+
+	outcome, err := r.handleToolCall(context.Background(), toolID, "terminal.exec", map[string]any{
+		"command": "printf snapshot-consistency",
+	})
+	if err != nil {
+		t.Fatalf("handleToolCall: %v", err)
+	}
+	if outcome == nil || !outcome.Success {
+		t.Fatalf("tool outcome should be success, got %+v", outcome)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !checkedPending {
+		t.Fatalf("expected to inspect pending block-set frame")
+	}
+	if !snapshotConsistent {
+		t.Fatalf("snapshot did not include the emitted pending tool block")
+	}
+}
