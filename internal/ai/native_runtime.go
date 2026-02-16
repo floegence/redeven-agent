@@ -3640,8 +3640,7 @@ func (r *run) waitForTaskCompleteConfirm(ctx context.Context, resultText string)
 		ApprovalState:    "required",
 		Status:           ToolCallStatusPending,
 	}
-	r.sendStreamEvent(streamEventBlockSet{Type: "block-set", MessageID: r.messageID, BlockIndex: idx, Block: block})
-	r.persistSetToolBlock(idx, block)
+	r.emitPersistedToolBlockSet(idx, block)
 
 	ch := make(chan bool, 1)
 	r.mu.Lock()
@@ -3666,15 +3665,13 @@ func (r *run) waitForTaskCompleteConfirm(ctx context.Context, resultText string)
 		if approved {
 			block.ApprovalState = "approved"
 			block.Status = ToolCallStatusSuccess
-			r.sendStreamEvent(streamEventBlockSet{Type: "block-set", MessageID: r.messageID, BlockIndex: idx, Block: block})
-			r.persistSetToolBlock(idx, block)
+			r.emitPersistedToolBlockSet(idx, block)
 			return true, nil
 		}
 		block.ApprovalState = "rejected"
 		block.Status = ToolCallStatusError
 		block.Error = "Rejected by user"
-		r.sendStreamEvent(streamEventBlockSet{Type: "block-set", MessageID: r.messageID, BlockIndex: idx, Block: block})
-		r.persistSetToolBlock(idx, block)
+		r.emitPersistedToolBlockSet(idx, block)
 		return false, nil
 	case <-ctx.Done():
 		return false, ctx.Err()
@@ -3682,8 +3679,7 @@ func (r *run) waitForTaskCompleteConfirm(ctx context.Context, resultText string)
 		block.ApprovalState = "rejected"
 		block.Status = ToolCallStatusError
 		block.Error = "Approval timed out"
-		r.sendStreamEvent(streamEventBlockSet{Type: "block-set", MessageID: r.messageID, BlockIndex: idx, Block: block})
-		r.persistSetToolBlock(idx, block)
+		r.emitPersistedToolBlockSet(idx, block)
 		return false, errors.New("approval timed out")
 	}
 }
@@ -3723,8 +3719,7 @@ func (r *run) emitAskUserToolBlock(question string, options []string, source str
 		Status:   ToolCallStatusSuccess,
 		Result:   result,
 	}
-	r.sendStreamEvent(streamEventBlockSet{Type: "block-set", MessageID: r.messageID, BlockIndex: idx, Block: block})
-	r.persistSetToolBlock(idx, block)
+	r.emitPersistedToolBlockSet(idx, block)
 }
 
 func (r *run) degradedSummary(state runtimeState, objective string) string {
