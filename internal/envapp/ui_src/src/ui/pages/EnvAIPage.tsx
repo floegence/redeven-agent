@@ -11,7 +11,6 @@ import {
   Stop,
   Terminal,
   Trash,
-  Zap,
 } from '@floegence/floe-webapp-core/icons';
 import { FlowerIcon } from '../icons/FlowerIcon';
 import { LoadingOverlay, SnakeLoader } from '@floegence/floe-webapp-core/loading';
@@ -805,34 +804,54 @@ interface SuggestionItem {
 
 const SUGGESTIONS: SuggestionItem[] = [
   {
-    icon: Code,
-    title: 'Explain code',
-    description: 'Understand how a piece of code works',
-    prompt: 'Can you explain this code to me?',
-  },
-  {
     icon: Terminal,
-    title: 'Run commands',
-    description: 'Execute shell commands and scripts',
-    prompt: 'Help me run a command to check disk usage',
-  },
-  {
-    icon: FileText,
-    title: 'Analyze files',
-    description: 'Read and understand file contents',
-    prompt: 'Can you help me analyze my project files?',
-  },
-  {
-    icon: Zap,
-    title: 'Automate tasks',
-    description: 'Create scripts and workflows',
-    prompt: 'Help me automate a repetitive task',
+    title: 'Weather Check',
+    description: 'Toronto now, forecast, and outfit tips',
+    prompt: [
+      'Check the latest weather for Toronto, Canada. Include:',
+      '- current conditions',
+      '- hourly forecast for the next 12 hours',
+      '- daily forecast for the next 3 days',
+      '- rain/snow probability and feels-like temperature',
+      '- what to wear and whether to carry an umbrella',
+      'Cite source URLs with update timestamps.',
+    ].join('\n'),
   },
   {
     icon: CheckCircle,
-    title: 'Plan a trip',
-    description: 'Use ask_user for a guided Q&A before giving the final recommendation',
-    prompt: 'I want to travel. Please use the ask_user tool so we can do a back-and-forth Q&A and reach a final recommendation.',
+    title: 'Trip Planner',
+    description: 'Guided Q&A to choose your destination',
+    prompt: [
+      'Help me choose a travel destination through guided Q&A.',
+      'Use ask_user one question at a time with 3 concise options (best option first).',
+      'Cover budget, trip length, weather preference, travel pace, and visa constraints.',
+      'After enough info, recommend top 3 destinations with pros/cons, best season, and budget range.',
+    ].join('\n'),
+  },
+  {
+    icon: FileText,
+    title: 'Project Intro',
+    description: 'Understand what this repo does',
+    prompt: [
+      'Analyze the current repository and provide:',
+      '1) a concise project introduction (what it does and who it is for)',
+      '2) a module map and responsibilities',
+      '3) local run/build/test commands',
+      '4) key file paths as evidence',
+    ].join('\n'),
+  },
+  {
+    icon: Code,
+    title: 'Tech Route',
+    description: 'Map key architecture and flows',
+    prompt: [
+      'Analyze this project\'s key technical routes and output:',
+      '- authentication flow',
+      '- control-plane vs data-plane flow',
+      '- deployment path',
+      '- observability and operational checkpoints',
+      'For each route, include steps, key files, and main risks.',
+    ].join('\n'),
   },
 ];
 
