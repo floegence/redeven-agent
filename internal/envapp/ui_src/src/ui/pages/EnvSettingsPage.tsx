@@ -203,6 +203,7 @@ type SettingsResponse = Readonly<{
 type PermissionRow = { key: string; read: boolean; write: boolean; execute: boolean };
 type AIProviderModelRow = { model_name: string; is_default: boolean };
 type AIProviderRow = { id: string; name: string; type: AIProviderType; base_url: string; models: AIProviderModelRow[] };
+type AIProviderDialogMode = 'create' | 'edit';
 type AIPreservedUIFields = {
   mode?: 'act' | 'plan';
   tool_recovery_enabled?: boolean;
@@ -264,6 +265,11 @@ function formatSavedTime(unixMs: number | null): string {
   }
 }
 
+function autoSaveMessage(label: string, unixMs: number): string {
+  const t = formatSavedTime(unixMs);
+  return t ? `${label} saved at ${t}.` : `${label} saved.`;
+}
+
 function newProviderID(): string {
   // Provider ids are stable primary keys. Generate them once and never ask users to edit them.
   // Use a lowercase uuid (browser Web Crypto) to avoid case-sensitivity surprises.
@@ -283,6 +289,46 @@ function modelID(providerID: string, modelName: string): string {
   const mn = String(modelName ?? '').trim();
   if (!pid || !mn) return '';
   return `${pid}/${mn}`;
+}
+
+function cloneAIProviderRow(row: AIProviderRow): AIProviderRow {
+  return {
+    id: String(row?.id ?? ''),
+    name: String(row?.name ?? ''),
+    type: (row?.type as AIProviderType) || 'openai',
+    base_url: String(row?.base_url ?? ''),
+    models: (Array.isArray(row?.models) ? row.models : []).map((m) => ({
+      model_name: String(m?.model_name ?? ''),
+      is_default: !!m?.is_default,
+    })),
+  };
+}
+
+function normalizeAIProviderRowDraft(row: AIProviderRow): AIProviderRow {
+  const out = cloneAIProviderRow(row);
+  const models = Array.isArray(out.models) ? out.models : [];
+  if (models.length === 0) {
+    out.models = [{ model_name: '', is_default: false }];
+    return out;
+  }
+  let defaultFound = false;
+  out.models = models.map((m) => {
+    if (!m.is_default) return { ...m, is_default: false };
+    if (defaultFound) return { ...m, is_default: false };
+    defaultFound = true;
+    return { ...m, is_default: true };
+  });
+  return out;
+}
+
+function newAIProviderDraft(): AIProviderRow {
+  return normalizeAIProviderRowDraft({
+    id: newProviderID(),
+    name: '',
+    type: 'openai',
+    base_url: 'https://api.openai.com/v1',
+    models: [{ model_name: '', is_default: false }],
+  });
 }
 
 function defaultPermissionPolicy(): PermissionPolicy {
@@ -937,7 +983,9 @@ export function EnvSettingsPage() {
   const [aiBlockDangerousCommands, setAiBlockDangerousCommands] = createSignal(false);
   const [aiWebSearchProvider, setAiWebSearchProvider] = createSignal<'prefer_openai' | 'brave' | 'disabled'>('prefer_openai');
   const [aiProviderDialogOpen, setAiProviderDialogOpen] = createSignal(false);
-  const [aiProviderDialogIndex, setAiProviderDialogIndex] = createSignal<number | null>(null);
+  const [aiProviderDialogMode, setAiProviderDialogMode] = createSignal<AIProviderDialogMode>('edit');
+  const [aiProviderDialogSourceIndex, setAiProviderDialogSourceIndex] = createSignal<number | null>(null);
+  const [aiProviderDialogDraft, setAiProviderDialogDraft] = createSignal<AIProviderRow | null>(null);
 
   // AI provider keys (stored locally in secrets.json; never returned in plaintext).
   const [aiProviderKeySet, setAiProviderKeySet] = createSignal<Record<string, boolean>>({});
@@ -1019,13 +1067,8 @@ export function EnvSettingsPage() {
   const [aiError, setAiError] = createSignal<string | null>(null);
 
   const aiEnabled = createMemo(() => !!settings()?.ai);
-  const aiProviderDialogProvider = createMemo(() => {
-    const idx = aiProviderDialogIndex();
-    if (idx == null) return null;
-    const list = aiProviders();
-    if (idx < 0 || idx >= list.length) return null;
-    return list[idx];
-  });
+  const aiProviderDialogProvider = createMemo(() => aiProviderDialogDraft());
+  const aiProviderDialogTitle = createMemo(() => (aiProviderDialogMode() === 'create' ? 'Add provider' : 'Edit provider'));
 
   const configPath = () => String(settings()?.config_path ?? '').trim();
 
@@ -1381,34 +1424,72 @@ export function EnvSettingsPage() {
     void updateAIProviderKey(id, null);
   };
 
+  const closeAIProviderDialog = () => {
+    setAiProviderDialogOpen(false);
+    setAiProviderDialogMode('edit');
+    setAiProviderDialogSourceIndex(null);
+    setAiProviderDialogDraft(null);
+  };
+
   const openAIProviderDialog = (index: number) => {
-    setAiProviderDialogIndex(index);
+    const list = aiProviders();
+    if (index < 0 || index >= list.length) return;
+    setAiProviderDialogMode('edit');
+    setAiProviderDialogSourceIndex(index);
+    setAiProviderDialogDraft(normalizeAIProviderRowDraft(cloneAIProviderRow(list[index])));
     setAiProviderDialogOpen(true);
   };
 
-  const closeAIProviderDialog = () => {
-    setAiProviderDialogOpen(false);
-    setAiProviderDialogIndex(null);
+  const addAIProviderAndOpenDialog = () => {
+    setAiProviderDialogMode('create');
+    setAiProviderDialogSourceIndex(null);
+    setAiProviderDialogDraft(newAIProviderDraft());
+    setAiProviderDialogOpen(true);
   };
 
-  const addAIProviderAndOpenDialog = () => {
-    let createdIndex = 0;
-    const id = newProviderID();
-    setAiProviders((prev) => {
-      createdIndex = prev.length;
-      return normalizeAIProviders([
-        ...prev,
-        {
-          id,
-          name: '',
-          type: 'openai',
-          base_url: 'https://api.openai.com/v1',
-          models: [{ model_name: '', is_default: false }],
-        },
-      ]);
-    });
+  const confirmAIProviderDialog = () => {
+    const draft = aiProviderDialogDraft();
+    if (!draft) {
+      closeAIProviderDialog();
+      return;
+    }
+
+    const mode = aiProviderDialogMode();
+    const sourceIndex = aiProviderDialogSourceIndex();
+    const normalizedDraft = normalizeAIProviderRowDraft(draft);
+
+    let targetIndex = sourceIndex ?? -1;
+    let nextProviders = aiProviders().map((item) => cloneAIProviderRow(item));
+
+    if (mode === 'edit') {
+      if (sourceIndex == null || sourceIndex < 0 || sourceIndex >= nextProviders.length) {
+        notify.error('Provider missing', 'The provider no longer exists.');
+        closeAIProviderDialog();
+        return;
+      }
+      targetIndex = sourceIndex;
+      nextProviders = nextProviders.map((item, idx) => (idx === sourceIndex ? normalizedDraft : item));
+    } else {
+      targetIndex = nextProviders.length;
+      nextProviders = [...nextProviders, normalizedDraft];
+    }
+
+    const hasDefaultInDraft = normalizedDraft.models.some((m) => !!m.is_default);
+    if (hasDefaultInDraft && targetIndex >= 0) {
+      nextProviders = nextProviders.map((provider, idx) => ({
+        ...provider,
+        models: (provider.models ?? []).map((model) => ({
+          ...model,
+          is_default: idx === targetIndex ? !!model.is_default : false,
+        })),
+      }));
+    }
+
+    setAiProviders(normalizeAIProviders(nextProviders));
     setAiDirty(true);
-    openAIProviderDialog(createdIndex);
+    closeAIProviderDialog();
+    if (mode === 'create') notify.success('Provider added', 'Changes confirmed. Auto-save is in progress.');
+    else notify.success('Provider updated', 'Changes confirmed. Auto-save is in progress.');
   };
 
   const refreshWebSearchKeyStatus = async (providerIDs: string[]) => {
@@ -1911,9 +1992,10 @@ export function EnvSettingsPage() {
   });
 
   createEffect(() => {
-    const idx = aiProviderDialogIndex();
-    if (idx == null) return;
-    if (idx < 0 || idx >= aiProviders().length) {
+    if (!aiProviderDialogOpen()) return;
+    if (aiProviderDialogMode() !== 'edit') return;
+    const idx = aiProviderDialogSourceIndex();
+    if (idx == null || idx < 0 || idx >= aiProviders().length) {
       closeAIProviderDialog();
     }
   });
@@ -2155,6 +2237,15 @@ export function EnvSettingsPage() {
     return { body, signature: JSON.stringify(body) };
   };
 
+  const notifyAutoSaveSuccess = (label: string, unixMs: number) => {
+    notify.success('Auto-saved', autoSaveMessage(label, unixMs));
+  };
+
+  const notifyAutoSaveFailed = (label: string, err: unknown) => {
+    const msg = formatUnknownError(err) || 'Request failed.';
+    notify.error('Auto-save failed', `${label}: ${msg}`);
+  };
+
   const saveRuntime = async () => {
     let draft: { body: any; signature: string };
     try {
@@ -2170,6 +2261,7 @@ export function EnvSettingsPage() {
       const now = Date.now();
       setRuntimeSavedAt(now);
       setRuntimeError(null);
+      notifyAutoSaveSuccess('Runtime settings', now);
       let unchanged = false;
       try {
         unchanged = buildRuntimeDraft().signature === draft.signature;
@@ -2178,7 +2270,9 @@ export function EnvSettingsPage() {
       }
       setRuntimeDirty(!unchanged);
     } catch (e) {
-      setRuntimeError(formatUnknownError(e) || 'Save failed.');
+      const msg = formatUnknownError(e) || 'Save failed.';
+      setRuntimeError(msg);
+      notifyAutoSaveFailed('Runtime settings', e);
     } finally {
       setRuntimeSaving(false);
     }
@@ -2199,6 +2293,7 @@ export function EnvSettingsPage() {
       const now = Date.now();
       setLoggingSavedAt(now);
       setLoggingError(null);
+      notifyAutoSaveSuccess('Logging settings', now);
       let unchanged = false;
       try {
         unchanged = buildLoggingDraft().signature === draft.signature;
@@ -2207,7 +2302,9 @@ export function EnvSettingsPage() {
       }
       setLoggingDirty(!unchanged);
     } catch (e) {
-      setLoggingError(formatUnknownError(e) || 'Save failed.');
+      const msg = formatUnknownError(e) || 'Save failed.';
+      setLoggingError(msg);
+      notifyAutoSaveFailed('Logging settings', e);
     } finally {
       setLoggingSaving(false);
     }
@@ -2228,6 +2325,7 @@ export function EnvSettingsPage() {
       const now = Date.now();
       setCodespacesSavedAt(now);
       setCodespacesError(null);
+      notifyAutoSaveSuccess('Codespaces settings', now);
       let unchanged = false;
       try {
         unchanged = buildCodespacesDraft().signature === draft.signature;
@@ -2236,7 +2334,9 @@ export function EnvSettingsPage() {
       }
       setCodespacesDirty(!unchanged);
     } catch (e) {
-      setCodespacesError(formatUnknownError(e) || 'Save failed.');
+      const msg = formatUnknownError(e) || 'Save failed.';
+      setCodespacesError(msg);
+      notifyAutoSaveFailed('Codespaces settings', e);
     } finally {
       setCodespacesSaving(false);
     }
@@ -2257,6 +2357,7 @@ export function EnvSettingsPage() {
       const now = Date.now();
       setPolicySavedAt(now);
       setPolicyError(null);
+      notifyAutoSaveSuccess('Permission policy', now);
       let unchanged = false;
       try {
         unchanged = buildPolicyDraft().signature === draft.signature;
@@ -2265,7 +2366,9 @@ export function EnvSettingsPage() {
       }
       setPolicyDirty(!unchanged);
     } catch (e) {
-      setPolicyError(formatUnknownError(e) || 'Save failed.');
+      const msg = formatUnknownError(e) || 'Save failed.';
+      setPolicyError(msg);
+      notifyAutoSaveFailed('Permission policy', e);
     } finally {
       setPolicySaving(false);
     }
@@ -2286,6 +2389,7 @@ export function EnvSettingsPage() {
       const now = Date.now();
       setAiSavedAt(now);
       setAiError(null);
+      notifyAutoSaveSuccess('Flower settings', now);
       let unchanged = false;
       try {
         unchanged = buildAIDraft().signature === draft.signature;
@@ -2294,7 +2398,9 @@ export function EnvSettingsPage() {
       }
       setAiDirty(!unchanged);
     } catch (e) {
-      setAiError(formatUnknownError(e) || 'Save failed.');
+      const msg = formatUnknownError(e) || 'Save failed.';
+      setAiError(msg);
+      notifyAutoSaveFailed('Flower settings', e);
     } finally {
       setAiSaving(false);
     }
@@ -3648,11 +3754,14 @@ export function EnvSettingsPage() {
           }
           closeAIProviderDialog();
         }}
-        title="Edit provider"
+        title={aiProviderDialogTitle()}
         footer={
-          <div class="flex justify-end">
+          <div class="flex items-center justify-end gap-2">
             <Button size="sm" variant="outline" onClick={() => closeAIProviderDialog()}>
-              Done
+              Discard
+            </Button>
+            <Button size="sm" variant="default" onClick={() => confirmAIProviderDialog()} disabled={!canInteract() || aiSaving() || disableAISaving()}>
+              Confirm
             </Button>
           </div>
         }
@@ -3660,7 +3769,12 @@ export function EnvSettingsPage() {
         <Show when={aiProviderDialogProvider()} fallback={<div class="text-sm text-muted-foreground">Provider was removed.</div>}>
           {(provider) => {
             const providerID = () => String(provider().id ?? '').trim();
-            const providerIndex = () => aiProviderDialogIndex();
+            const updateDraft = (updater: (current: AIProviderRow) => AIProviderRow) => {
+              setAiProviderDialogDraft((prev) => {
+                if (!prev) return prev;
+                return normalizeAIProviderRowDraft(updater(cloneAIProviderRow(prev)));
+              });
+            };
             return (
               <div class="space-y-4">
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -3669,11 +3783,8 @@ export function EnvSettingsPage() {
                     <Input
                       value={provider().name}
                       onInput={(e) => {
-                        const idx = providerIndex();
-                        if (idx == null) return;
                         const v = e.currentTarget.value;
-                        setAiProviders((prev) => prev.map((it, i) => (i === idx ? { ...it, name: v } : it)));
-                        setAiDirty(true);
+                        updateDraft((current) => ({ ...current, name: v }));
                       }}
                       placeholder="OpenAI"
                       size="sm"
@@ -3686,10 +3797,7 @@ export function EnvSettingsPage() {
                     <Select
                       value={provider().type}
                       onChange={(v) => {
-                        const idx = providerIndex();
-                        if (idx == null) return;
-                        setAiProviders((prev) => prev.map((it, i) => (i === idx ? { ...it, type: v as AIProviderType } : it)));
-                        setAiDirty(true);
+                        updateDraft((current) => ({ ...current, type: v as AIProviderType }));
                       }}
                       disabled={!canInteract()}
                       options={[
@@ -3712,11 +3820,8 @@ export function EnvSettingsPage() {
                     <Input
                       value={provider().base_url}
                       onInput={(e) => {
-                        const idx = providerIndex();
-                        if (idx == null) return;
                         const v = e.currentTarget.value;
-                        setAiProviders((prev) => prev.map((it, i) => (i === idx ? { ...it, base_url: v } : it)));
-                        setAiDirty(true);
+                        updateDraft((current) => ({ ...current, base_url: v }));
                       }}
                       placeholder={
                         provider().type === 'openai_compatible'
@@ -3790,18 +3895,10 @@ export function EnvSettingsPage() {
                         size="sm"
                         variant="outline"
                         onClick={() => {
-                          const idx = providerIndex();
-                          if (idx == null) return;
-                          setAiProviders((prev) =>
-                            normalizeAIProviders(
-                              prev.map((it, i) => {
-                                if (i !== idx) return it;
-                                const models = Array.isArray(it.models) ? it.models : [];
-                                return { ...it, models: [...models, { model_name: '', is_default: false }] };
-                              }),
-                            ),
-                          );
-                          setAiDirty(true);
+                          updateDraft((current) => ({
+                            ...current,
+                            models: [...(Array.isArray(current.models) ? current.models : []), { model_name: '', is_default: false }],
+                          }));
                         }}
                         disabled={!canInteract()}
                       >
@@ -3818,22 +3915,13 @@ export function EnvSettingsPage() {
                             <Input
                               value={model().model_name}
                               onInput={(e) => {
-                                const idx = providerIndex();
-                                if (idx == null) return;
                                 const v = e.currentTarget.value;
-                                setAiProviders((prev) =>
-                                  prev.map((it, i) =>
-                                    i !== idx
-                                      ? it
-                                      : {
-                                          ...it,
-                                          models: (Array.isArray(it.models) ? it.models : []).map((itModel, j) =>
-                                            j === modelIndex ? { ...itModel, model_name: v } : itModel,
-                                          ),
-                                        },
+                                updateDraft((current) => ({
+                                  ...current,
+                                  models: (Array.isArray(current.models) ? current.models : []).map((itModel, j) =>
+                                    j === modelIndex ? { ...itModel, model_name: v } : itModel,
                                   ),
-                                );
-                                setAiDirty(true);
+                                }));
                               }}
                               placeholder="model_name"
                               size="sm"
@@ -3850,20 +3938,13 @@ export function EnvSettingsPage() {
                                   variant="outline"
                                   class="h-6 px-2 text-[11px]"
                                   onClick={() => {
-                                    const idx = providerIndex();
-                                    if (idx == null) return;
-                                    setAiProviders((prev) =>
-                                      normalizeAIProviders(
-                                        prev.map((it, i) => ({
-                                          ...it,
-                                          models: (Array.isArray(it.models) ? it.models : []).map((itModel, j) => ({
-                                            ...itModel,
-                                            is_default: i === idx && j === modelIndex,
-                                          })),
-                                        })),
-                                      ),
-                                    );
-                                    setAiDirty(true);
+                                    updateDraft((current) => ({
+                                      ...current,
+                                      models: (Array.isArray(current.models) ? current.models : []).map((itModel, j) => ({
+                                        ...itModel,
+                                        is_default: j === modelIndex,
+                                      })),
+                                    }));
                                   }}
                                   disabled={!canInteract()}
                                 >
@@ -3880,18 +3961,13 @@ export function EnvSettingsPage() {
                               variant="ghost"
                               class="text-muted-foreground hover:text-destructive h-7 w-7 p-0"
                               onClick={() => {
-                                const idx = providerIndex();
-                                if (idx == null) return;
-                                setAiProviders((prev) =>
-                                  normalizeAIProviders(
-                                    prev.map((it, i) => {
-                                      if (i !== idx) return it;
-                                      const models = (Array.isArray(it.models) ? it.models : []).filter((_, j) => j !== modelIndex);
-                                      return { ...it, models: models.length > 0 ? models : [{ model_name: '', is_default: false }] };
-                                    }),
-                                  ),
-                                );
-                                setAiDirty(true);
+                                updateDraft((current) => {
+                                  const models = (Array.isArray(current.models) ? current.models : []).filter((_, j) => j !== modelIndex);
+                                  return {
+                                    ...current,
+                                    models: models.length > 0 ? models : [{ model_name: '', is_default: false }],
+                                  };
+                                });
                               }}
                               disabled={!canInteract() || (provider().models?.length ?? 0) <= 1}
                             >
