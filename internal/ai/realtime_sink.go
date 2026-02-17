@@ -192,13 +192,14 @@ func (s *Service) persistRealtimeEvent(ev RealtimeEvent) {
 		return
 	}
 	payload := map[string]any{
-		"event_type":   ev.EventType,
-		"stream_kind":  ev.StreamKind,
-		"phase":        ev.Phase,
-		"diag":         ev.Diag,
-		"run_status":   ev.RunStatus,
-		"run_error":    ev.RunError,
-		"stream_event": ev.StreamEvent,
+		"event_type":     ev.EventType,
+		"stream_kind":    ev.StreamKind,
+		"phase":          ev.Phase,
+		"diag":           ev.Diag,
+		"run_status":     ev.RunStatus,
+		"run_error":      ev.RunError,
+		"waiting_prompt": ev.WaitingPrompt,
+		"stream_event":   ev.StreamEvent,
 	}
 	b, err := json.Marshal(payload)
 	if err != nil {
@@ -350,6 +351,24 @@ func classifyStreamKind(streamEvent any) RealtimeStreamKind {
 func (s *Service) broadcastThreadState(endpointID string, threadID string, runID string, runStatus string, runErr string) {
 	runStatus = strings.TrimSpace(runStatus)
 	runErr = strings.TrimSpace(runErr)
+	var waitingPrompt *WaitingPrompt
+	if s != nil {
+		s.mu.Lock()
+		db := s.threadsDB
+		persistTO := s.persistOpTO
+		s.mu.Unlock()
+		if db != nil {
+			if persistTO <= 0 {
+				persistTO = defaultPersistOpTimeout
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), persistTO)
+			th, err := db.GetThread(ctx, strings.TrimSpace(endpointID), strings.TrimSpace(threadID))
+			cancel()
+			if err == nil && th != nil {
+				waitingPrompt = waitingPromptFromThreadRecord(th, runStatus)
+			}
+		}
+	}
 	ev := RealtimeEvent{
 		EventType:  RealtimeEventTypeThreadState,
 		EndpointID: strings.TrimSpace(endpointID),
@@ -361,8 +380,9 @@ func (s *Service) broadcastThreadState(endpointID string, threadID string, runID
 		Diag: map[string]any{
 			"run_status": runStatus,
 		},
-		RunStatus: runStatus,
-		RunError:  runErr,
+		RunStatus:     runStatus,
+		RunError:      runErr,
+		WaitingPrompt: waitingPrompt,
 	}
 	s.broadcastRealtimeEvent(ev)
 }
@@ -454,6 +474,7 @@ func (s *Service) broadcastThreadSummary(endpointID string, threadID string) {
 		LastMessagePreview:  strings.TrimSpace(th.LastMessagePreview),
 		LastMessageAtUnixMs: th.LastMessageAtUnixMs,
 		ActiveRunID:         activeRunID,
+		WaitingPrompt:       waitingPromptFromThreadRecord(th, runStatus),
 	}
 	s.broadcastRealtimeEvent(ev)
 }
