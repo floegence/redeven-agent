@@ -157,6 +157,16 @@ export const ChatProvider: ParentComponent<ChatProviderProps> = (props) => {
   const isPreparing = createMemo(() => preparingCount() > 0);
   const isWorking = createMemo(() => isPreparing() || streamingMessageId() !== null);
 
+  // Self-heal stale streaming pointers when message snapshots are replaced or dropped.
+  createEffect(() => {
+    const id = streamingMessageId();
+    if (!id) return;
+    const hasStreamingMessage = messages.some((msg) => msg.id === id && msg.status === 'streaming');
+    if (!hasStreamingMessage) {
+      setStreamingMessageId(null);
+    }
+  });
+
   // Height cache for virtual list
   const heightCache: Map<string, number> = new Map();
 

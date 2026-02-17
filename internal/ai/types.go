@@ -21,6 +21,12 @@ type Model struct {
 	Label string `json:"label,omitempty"`
 }
 
+type WaitingPrompt struct {
+	PromptID  string `json:"prompt_id"`
+	MessageID string `json:"message_id"`
+	ToolID    string `json:"tool_id"`
+}
+
 // --- HTTP API types (snake_case, stable) ---
 
 type ModelsResponse struct {
@@ -29,17 +35,18 @@ type ModelsResponse struct {
 }
 
 type ThreadView struct {
-	ThreadID            string `json:"thread_id"`
-	Title               string `json:"title"`
-	ModelID             string `json:"model_id"`
-	WorkingDir          string `json:"working_dir"`
-	RunStatus           string `json:"run_status"`
-	RunUpdatedAtUnixMs  int64  `json:"run_updated_at_unix_ms"`
-	RunError            string `json:"run_error,omitempty"`
-	CreatedAtUnixMs     int64  `json:"created_at_unix_ms"`
-	UpdatedAtUnixMs     int64  `json:"updated_at_unix_ms"`
-	LastMessageAtUnixMs int64  `json:"last_message_at_unix_ms"`
-	LastMessagePreview  string `json:"last_message_preview"`
+	ThreadID            string         `json:"thread_id"`
+	Title               string         `json:"title"`
+	ModelID             string         `json:"model_id"`
+	WorkingDir          string         `json:"working_dir"`
+	RunStatus           string         `json:"run_status"`
+	RunUpdatedAtUnixMs  int64          `json:"run_updated_at_unix_ms"`
+	RunError            string         `json:"run_error,omitempty"`
+	WaitingPrompt       *WaitingPrompt `json:"waiting_prompt,omitempty"`
+	CreatedAtUnixMs     int64          `json:"created_at_unix_ms"`
+	UpdatedAtUnixMs     int64          `json:"updated_at_unix_ms"`
+	LastMessageAtUnixMs int64          `json:"last_message_at_unix_ms"`
+	LastMessagePreview  string         `json:"last_message_preview"`
 }
 
 type ListThreadsResponse struct {
@@ -332,17 +339,18 @@ const (
 //
 // JSON fields use snake_case because this payload is transported over Redeven RPC wire.
 type RealtimeEvent struct {
-	EventType   RealtimeEventType      `json:"event_type"`
-	EndpointID  string                 `json:"endpoint_id"`
-	ThreadID    string                 `json:"thread_id"`
-	RunID       string                 `json:"run_id"`
-	AtUnixMs    int64                  `json:"at_unix_ms"`
-	StreamKind  RealtimeStreamKind     `json:"stream_kind,omitempty"`
-	Phase       RealtimeLifecyclePhase `json:"phase,omitempty"`
-	Diag        map[string]any         `json:"diag,omitempty"`
-	StreamEvent any                    `json:"stream_event,omitempty"`
-	RunStatus   string                 `json:"run_status,omitempty"`
-	RunError    string                 `json:"run_error,omitempty"`
+	EventType     RealtimeEventType      `json:"event_type"`
+	EndpointID    string                 `json:"endpoint_id"`
+	ThreadID      string                 `json:"thread_id"`
+	RunID         string                 `json:"run_id"`
+	AtUnixMs      int64                  `json:"at_unix_ms"`
+	StreamKind    RealtimeStreamKind     `json:"stream_kind,omitempty"`
+	Phase         RealtimeLifecyclePhase `json:"phase,omitempty"`
+	Diag          map[string]any         `json:"diag,omitempty"`
+	StreamEvent   any                    `json:"stream_event,omitempty"`
+	RunStatus     string                 `json:"run_status,omitempty"`
+	RunError      string                 `json:"run_error,omitempty"`
+	WaitingPrompt *WaitingPrompt         `json:"waiting_prompt,omitempty"`
 
 	// Transcript message events (EventType=transcript_message).
 	MessageRowID int64           `json:"message_row_id,omitempty"`

@@ -4,6 +4,12 @@ export type wire_ai_attachment = {
   url: string;
 };
 
+export type wire_ai_waiting_prompt = {
+  prompt_id: string;
+  message_id: string;
+  tool_id: string;
+};
+
 export type wire_ai_send_user_turn_req = {
   thread_id: string;
   model?: string;
@@ -17,11 +23,13 @@ export type wire_ai_send_user_turn_req = {
     mode?: string;
   };
   expected_run_id?: string;
+  reply_to_waiting_prompt_id?: string;
 };
 
 export type wire_ai_send_user_turn_resp = {
   run_id: string;
   kind: string;
+  consumed_waiting_prompt_id?: string;
 };
 
 export type wire_ai_cancel_run_req = {
@@ -74,6 +82,7 @@ export type wire_ai_event_notify = {
   stream_event?: any;
   run_status?: string;
   run_error?: string;
+  waiting_prompt?: wire_ai_waiting_prompt;
 
   message_row_id?: number;
   message_json?: any;

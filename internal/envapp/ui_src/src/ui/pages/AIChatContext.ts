@@ -29,6 +29,12 @@ export type SettingsResponse = Readonly<{
 
 export type ThreadRunStatus = 'idle' | 'accepted' | 'running' | 'waiting_approval' | 'recovering' | 'waiting_user' | 'success' | 'failed' | 'canceled' | 'timed_out';
 
+export type WaitingPromptView = Readonly<{
+  prompt_id: string;
+  message_id: string;
+  tool_id: string;
+}>;
+
 export type ThreadView = Readonly<{
   thread_id: string;
   title: string;
@@ -37,6 +43,7 @@ export type ThreadView = Readonly<{
   run_status?: ThreadRunStatus;
   run_updated_at_unix_ms?: number;
   run_error?: string;
+  waiting_prompt?: WaitingPromptView;
   created_at_unix_ms: number;
   updated_at_unix_ms: number;
   last_message_at_unix_ms: number;
@@ -149,6 +156,19 @@ function normalizeThreadRunStatus(raw: string | null | undefined): ThreadRunStat
   return 'idle';
 }
 
+function normalizeWaitingPrompt(raw: any): WaitingPromptView | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const promptID = String((raw as any).prompt_id ?? (raw as any).promptId ?? '').trim();
+  const messageID = String((raw as any).message_id ?? (raw as any).messageId ?? '').trim();
+  const toolID = String((raw as any).tool_id ?? (raw as any).toolId ?? '').trim();
+  if (!promptID || !messageID || !toolID) return null;
+  return {
+    prompt_id: promptID,
+    message_id: messageID,
+    tool_id: toolID,
+  };
+}
+
 function isActiveRunStatus(status: ThreadRunStatus): boolean {
   return status === 'accepted' || status === 'running' || status === 'waiting_approval' || status === 'recovering';
 }
@@ -175,6 +195,7 @@ export interface AIChatContextValue {
   enterDraftChat: () => void;
   clearActiveThreadPersistence: () => void;
   activeThread: Accessor<ThreadView | null>;
+  activeThreadWaitingPrompt: Accessor<WaitingPromptView | null>;
   activeThreadTitle: Accessor<string>;
 
   // Thread creation (only create on-demand; never create an empty thread on navigation)
@@ -190,6 +211,7 @@ export interface AIChatContextValue {
   markThreadPendingRun: (threadId: string) => void;
   confirmThreadRun: (threadId: string, runId: string) => void;
   clearThreadPendingRun: (threadId: string) => void;
+  consumeWaitingPrompt: (threadId: string, promptId: string) => void;
   isThreadRunning: (threadId: string | null | undefined) => boolean;
   onRealtimeEvent: (handler: (event: AIRealtimeEvent) => void) => () => void;
 }
@@ -322,6 +344,7 @@ export function createAIChatContextValue(): AIChatContextValue {
 
   const [activeRunByThread, setActiveRunByThread] = createSignal<Record<string, string>>({});
   const [pendingRunByThread, setPendingRunByThread] = createSignal<Record<string, true>>({});
+  const [waitingPromptByThread, setWaitingPromptByThread] = createSignal<Record<string, WaitingPromptView | null>>({});
 
   const realtimeListeners = new Set<(event: AIRealtimeEvent) => void>();
 
@@ -340,6 +363,20 @@ export function createAIChatContextValue(): AIChatContextValue {
     if (!tid) return null;
     const runId = String(activeRunByThread()[tid] ?? '').trim();
     return runId || null;
+  };
+
+  const waitingPromptForThread = (threadId: string | null | undefined): WaitingPromptView | null => {
+    const tid = String(threadId ?? '').trim();
+    if (!tid) return null;
+
+    const realtimeMap = waitingPromptByThread();
+    if (Object.prototype.hasOwnProperty.call(realtimeMap, tid)) {
+      return realtimeMap[tid] ?? null;
+    }
+
+    const list = threads()?.threads ?? [];
+    const th = list.find((it) => String(it.thread_id ?? '').trim() === tid);
+    return normalizeWaitingPrompt((th as any)?.waiting_prompt);
   };
 
   const markThreadPendingRun = (threadId: string) => {
@@ -372,6 +409,16 @@ export function createAIChatContextValue(): AIChatContextValue {
     });
   };
 
+  const consumeWaitingPrompt = (threadId: string, promptId: string) => {
+    const tid = String(threadId ?? '').trim();
+    const pid = String(promptId ?? '').trim();
+    if (!tid || !pid) return;
+
+    const current = waitingPromptForThread(tid);
+    if (!current || String(current.prompt_id ?? '').trim() !== pid) return;
+    setWaitingPromptByThread((prev) => ({ ...prev, [tid]: null }));
+  };
+
   const isThreadRunning = (threadId: string | null | undefined): boolean => {
     const tid = String(threadId ?? '').trim();
     if (!tid) return false;
@@ -399,6 +446,7 @@ export function createAIChatContextValue(): AIChatContextValue {
     if (event.eventType === 'thread_summary') {
       const status = normalizeThreadRunStatus(event.runStatus);
       const activeRunId = String(event.activeRunId ?? '').trim();
+      const waitingPrompt = normalizeWaitingPrompt(event.waitingPrompt);
 
       if (activeRunId && isActiveRunStatus(status)) {
         setActiveRunByThread((prev) => ({ ...prev, [tid]: activeRunId }));
@@ -412,6 +460,7 @@ export function createAIChatContextValue(): AIChatContextValue {
         });
         clearThreadPendingRun(tid);
       }
+      setWaitingPromptByThread((prev) => ({ ...prev, [tid]: waitingPrompt }));
 
       bumpThreadsSeq();
       emitRealtimeEvent(event);
@@ -434,6 +483,7 @@ export function createAIChatContextValue(): AIChatContextValue {
     if (!rid) return;
 
     const nextStatus = normalizeThreadRunStatus(event.runStatus);
+    const waitingPrompt = normalizeWaitingPrompt(event.waitingPrompt);
     if (isActiveRunStatus(nextStatus)) {
       setActiveRunByThread((prev) => ({ ...prev, [tid]: rid }));
       clearThreadPendingRun(tid);
@@ -446,6 +496,7 @@ export function createAIChatContextValue(): AIChatContextValue {
       });
       clearThreadPendingRun(tid);
     }
+    setWaitingPromptByThread((prev) => ({ ...prev, [tid]: waitingPrompt }));
 
     bumpThreadsSeq();
     emitRealtimeEvent(event);
@@ -493,6 +544,7 @@ export function createAIChatContextValue(): AIChatContextValue {
       unsub();
       setActiveRunByThread({});
       setPendingRunByThread({});
+      setWaitingPromptByThread({});
     });
   });
 
@@ -515,6 +567,7 @@ export function createAIChatContextValue(): AIChatContextValue {
     if (protocol.status() === 'connected') return;
     setActiveRunByThread({});
     setPendingRunByThread({});
+    setWaitingPromptByThread({});
   });
 
   // Reconcile run state with the thread list so UI never gets stuck if realtime events are dropped.
@@ -642,6 +695,7 @@ export function createAIChatContextValue(): AIChatContextValue {
     const t = activeThread();
     return t?.title?.trim() || 'New chat';
   });
+  const activeThreadWaitingPrompt = createMemo<WaitingPromptView | null>(() => waitingPromptForThread(activeThreadId()));
 
   const selectedModel = createMemo(() => {
     if (!modelsReady()) return '';
@@ -888,6 +942,7 @@ export function createAIChatContextValue(): AIChatContextValue {
     enterDraftChat,
     clearActiveThreadPersistence,
     activeThread,
+    activeThreadWaitingPrompt,
     activeThreadTitle,
     creatingThread,
     ensureThreadForSend,
@@ -897,6 +952,7 @@ export function createAIChatContextValue(): AIChatContextValue {
     markThreadPendingRun,
     confirmThreadRun,
     clearThreadPendingRun,
+    consumeWaitingPrompt,
     isThreadRunning,
     onRealtimeEvent,
   };

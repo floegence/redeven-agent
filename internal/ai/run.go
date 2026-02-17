@@ -1941,6 +1941,87 @@ func extractAskUserQuestionFromBlock(block any) string {
 	}
 }
 
+func extractAskUserToolIdentity(block any) (toolID string, askUser bool, waitingUser bool) {
+	switch v := block.(type) {
+	case ToolCallBlock:
+		if strings.TrimSpace(v.ToolName) != "ask_user" {
+			return "", false, false
+		}
+		return strings.TrimSpace(v.ToolID), true, extractAskUserWaitingFlag(v.Result)
+	case *ToolCallBlock:
+		if v == nil || strings.TrimSpace(v.ToolName) != "ask_user" {
+			return "", false, false
+		}
+		return strings.TrimSpace(v.ToolID), true, extractAskUserWaitingFlag(v.Result)
+	case map[string]any:
+		typ, _ := v["type"].(string)
+		if strings.TrimSpace(typ) != "tool-call" {
+			return "", false, false
+		}
+		toolName, _ := v["toolName"].(string)
+		if strings.TrimSpace(toolName) != "ask_user" {
+			return "", false, false
+		}
+		toolID, _ := v["toolId"].(string)
+		return strings.TrimSpace(toolID), true, extractAskUserWaitingFlag(v["result"])
+	default:
+		return "", false, false
+	}
+}
+
+func extractAskUserWaitingFlag(value any) bool {
+	m, ok := value.(map[string]any)
+	if !ok || m == nil {
+		return false
+	}
+	raw, ok := m["waiting_user"]
+	if !ok {
+		return false
+	}
+	switch v := raw.(type) {
+	case bool:
+		return v
+	case string:
+		return strings.EqualFold(strings.TrimSpace(v), "true")
+	default:
+		return false
+	}
+}
+
+func (r *run) snapshotWaitingPrompt() *WaitingPrompt {
+	if r == nil {
+		return nil
+	}
+	messageID := strings.TrimSpace(r.messageID)
+	if messageID == "" {
+		return nil
+	}
+
+	r.muAssistant.Lock()
+	defer r.muAssistant.Unlock()
+
+	if len(r.assistantBlocks) == 0 {
+		return nil
+	}
+	fallbackToolID := ""
+	for i := len(r.assistantBlocks) - 1; i >= 0; i-- {
+		toolID, askUser, waitingUser := extractAskUserToolIdentity(r.assistantBlocks[i])
+		if !askUser || toolID == "" {
+			continue
+		}
+		if waitingUser {
+			return normalizeWaitingPrompt("", messageID, toolID)
+		}
+		if fallbackToolID == "" {
+			fallbackToolID = toolID
+		}
+	}
+	if fallbackToolID == "" {
+		return nil
+	}
+	return normalizeWaitingPrompt("", messageID, fallbackToolID)
+}
+
 func extractQuestionFromAny(value any) string {
 	switch v := value.(type) {
 	case map[string]any:

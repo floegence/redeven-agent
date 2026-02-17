@@ -687,7 +687,7 @@ type preparedRun struct {
 	db                   *threadstore.Store
 	messageID            string
 	r                    *run
-	updateThreadRunState func(status string, runErr string)
+	updateThreadRunState func(status string, runErr string, waitingPrompt *WaitingPrompt)
 }
 
 func (s *Service) StartRun(ctx context.Context, meta *session.Meta, runID string, req RunStartRequest, w http.ResponseWriter) error {
@@ -839,7 +839,7 @@ func (s *Service) prepareRun(meta *session.Meta, runID string, req RunStartReque
 	s.runs[runID] = r
 	s.mu.Unlock()
 
-	updateThreadRunState := func(status string, runErr string) {
+	updateThreadRunState := func(status string, runErr string, waitingPrompt *WaitingPrompt) {
 		if db == nil {
 			return
 		}
@@ -847,12 +847,31 @@ func (s *Service) prepareRun(meta *session.Meta, runID string, req RunStartReque
 		if status == "" {
 			status = "failed"
 		}
+		waitingPromptID := ""
+		waitingMessageID := ""
+		waitingToolID := ""
+		if waitingPrompt != nil {
+			waitingPromptID = strings.TrimSpace(waitingPrompt.PromptID)
+			waitingMessageID = strings.TrimSpace(waitingPrompt.MessageID)
+			waitingToolID = strings.TrimSpace(waitingPrompt.ToolID)
+		}
 		uctx, cancel := context.WithTimeout(context.Background(), persistTO)
 		defer cancel()
-		_ = db.UpdateThreadRunState(uctx, endpointID, threadID, status, runErr, metaRef.UserPublicID, metaRef.UserEmail)
+		_ = db.UpdateThreadRunState(
+			uctx,
+			endpointID,
+			threadID,
+			status,
+			runErr,
+			waitingPromptID,
+			waitingMessageID,
+			waitingToolID,
+			metaRef.UserPublicID,
+			metaRef.UserEmail,
+		)
 	}
 
-	updateThreadRunState("running", "")
+	updateThreadRunState("running", "", nil)
 	s.broadcastThreadState(endpointID, threadID, runID, "running", "")
 	s.broadcastThreadSummary(endpointID, threadID)
 
@@ -943,8 +962,12 @@ func (s *Service) executePreparedRun(ctx context.Context, prepared *preparedRun)
 			return
 		}
 		runStatus, runStatusErr := deriveThreadRunState(r.getEndReason(), r.getFinalizationReason(), retErr)
+		var waitingPrompt *WaitingPrompt
+		if NormalizeRunState(runStatus) == RunStateWaitingUser {
+			waitingPrompt = r.snapshotWaitingPrompt()
+		}
 		if prepared.updateThreadRunState != nil {
-			prepared.updateThreadRunState(runStatus, runStatusErr)
+			prepared.updateThreadRunState(runStatus, runStatusErr, waitingPrompt)
 		}
 		s.broadcastThreadState(endpointID, threadID, runID, runStatus, runStatusErr)
 		s.broadcastThreadSummary(endpointID, threadID)
@@ -1507,7 +1530,7 @@ func (s *Service) CancelRun(meta *session.Meta, runID string) error {
 
 	if db != nil && threadID != "" {
 		uctx, cancel := context.WithTimeout(context.Background(), persistTO)
-		_ = db.UpdateThreadRunState(uctx, endpointID, threadID, "canceled", "", meta.UserPublicID, meta.UserEmail)
+		_ = db.UpdateThreadRunState(uctx, endpointID, threadID, "canceled", "", "", "", "", meta.UserPublicID, meta.UserEmail)
 		cancel()
 		s.broadcastThreadState(endpointID, threadID, runID, "canceled", "")
 		s.broadcastThreadSummary(endpointID, threadID)

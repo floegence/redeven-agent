@@ -11,18 +11,21 @@ import (
 )
 
 var ErrRunChanged = errors.New("run changed")
+var ErrWaitingPromptChanged = errors.New("waiting prompt changed")
 
 type SendUserTurnRequest struct {
-	ThreadID      string     `json:"thread_id"`
-	Model         string     `json:"model,omitempty"`
-	Input         RunInput   `json:"input"`
-	Options       RunOptions `json:"options"`
-	ExpectedRunID string     `json:"expected_run_id,omitempty"`
+	ThreadID               string     `json:"thread_id"`
+	Model                  string     `json:"model,omitempty"`
+	Input                  RunInput   `json:"input"`
+	Options                RunOptions `json:"options"`
+	ExpectedRunID          string     `json:"expected_run_id,omitempty"`
+	ReplyToWaitingPromptID string     `json:"reply_to_waiting_prompt_id,omitempty"`
 }
 
 type SendUserTurnResponse struct {
-	RunID string `json:"run_id"`
-	Kind  string `json:"kind"` // "start"
+	RunID                   string `json:"run_id"`
+	Kind                    string `json:"kind"` // "start"
+	ConsumedWaitingPromptID string `json:"consumed_waiting_prompt_id,omitempty"`
 }
 
 type persistedUserMessage struct {

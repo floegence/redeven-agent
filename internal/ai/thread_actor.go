@@ -277,9 +277,40 @@ func (a *threadActor) handleSendUserTurn(ctx context.Context, meta *session.Meta
 		return SendUserTurnResponse{}, errors.New("invalid request")
 	}
 	expected := strings.TrimSpace(req.ExpectedRunID)
+	replyToWaitingPromptID := strings.TrimSpace(req.ReplyToWaitingPromptID)
 	activeRunID, _ := a.lookupActiveRun(endpointID, threadID)
 	if activeRunID != "" && expected != "" && expected != activeRunID {
 		return SendUserTurnResponse{}, ErrRunChanged
+	}
+
+	consumedWaitingPromptID := ""
+	a.mgr.svc.mu.Lock()
+	db := a.mgr.svc.threadsDB
+	persistTO := a.mgr.svc.persistOpTO
+	a.mgr.svc.mu.Unlock()
+	if db == nil {
+		return SendUserTurnResponse{}, errors.New("threads store not ready")
+	}
+	if persistTO <= 0 {
+		persistTO = defaultPersistOpTimeout
+	}
+	tctx, cancel := context.WithTimeout(ctx, persistTO)
+	th, err := db.GetThread(tctx, endpointID, threadID)
+	cancel()
+	if err != nil {
+		return SendUserTurnResponse{}, err
+	}
+	if th == nil {
+		return SendUserTurnResponse{}, errors.New("thread not found")
+	}
+	openWaitingPrompt := waitingPromptFromThreadRecord(th, th.RunStatus)
+	if openWaitingPrompt != nil {
+		if replyToWaitingPromptID == "" || strings.TrimSpace(openWaitingPrompt.PromptID) != replyToWaitingPromptID {
+			return SendUserTurnResponse{}, ErrWaitingPromptChanged
+		}
+		consumedWaitingPromptID = strings.TrimSpace(openWaitingPrompt.PromptID)
+	} else if replyToWaitingPromptID != "" {
+		return SendUserTurnResponse{}, ErrWaitingPromptChanged
 	}
 
 	persisted, normalizedInput, err := a.mgr.svc.persistUserMessage(ctx, meta, endpointID, threadID, req.Input)
@@ -312,5 +343,5 @@ func (a *threadActor) handleSendUserTurn(ctx context.Context, meta *session.Meta
 	if err := a.mgr.svc.StartRunDetachedWithPersisted(meta, runID, startReq, persisted); err != nil {
 		return SendUserTurnResponse{}, err
 	}
-	return SendUserTurnResponse{RunID: runID, Kind: "start"}, nil
+	return SendUserTurnResponse{RunID: runID, Kind: "start", ConsumedWaitingPromptID: consumedWaitingPromptID}, nil
 }

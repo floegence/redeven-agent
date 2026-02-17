@@ -18,6 +18,7 @@ import type {
   AIToolApprovalResponse,
   AITranscriptMessageItem,
   AIThreadRunStatus,
+  AIWaitingPrompt,
 } from '../sdk/ai';
 import type {
   wire_ai_active_run,
@@ -38,6 +39,7 @@ import type {
   wire_ai_transcript_message_item,
   wire_ai_tool_approval_req,
   wire_ai_tool_approval_resp,
+  wire_ai_waiting_prompt,
 } from '../wire/ai';
 
 function toAIActiveRun(raw: wire_ai_active_run): AIActiveRun {
@@ -45,6 +47,16 @@ function toAIActiveRun(raw: wire_ai_active_run): AIActiveRun {
     threadId: String(raw?.thread_id ?? '').trim(),
     runId: String(raw?.run_id ?? '').trim(),
   };
+}
+
+function fromWireAIWaitingPrompt(raw: wire_ai_waiting_prompt | undefined): AIWaitingPrompt | undefined {
+  const promptId = String(raw?.prompt_id ?? '').trim();
+  const messageId = String(raw?.message_id ?? '').trim();
+  const toolId = String(raw?.tool_id ?? '').trim();
+  if (!promptId || !messageId || !toolId) {
+    return undefined;
+  }
+  return { promptId, messageId, toolId };
 }
 
 export function toWireAISendUserTurnRequest(req: AISendUserTurnRequest): wire_ai_send_user_turn_req {
@@ -69,6 +81,8 @@ export function toWireAISendUserTurnRequest(req: AISendUserTurnRequest): wire_ai
       mode: req.options?.mode ? String(req.options.mode).trim() : undefined,
     },
     expected_run_id: req.expectedRunId?.trim() ? String(req.expectedRunId).trim() : undefined,
+    reply_to_waiting_prompt_id:
+      req.replyToWaitingPromptId?.trim() ? String(req.replyToWaitingPromptId).trim() : undefined,
   };
 }
 
@@ -76,6 +90,8 @@ export function fromWireAISendUserTurnResponse(resp: wire_ai_send_user_turn_resp
   return {
     runId: String(resp?.run_id ?? '').trim(),
     kind: String(resp?.kind ?? '').trim(),
+    consumedWaitingPromptId:
+      String(resp?.consumed_waiting_prompt_id ?? '').trim() || undefined,
   };
 }
 
@@ -207,6 +223,7 @@ export function fromWireAIEventNotify(payload: wire_ai_event_notify): AIRealtime
     streamEvent: eventType === 'stream_event' ? (payload?.stream_event as any) : undefined,
     runStatus,
     runError: typeof payload?.run_error === 'string' ? payload.run_error : undefined,
+    waitingPrompt: fromWireAIWaitingPrompt(payload?.waiting_prompt),
 
     messageRowId: Number(payload?.message_row_id ?? 0) || undefined,
     messageJson: payload?.message_json,

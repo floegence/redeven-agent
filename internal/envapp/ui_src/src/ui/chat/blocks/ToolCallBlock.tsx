@@ -4,8 +4,9 @@ import { For, Show, createEffect, createMemo, createSignal } from 'solid-js';
 import type { Component } from 'solid-js';
 import { cn } from '@floegence/floe-webapp-core';
 import { useChatContext } from '../ChatProvider';
-import type { Message, ToolCallBlock as ToolCallBlockType } from '../types';
+import type { ToolCallBlock as ToolCallBlockType } from '../types';
 import { BlockRenderer } from './BlockRenderer';
+import { useAIChatContext } from '../../pages/AIChatContext';
 
 const ASK_USER_TOOL_NAME = 'ask_user';
 
@@ -200,80 +201,32 @@ interface AskUserToolCardProps {
   class?: string;
 }
 
-function extractUserReplyText(message: Message): string {
-  const blocks = Array.isArray(message.blocks) ? message.blocks : [];
-  const textParts: string[] = [];
-  for (const block of blocks) {
-    if (block.type === 'text' || block.type === 'markdown') {
-      const content = asTrimmedString(block.content);
-      if (content) {
-        textParts.push(content);
-      }
-    }
-  }
-  const merged = textParts.join('\n').trim();
-  if (merged) {
-    return merged;
-  }
-  if (blocks.length > 0) {
-    return '[Non-text reply]';
-  }
-  return '';
-}
-
 const AskUserToolCard: Component<AskUserToolCardProps> = (props) => {
   const ctx = useChatContext();
+  const ai = useAIChatContext();
   const [selectedOptionIndex, setSelectedOptionIndex] = createSignal<number>(-1);
   const [useCustomReply, setUseCustomReply] = createSignal(false);
   const [customReply, setCustomReply] = createSignal('');
   const [submitting, setSubmitting] = createSignal(false);
   const [submittedReply, setSubmittedReply] = createSignal('');
-
-  const historicalReply = createMemo(() => {
-    const messages = ctx.messages();
-    const currentIndex = messages.findIndex((message) => message.id === props.messageId);
-    if (currentIndex < 0) {
-      return '';
-    }
-    for (let index = currentIndex + 1; index < messages.length; index += 1) {
-      const message = messages[index];
-      if (message.role !== 'user') {
-        continue;
-      }
-      return extractUserReplyText(message);
-    }
-    return '';
-  });
   const promptKey = createMemo(
-    () => `${props.display.question}\u001f${props.display.options.join('\u001f')}`,
+    () => `${props.messageId}\u001f${props.block.toolId}\u001f${props.display.question}\u001f${props.display.options.join('\u001f')}`,
   );
   const sourceLabel = createMemo(() => humanizeAskUserSource(props.display.source));
-  const resolvedReply = createMemo(() => submittedReply() || historicalReply());
-  const isTailMessage = createMemo(() => {
-    const messages = ctx.messages();
-    if (messages.length === 0) {
-      return false;
-    }
-    return messages[messages.length - 1]?.id === props.messageId;
+  const interactiveAllowed = createMemo(() => {
+    const waitingPrompt = ai.activeThreadWaitingPrompt();
+    if (!waitingPrompt) return false;
+    return (
+      String(waitingPrompt.message_id ?? '').trim() === props.messageId &&
+      String(waitingPrompt.tool_id ?? '').trim() === String(props.block.toolId ?? '').trim()
+    );
   });
-  const interactiveAllowed = createMemo(
-    () => isTailMessage() && resolvedReply().length === 0,
-  );
-  const controlsDisabled = createMemo(
-    () => submitting() || ctx.isWorking() || !interactiveAllowed(),
-  );
+  const controlsDisabled = createMemo(() => submitting() || !interactiveAllowed());
   const canSubmitCustomReply = createMemo(
     () => useCustomReply() && customReply().trim().length > 0 && !controlsDisabled(),
   );
-  const resolvedReplyLabel = createMemo(() => {
-    if (!resolvedReply()) {
-      return 'Historical request';
-    }
-    return historicalReply().length > 0 ? 'Selected reply' : 'Reply sent';
-  });
-  const resolvedReplyText = createMemo(
-    () => resolvedReply() || 'This ask_user interaction is already closed.',
-  );
+  const resolvedReplyLabel = createMemo(() => (submittedReply() ? 'Reply sent' : 'Input resolved'));
+  const resolvedReplyText = createMemo(() => submittedReply() || 'This request has been handled.');
 
   createEffect(() => {
     promptKey();
@@ -284,19 +237,32 @@ const AskUserToolCard: Component<AskUserToolCardProps> = (props) => {
     setSubmittedReply('');
   });
 
+  createEffect(() => {
+    if (!submitting()) return;
+    if (!interactiveAllowed()) {
+      setSubmitting(false);
+      return;
+    }
+    if (!ctx.isWorking()) {
+      setSubmitting(false);
+    }
+  });
+
   const submitReply = async (value: string) => {
     const content = asTrimmedString(value);
     if (!content || controlsDisabled()) {
       return;
     }
     setSubmitting(true);
+    setSubmittedReply(content);
     try {
       await ctx.sendMessage(content, []);
-      setSubmittedReply(content);
     } catch (error) {
       console.error('ask_user reply submit failed', error);
-    } finally {
       setSubmitting(false);
+    } finally {
+      // Do not clear submitting here.
+      // The card only closes after server ACK updates waiting_prompt state.
     }
   };
 
@@ -331,7 +297,7 @@ const AskUserToolCard: Component<AskUserToolCardProps> = (props) => {
   };
 
   return (
-    <div class={cn('chat-tool-ask-user-block', resolvedReply() && 'chat-tool-ask-user-block-completed', props.class)}>
+    <div class={cn('chat-tool-ask-user-block', !interactiveAllowed() && 'chat-tool-ask-user-block-completed', props.class)}>
       <div class="chat-tool-ask-user-head">
         <span class="chat-tool-ask-user-badge">Input Requested</span>
         <Show when={sourceLabel()}>
