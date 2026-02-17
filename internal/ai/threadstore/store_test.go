@@ -38,7 +38,7 @@ func TestStore_UpdateThreadRunState(t *testing.T) {
 		t.Fatalf("RunStatus=%q, want idle", th.RunStatus)
 	}
 
-	if err := s.UpdateThreadRunState(ctx, "env_1", "th_1", "running", "", "u1", "u1@example.com"); err != nil {
+	if err := s.UpdateThreadRunState(ctx, "env_1", "th_1", "running", "", "", "", "", "u1", "u1@example.com"); err != nil {
 		t.Fatalf("UpdateThreadRunState running: %v", err)
 	}
 	th, err = s.GetThread(ctx, "env_1", "th_1")
@@ -52,7 +52,7 @@ func TestStore_UpdateThreadRunState(t *testing.T) {
 		t.Fatalf("RunUpdatedAtUnixMs=%d, want > 0", th.RunUpdatedAtUnixMs)
 	}
 
-	if err := s.UpdateThreadRunState(ctx, "env_1", "th_1", "failed", strings.Repeat("x", 900), "u1", "u1@example.com"); err != nil {
+	if err := s.UpdateThreadRunState(ctx, "env_1", "th_1", "failed", strings.Repeat("x", 900), "", "", "", "u1", "u1@example.com"); err != nil {
 		t.Fatalf("UpdateThreadRunState failed: %v", err)
 	}
 	th, err = s.GetThread(ctx, "env_1", "th_1")
@@ -66,7 +66,21 @@ func TestStore_UpdateThreadRunState(t *testing.T) {
 		t.Fatalf("RunError rune len=%d, want 600", got)
 	}
 
-	if err := s.UpdateThreadRunState(ctx, "env_1", "th_1", "success", "should be cleared", "u1", "u1@example.com"); err != nil {
+	if err := s.UpdateThreadRunState(ctx, "env_1", "th_1", "waiting_user", "", "wp_1", "msg_1", "tool_1", "u1", "u1@example.com"); err != nil {
+		t.Fatalf("UpdateThreadRunState waiting_user: %v", err)
+	}
+	th, err = s.GetThread(ctx, "env_1", "th_1")
+	if err != nil {
+		t.Fatalf("GetThread after waiting_user: %v", err)
+	}
+	if th.RunStatus != "waiting_user" {
+		t.Fatalf("RunStatus=%q, want waiting_user", th.RunStatus)
+	}
+	if th.WaitingPromptID != "wp_1" || th.WaitingMessageID != "msg_1" || th.WaitingToolID != "tool_1" {
+		t.Fatalf("waiting prompt mismatch: %+v", th)
+	}
+
+	if err := s.UpdateThreadRunState(ctx, "env_1", "th_1", "success", "should be cleared", "", "", "", "u1", "u1@example.com"); err != nil {
 		t.Fatalf("UpdateThreadRunState success: %v", err)
 	}
 	th, err = s.GetThread(ctx, "env_1", "th_1")
@@ -78,6 +92,9 @@ func TestStore_UpdateThreadRunState(t *testing.T) {
 	}
 	if th.RunError != "" {
 		t.Fatalf("RunError=%q, want empty", th.RunError)
+	}
+	if th.WaitingPromptID != "" || th.WaitingMessageID != "" || th.WaitingToolID != "" {
+		t.Fatalf("waiting prompt should be cleared, got %+v", th)
 	}
 }
 
@@ -113,7 +130,7 @@ func TestStore_ResetStaleActiveThreadRunStates(t *testing.T) {
 		if err := s.CreateThread(ctx, Thread{ThreadID: tc.threadID, EndpointID: "env_1", Title: tc.threadID}); err != nil {
 			t.Fatalf("CreateThread(%s): %v", tc.threadID, err)
 		}
-		if err := s.UpdateThreadRunState(ctx, "env_1", tc.threadID, tc.status, tc.runError, "u1", "u1@example.com"); err != nil {
+		if err := s.UpdateThreadRunState(ctx, "env_1", tc.threadID, tc.status, tc.runError, "", "", "", "u1", "u1@example.com"); err != nil {
 			t.Fatalf("UpdateThreadRunState(%s): %v", tc.threadID, err)
 		}
 	}
@@ -222,7 +239,7 @@ PRAGMA user_version=1;
 		t.Fatalf("rows err: %v", err)
 	}
 
-	for _, col := range []string{"model_id", "working_dir", "run_status", "run_updated_at_unix_ms", "run_error"} {
+	for _, col := range []string{"model_id", "working_dir", "run_status", "run_updated_at_unix_ms", "run_error", "waiting_prompt_id", "waiting_message_id", "waiting_tool_id"} {
 		if !cols[col] {
 			t.Fatalf("missing migrated column %q", col)
 		}
@@ -246,8 +263,8 @@ WHERE type = 'table' AND name = ?
 	if err := s.db.QueryRowContext(ctx, `PRAGMA user_version;`).Scan(&version); err != nil {
 		t.Fatalf("read user_version: %v", err)
 	}
-	if version != 8 {
-		t.Fatalf("user_version=%d, want 8", version)
+	if version != 9 {
+		t.Fatalf("user_version=%d, want 9", version)
 	}
 }
 

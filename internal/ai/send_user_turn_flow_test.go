@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -116,6 +117,122 @@ func TestSendUserTurn_ExpectedRunChanged_DoesNotPersistMessage(t *testing.T) {
 	}
 	if len(msgs) != 0 {
 		t.Fatalf("expected no persisted messages on run_changed conflict, got %d", len(msgs))
+	}
+}
+
+func TestSendUserTurn_WaitingPromptMismatch_DoesNotPersistMessage(t *testing.T) {
+	t.Parallel()
+
+	svc := newSendTurnTestService(t)
+	meta := testSendTurnMeta()
+	ctx := context.Background()
+
+	th, err := svc.CreateThread(ctx, meta, "waiting-prompt-mismatch", "", "")
+	if err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+
+	const waitingPromptID = "wp_waiting_prompt_mismatch"
+	if err := svc.threadsDB.UpdateThreadRunState(
+		ctx,
+		meta.EndpointID,
+		th.ThreadID,
+		"waiting_user",
+		"",
+		waitingPromptID,
+		"msg_waiting_prompt_mismatch",
+		"tool_waiting_prompt_mismatch",
+		meta.UserPublicID,
+		meta.UserEmail,
+	); err != nil {
+		t.Fatalf("UpdateThreadRunState waiting_user: %v", err)
+	}
+
+	_, err = svc.SendUserTurn(ctx, meta, SendUserTurnRequest{
+		ThreadID: th.ThreadID,
+		Model:    "openai/gpt-5-mini",
+		Input: RunInput{
+			Text: "reply without waiting prompt id",
+		},
+		Options: RunOptions{MaxSteps: 1},
+	})
+	if !errors.Is(err, ErrWaitingPromptChanged) {
+		t.Fatalf("SendUserTurn err=%v, want %v", err, ErrWaitingPromptChanged)
+	}
+
+	_, err = svc.SendUserTurn(ctx, meta, SendUserTurnRequest{
+		ThreadID:               th.ThreadID,
+		Model:                  "openai/gpt-5-mini",
+		ReplyToWaitingPromptID: "wp_wrong_id",
+		Input:                  RunInput{Text: "reply with wrong waiting prompt id"},
+		Options:                RunOptions{MaxSteps: 1},
+	})
+	if !errors.Is(err, ErrWaitingPromptChanged) {
+		t.Fatalf("SendUserTurn wrong-id err=%v, want %v", err, ErrWaitingPromptChanged)
+	}
+
+	msgs, _, _, err := svc.threadsDB.ListMessages(ctx, meta.EndpointID, th.ThreadID, 200, 0)
+	if err != nil {
+		t.Fatalf("ListMessages: %v", err)
+	}
+	if len(msgs) != 0 {
+		t.Fatalf("expected no persisted messages on waiting prompt mismatch, got %d", len(msgs))
+	}
+}
+
+func TestSendUserTurn_WaitingPromptMatch_ReturnsConsumedPromptID(t *testing.T) {
+	t.Parallel()
+
+	svc := newSendTurnTestService(t)
+	meta := testSendTurnMeta()
+	ctx := context.Background()
+
+	th, err := svc.CreateThread(ctx, meta, "waiting-prompt-match", "", "")
+	if err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+
+	const waitingPromptID = "wp_waiting_prompt_match"
+	if err := svc.threadsDB.UpdateThreadRunState(
+		ctx,
+		meta.EndpointID,
+		th.ThreadID,
+		"waiting_user",
+		"",
+		waitingPromptID,
+		"msg_waiting_prompt_match",
+		"tool_waiting_prompt_match",
+		meta.UserPublicID,
+		meta.UserEmail,
+	); err != nil {
+		t.Fatalf("UpdateThreadRunState waiting_user: %v", err)
+	}
+
+	resp, err := svc.SendUserTurn(ctx, meta, SendUserTurnRequest{
+		ThreadID:               th.ThreadID,
+		Model:                  "openai/gpt-5-mini",
+		ReplyToWaitingPromptID: waitingPromptID,
+		Input: RunInput{
+			Text: "reply with matching waiting prompt id",
+		},
+		Options: RunOptions{MaxSteps: 1},
+	})
+	if err != nil {
+		t.Fatalf("SendUserTurn: %v", err)
+	}
+	if got := strings.TrimSpace(resp.ConsumedWaitingPromptID); got != waitingPromptID {
+		t.Fatalf("ConsumedWaitingPromptID=%q, want %q", got, waitingPromptID)
+	}
+	if strings.TrimSpace(resp.RunID) == "" {
+		t.Fatalf("SendUserTurn run_id is empty")
+	}
+
+	msgs, _, _, err := svc.threadsDB.ListMessages(ctx, meta.EndpointID, th.ThreadID, 200, 0)
+	if err != nil {
+		t.Fatalf("ListMessages: %v", err)
+	}
+	if len(msgs) == 0 {
+		t.Fatalf("expected persisted user message after matching waiting prompt reply")
 	}
 }
 
