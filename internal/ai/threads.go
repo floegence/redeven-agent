@@ -47,6 +47,10 @@ func normalizeThreadRunState(status string, runError string) (string, string) {
 	}
 }
 
+func threadWaitingPromptView(t *threadstore.Thread, effectiveRunStatus string) *WaitingPrompt {
+	return waitingPromptFromThreadRecord(t, effectiveRunStatus)
+}
+
 func (s *Service) activeThreadRunSet(endpointID string) map[string]struct{} {
 	endpointID = strings.TrimSpace(endpointID)
 	if endpointID == "" || s == nil {
@@ -118,6 +122,7 @@ func (s *Service) GetThread(ctx context.Context, meta *session.Meta, threadID st
 		RunStatus:           runStatus,
 		RunUpdatedAtUnixMs:  th.RunUpdatedAtUnixMs,
 		RunError:            runError,
+		WaitingPrompt:       threadWaitingPromptView(th, runStatus),
 		CreatedAtUnixMs:     th.CreatedAtUnixMs,
 		UpdatedAtUnixMs:     th.UpdatedAtUnixMs,
 		LastMessageAtUnixMs: th.LastMessageAtUnixMs,
@@ -168,6 +173,7 @@ func (s *Service) ListThreads(ctx context.Context, meta *session.Meta, limit int
 			RunStatus:           runStatus,
 			RunUpdatedAtUnixMs:  t.RunUpdatedAtUnixMs,
 			RunError:            runError,
+			WaitingPrompt:       threadWaitingPromptView(&t, runStatus),
 			CreatedAtUnixMs:     t.CreatedAtUnixMs,
 			UpdatedAtUnixMs:     t.UpdatedAtUnixMs,
 			LastMessageAtUnixMs: t.LastMessageAtUnixMs,
@@ -254,6 +260,7 @@ func (s *Service) CreateThread(ctx context.Context, meta *session.Meta, title st
 		RunStatus:           "idle",
 		RunUpdatedAtUnixMs:  0,
 		RunError:            "",
+		WaitingPrompt:       nil,
 		CreatedAtUnixMs:     t.CreatedAtUnixMs,
 		UpdatedAtUnixMs:     t.UpdatedAtUnixMs,
 		LastMessageAtUnixMs: 0,
@@ -393,7 +400,7 @@ func (s *Service) CancelThread(meta *session.Meta, threadID string) error {
 	// allow the user to unblock the UI by marking it canceled.
 	if db != nil {
 		uctx, cancel := context.WithTimeout(context.Background(), persistTO)
-		_ = db.UpdateThreadRunState(uctx, endpointID, threadID, "canceled", "", meta.UserPublicID, meta.UserEmail)
+		_ = db.UpdateThreadRunState(uctx, endpointID, threadID, "canceled", "", "", "", "", meta.UserPublicID, meta.UserEmail)
 		cancel()
 		s.broadcastThreadSummary(endpointID, threadID)
 	}

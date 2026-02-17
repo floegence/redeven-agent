@@ -9,6 +9,12 @@ export type AIActiveRun = {
   runId: string;
 };
 
+export type AIWaitingPrompt = {
+  promptId: string;
+  messageId: string;
+  toolId: string;
+};
+
 export type AISendUserTurnRequest = {
   threadId: string;
   model?: string;
@@ -26,11 +32,13 @@ export type AISendUserTurnRequest = {
     mode?: 'act' | 'plan';
   };
   expectedRunId?: string;
+  replyToWaitingPromptId?: string;
 };
 
 export type AISendUserTurnResponse = {
   runId: string;
   kind: string;
+  consumedWaitingPromptId?: string;
 };
 
 export type AICancelRunRequest = {
@@ -116,6 +124,7 @@ export type AIRealtimeEvent = {
   streamEvent?: StreamEvent;
   runStatus?: AIThreadRunStatus;
   runError?: string;
+  waitingPrompt?: AIWaitingPrompt;
 
   // transcript_message only
   messageRowId?: number;
