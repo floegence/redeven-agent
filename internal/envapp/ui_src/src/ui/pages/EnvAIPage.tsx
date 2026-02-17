@@ -2029,6 +2029,10 @@ export function EnvAIPage() {
       mimeType: a.file.type,
       url: String(a.url ?? '').trim(),
     }));
+    const replyToWaitingPromptId =
+      tid === String(ai.activeThreadId() ?? '').trim()
+        ? String(ai.activeThreadWaitingPrompt()?.prompt_id ?? '').trim()
+        : '';
 
     ai.markThreadPendingRun(tid);
 
@@ -2052,6 +2056,7 @@ export function EnvAIPage() {
           attachments: attIn,
         },
         options: { maxSteps: 10, mode: executionMode() },
+        replyToWaitingPromptId: replyToWaitingPromptId || undefined,
       } as const;
 
       const expected = String(ai.runIdForThread(tid) ?? '').trim();
@@ -2068,6 +2073,10 @@ export function EnvAIPage() {
       }
 
       const rid = String(resp.runId ?? '').trim();
+      const consumedWaitingPromptId = String(resp.consumedWaitingPromptId ?? '').trim();
+      if (consumedWaitingPromptId) {
+        ai.consumeWaitingPrompt(tid, consumedWaitingPromptId);
+      }
       if (rid) {
         ai.confirmThreadRun(tid, rid);
       }
