@@ -753,11 +753,11 @@ button.chat-tool-ask-user-custom-submit:disabled {
 }
 
 .chat-sources-table {
-  margin: 0.5rem;
-  border-radius: 0.625rem;
+  margin: 0;
+  border-radius: 0;
   overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
-  background-color: color-mix(in srgb, var(--background) 90%, var(--muted) 10%);
+  border: none;
+  background-color: transparent;
 }
 
 .chat-sources-table-header,
