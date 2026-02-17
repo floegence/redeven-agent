@@ -1695,12 +1695,9 @@ func (r *run) runNative(ctx context.Context, req RunRequest, providerCfg config.
 		return nil
 	}
 	rejectAskUser := func(source string, gateReason string) {
-		rejectionMsg := "ask_user was rejected by policy gate. Continue autonomously with available tools and call task_complete when done."
-		recoveryOverlay := "[RECOVERY] ask_user rejected by policy gate. Continue with tools and call task_complete when done."
+		rejectionMsg := "ask_user was rejected by contract gate. Continue autonomously with available tools and call task_complete when done."
+		recoveryOverlay := "[RECOVERY] ask_user rejected by contract gate. Continue with tools and call task_complete when done."
 		switch strings.TrimSpace(gateReason) {
-		case "policy_rejected_by_model", "policy_rejected", "policy_classifier_failed", "policy_classifier_parse_failed":
-			rejectionMsg = "ask_user was rejected because policy classification did not allow waiting for user input. Continue autonomously and only ask the user for true external blockers."
-			recoveryOverlay = "[POLICY] ask_user rejected by model policy. Continue with tools."
 		case "missing_reason_code":
 			rejectionMsg = "ask_user was rejected because reason_code is missing or invalid. Regenerate ask_user with a valid structured reason."
 			recoveryOverlay = "[CONTRACT] ask_user requires a valid reason_code."
@@ -1751,7 +1748,7 @@ func (r *run) runNative(ctx context.Context, req RunRequest, providerCfg config.
 		}
 		if source == "model_signal" {
 			policyDecision = classifyAskUserByModel(signal)
-			askPassed, askReason = evaluateAskUserGate(signal, state, taskComplexity, policyDecision)
+			askPassed, askReason = evaluateAskUserGate(signal, state, taskComplexity)
 		} else {
 			askPassed, askReason = evaluateGuardAskUserGate(source, state, taskComplexity)
 		}
@@ -1769,6 +1766,9 @@ func (r *run) runNative(ctx context.Context, req RunRequest, providerCfg config.
 			"policy_reason":         policyDecision.Reason,
 			"policy_source":         policyDecision.Source,
 			"policy_confidence":     policyDecision.Confidence,
+			"policy_advisory_mode":  source == "model_signal",
+			"policy_gate_enforced":  false,
+			"policy_advisory_block": source == "model_signal" && !policyDecision.Allow,
 			"complexity":            taskComplexity,
 			"todo_tracking":         state.TodoTrackingEnabled,
 			"todo_open_count":       state.TodoOpenCount,
@@ -3186,7 +3186,7 @@ func evaluateTaskCompletionGate(resultText string, state runtimeState, complexit
 	return true, "ok"
 }
 
-func evaluateAskUserGate(signal askUserSignal, state runtimeState, complexity string, policy askUserPolicyDecision) (bool, string) {
+func evaluateAskUserGate(signal askUserSignal, state runtimeState, complexity string) (bool, string) {
 	signal = normalizeAskUserSignal(signal)
 	if strings.TrimSpace(signal.Question) == "" {
 		return false, "empty_question"
@@ -3208,12 +3208,6 @@ func evaluateAskUserGate(signal askUserSignal, state runtimeState, complexity st
 		if signal.ReasonCode == AskUserReasonPermissionBlocked && blocked == 0 {
 			return false, "permission_reason_without_blocked_evidence"
 		}
-	}
-	if !policy.Allow {
-		if normalizeIntentReason(policy.Reason) == "" {
-			return false, "policy_rejected"
-		}
-		return false, "policy_rejected_by_model"
 	}
 	if required, reason := todoTrackingRequirement(complexity, state); required {
 		return false, reason
