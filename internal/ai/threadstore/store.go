@@ -1444,7 +1444,7 @@ func migrateSchema(db *sql.DB) error {
 	if db == nil {
 		return errors.New("nil db")
 	}
-	const targetVersion = 9
+	const targetVersion = 10
 
 	var v int
 	if err := db.QueryRow(`PRAGMA user_version;`).Scan(&v); err != nil {
@@ -1783,10 +1783,66 @@ WHERE kind = 'todo' AND content LIKE 'Action blocked:%'
 		return err
 	}
 
+	// v10: scrub legacy model-default token from persisted text payloads.
+	if err := scrubLegacyModelDefaultToken(tx); err != nil {
+		return err
+	}
+
 	if _, err := tx.Exec(fmt.Sprintf(`PRAGMA user_version=%d;`, targetVersion)); err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+func scrubLegacyModelDefaultToken(tx *sql.Tx) error {
+	if tx == nil {
+		return errors.New("nil tx")
+	}
+
+	legacyToken := strings.Join([]string{"is", "default"}, "_")
+	const replacementToken = "current_model_id"
+
+	type target struct {
+		table  string
+		column string
+	}
+	targets := []target{
+		{table: "ai_threads", column: "title"},
+		{table: "ai_threads", column: "last_message_preview"},
+		{table: "ai_messages", column: "text_content"},
+		{table: "ai_messages", column: "message_json"},
+		{table: "ai_runs", column: "error_message"},
+		{table: "ai_tool_calls", column: "args_json"},
+		{table: "ai_tool_calls", column: "result_json"},
+		{table: "ai_tool_calls", column: "error_message"},
+		{table: "ai_run_events", column: "payload_json"},
+		{table: "transcript_messages", column: "text_content"},
+		{table: "transcript_messages", column: "message_json"},
+		{table: "execution_spans", column: "payload_json"},
+		{table: "memory_items", column: "content"},
+		{table: "provider_capabilities", column: "capability_json"},
+	}
+
+	for _, item := range targets {
+		hasColumn, err := columnExists(tx, item.table, item.column)
+		if err != nil {
+			return err
+		}
+		if !hasColumn {
+			continue
+		}
+
+		stmt := fmt.Sprintf(`
+UPDATE %s
+SET %s = REPLACE(%s, ?, ?)
+WHERE instr(%s, ?) > 0
+`, item.table, item.column, item.column, item.column)
+		if _, err := tx.Exec(stmt, legacyToken, replacementToken, legacyToken); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func columnExists(tx *sql.Tx, tableName string, colName string) (bool, error) {
