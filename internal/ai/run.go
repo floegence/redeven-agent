@@ -92,13 +92,15 @@ type run struct {
 	doneCh         chan struct{}
 	doneOnce       sync.Once
 
-	muCancel        sync.Mutex
-	cancelReason    string // "canceled"|"timed_out"|""
-	endReason       string // "complete"|"canceled"|"timed_out"|"disconnected"|"error"
-	cancelRequested bool
-	cancelFn        context.CancelFunc
-	detached        atomic.Bool // hard-canceled: stop emitting realtime events and skip thread state updates
-	busyCount       atomic.Int32
+	muCancel         sync.Mutex
+	cancelReason     string // "canceled"|"timed_out"|""
+	endReason        string // "complete"|"canceled"|"timed_out"|"disconnected"|"error"
+	cancelRequested  bool
+	cancelFn         context.CancelFunc
+	detached         atomic.Bool // hard-canceled: stop emitting realtime events and skip thread state updates
+	busyCount        atomic.Int32
+	runtimeToolCalls atomic.Int64
+	runtimeTokens    atomic.Int64
 
 	uploadsDir       string
 	threadsDB        *threadstore.Store
@@ -367,6 +369,34 @@ func (r *run) getFinalizationReason() string {
 	v := strings.TrimSpace(r.finalizationReason)
 	r.muCancel.Unlock()
 	return v
+}
+
+func (r *run) recordRuntimeToolCall() {
+	if r == nil {
+		return
+	}
+	r.runtimeToolCalls.Add(1)
+}
+
+func (r *run) recordRuntimeTurnUsage(usage TurnUsage, estimateTokens int) {
+	if r == nil {
+		return
+	}
+	total := usage.InputTokens + usage.OutputTokens + usage.ReasoningTokens
+	if total <= 0 && estimateTokens > 0 {
+		total = int64(estimateTokens)
+	}
+	if total <= 0 {
+		return
+	}
+	r.runtimeTokens.Add(total)
+}
+
+func (r *run) runtimeStatsSnapshot() (toolCalls int64, tokens int64) {
+	if r == nil {
+		return 0, 0
+	}
+	return r.runtimeToolCalls.Load(), r.runtimeTokens.Load()
 }
 
 func (r *run) cancel() {
@@ -1411,6 +1441,7 @@ func (r *run) handleToolCall(ctx context.Context, toolID string, toolName string
 	if args == nil {
 		args = map[string]any{}
 	}
+	r.recordRuntimeToolCall()
 
 	argsForPersist := args
 	if toolName == "terminal.exec" {
