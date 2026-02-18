@@ -399,21 +399,21 @@ function parseJSONOrThrow(raw: string): any {
   }
 }
 
-function normalizePortRange(min: number, max: number): { is_default: boolean; effective_min: number; effective_max: number } {
+function normalizePortRange(min: number, max: number): { use_default: boolean; effective_min: number; effective_max: number } {
   let m = Number(min);
   let M = Number(max);
   if (!Number.isFinite(m)) m = 0;
   if (!Number.isFinite(M)) M = 0;
 
   if (m <= 0 || M <= 0 || M > 65535 || m >= M) {
-    return { is_default: true, effective_min: DEFAULT_CODE_SERVER_PORT_MIN, effective_max: DEFAULT_CODE_SERVER_PORT_MAX };
+    return { use_default: true, effective_min: DEFAULT_CODE_SERVER_PORT_MIN, effective_max: DEFAULT_CODE_SERVER_PORT_MAX };
   }
   if (m < 1024) m = 1024;
   if (M < 1024) M = 1024;
   if (m >= M) {
-    return { is_default: true, effective_min: DEFAULT_CODE_SERVER_PORT_MIN, effective_max: DEFAULT_CODE_SERVER_PORT_MAX };
+    return { use_default: true, effective_min: DEFAULT_CODE_SERVER_PORT_MIN, effective_max: DEFAULT_CODE_SERVER_PORT_MAX };
   }
-  return { is_default: false, effective_min: m, effective_max: M };
+  return { use_default: false, effective_min: m, effective_max: M };
 }
 
 function mapToPermissionRows(m: Record<string, PermissionSet> | undefined): PermissionRow[] {
@@ -1291,9 +1291,6 @@ export function EnvSettingsPage() {
         if ((m as any).label !== undefined) {
           throw new Error(`Provider "${id}" models[].label is not supported. Use model_name only.`);
         }
-        if ((m as any).is_default !== undefined) {
-          throw new Error(`Provider "${id}" models[].is_default is not supported. Use current_model_id.`);
-        }
         if (!mn) throw new Error(`Provider "${id}" has a model with missing model_name.`);
         if (mn.includes('/')) throw new Error(`Provider "${id}" model_name must not contain "/".`);
         if (modelNames.has(mn)) throw new Error(`Provider "${id}" has duplicate model_name: ${mn}`);
@@ -1948,9 +1945,9 @@ export function EnvSettingsPage() {
       const max = Number(c?.code_server_port_max ?? 0);
       const n = normalizePortRange(min, max);
 
-      setUseDefaultCodePorts(n.is_default);
-      setCodePortMin(n.is_default ? '' : n.effective_min);
-      setCodePortMax(n.is_default ? '' : n.effective_max);
+      setUseDefaultCodePorts(n.use_default);
+      setCodePortMin(n.use_default ? '' : n.effective_min);
+      setCodePortMax(n.use_default ? '' : n.effective_max);
       setCodespacesJSON(JSON.stringify({ code_server_port_min: min, code_server_port_max: max }, null, 2));
     }
 
@@ -2094,9 +2091,9 @@ export function EnvSettingsPage() {
         throw new Error('Codespaces JSON must include "code_server_port_min" and "code_server_port_max" as numbers.');
       }
       const n = normalizePortRange(min, max);
-      setUseDefaultCodePorts(n.is_default);
-      setCodePortMin(n.is_default ? '' : n.effective_min);
-      setCodePortMax(n.is_default ? '' : n.effective_max);
+      setUseDefaultCodePorts(n.use_default);
+      setCodePortMin(n.use_default ? '' : n.effective_min);
+      setCodePortMax(n.use_default ? '' : n.effective_max);
       setCodespacesView('ui');
     } catch (e) {
       setCodespacesError(e instanceof Error ? e.message : String(e));
@@ -2219,7 +2216,7 @@ export function EnvSettingsPage() {
         const max = codePortMax();
         if (min === '' || max === '') throw new Error('Please provide both port min and port max.');
         const n = normalizePortRange(Number(min), Number(max));
-        if (n.is_default) throw new Error('Invalid port range.');
+        if (n.use_default) throw new Error('Invalid port range.');
       }
       body = buildCodespacesPatch();
     }
