@@ -1737,6 +1737,13 @@ func (r *run) runNative(ctx context.Context, req RunRequest, providerCfg config.
 			signal.Question = "I need clarification to continue safely."
 		}
 		source = strings.TrimSpace(source)
+		if r.noUserInteraction {
+			r.persistRunEvent("ask_user.rejected", RealtimeStreamKindLifecycle, map[string]any{
+				"source":      source,
+				"gate_reason": "no_user_interaction_policy",
+			})
+			return false, errors.New("ask_user is disabled in this run by no-user-interaction policy")
+		}
 
 		var askPassed bool
 		var askReason string
@@ -3578,6 +3585,9 @@ func (r *run) buildLayeredSystemPrompt(objective string, mode string, complexity
 		fmt.Sprintf("- Objective: %s", strings.TrimSpace(objective)),
 		fmt.Sprintf("- Recent errors: %s", recentErrors),
 		fmt.Sprintf("- Todo tracking: %s", todoStatus),
+	}
+	if r.noUserInteraction {
+		runtime = append(runtime, "- Interaction policy: ask_user is unavailable in this run. Continue autonomously or finish with task_complete including blockers.")
 	}
 	if normalizeTodoPolicy(state.TodoPolicy) == TodoPolicyRequired {
 		runtime = append(runtime, fmt.Sprintf("- Required todo minimum: %d", requiredTodoCount(state)))
