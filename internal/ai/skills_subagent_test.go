@@ -259,7 +259,7 @@ func (m *subagentOpenAISimpleMock) handle(w http.ResponseWriter, r *http.Request
 					"id":        "fc_subagent_complete_1",
 					"call_id":   "call_subagent_complete_1",
 					"name":      "task_complete",
-					"arguments": `{"result":"Subagent completed."}`,
+					"arguments": `{"result":"{\"summary\":\"Subagent completed.\"}","evidence_refs":["https://example.com/source"]}`,
 				},
 			},
 			"usage": map[string]any{
@@ -323,13 +323,19 @@ func TestSubagentManager_DelegateAndWait(t *testing.T) {
 	r.currentModelID = "openai/gpt-5-mini"
 
 	created, err := r.manageSubagents(context.Background(), map[string]any{
-		"action":         "create",
-		"objective":      "Summarize current workspace status.",
-		"agent_type":     "explore",
-		"trigger_reason": "Need an isolated exploration result before deciding the next parent step.",
-		"expected_output": map[string]any{
-			"summary":       "A concise workspace status summary.",
-			"required_keys": []any{"summary"},
+		"action":             "create",
+		"title":              "Workspace status summary",
+		"objective":          "Summarize current workspace status.",
+		"agent_type":         "explore",
+		"trigger_reason":     "Need an isolated exploration result before deciding the next parent step.",
+		"deliverables":       []any{"summary", "key risks"},
+		"definition_of_done": []any{"Include a concise summary and at least one evidence reference."},
+		"output_schema": map[string]any{
+			"type":     "object",
+			"required": []any{"summary"},
+			"properties": map[string]any{
+				"summary": map[string]any{"type": "string", "minLength": 10},
+			},
 		},
 		"mode": "plan",
 		"budget": map[string]any{
@@ -342,6 +348,15 @@ func TestSubagentManager_DelegateAndWait(t *testing.T) {
 	id := strings.TrimSpace(anyToString(created["subagent_id"]))
 	if id == "" {
 		t.Fatalf("missing subagent_id in result: %#v", created)
+	}
+	if strings.TrimSpace(anyToString(created["spec_id"])) == "" {
+		t.Fatalf("missing spec_id in create result: %#v", created)
+	}
+	if strings.TrimSpace(anyToString(created["title"])) == "" {
+		t.Fatalf("missing title in create result: %#v", created)
+	}
+	if !strings.Contains(strings.TrimSpace(anyToString(created["delegation_prompt_markdown"])), "# Mission") {
+		t.Fatalf("missing canonical delegation prompt in create result: %#v", created)
 	}
 
 	waited, err := r.manageSubagents(context.Background(), map[string]any{
@@ -377,6 +392,12 @@ func TestSubagentManager_DelegateAndWait(t *testing.T) {
 	}
 	if parseIntRaw(stats["tokens"], 0) <= 0 {
 		t.Fatalf("unexpected subagent token stats: %#v", stats)
+	}
+	if strings.TrimSpace(anyToString(entry["spec_id"])) == "" {
+		t.Fatalf("missing spec_id in wait snapshot: %#v", entry)
+	}
+	if strings.TrimSpace(anyToString(entry["title"])) == "" {
+		t.Fatalf("missing title in wait snapshot: %#v", entry)
 	}
 
 	managedList, err := r.manageSubagents(context.Background(), map[string]any{
@@ -488,7 +509,7 @@ func (m *subagentWebSearchResolverMock) handle(w http.ResponseWriter, r *http.Re
 						"id":        "fc_subagent_complete_2",
 						"call_id":   "call_subagent_complete_2",
 						"name":      "task_complete",
-						"arguments": `{"result":"Subagent completed."}`,
+						"arguments": `{"result":"{\"summary\":\"Subagent completed.\"}","evidence_refs":["https://example.com/source"]}`,
 					},
 				},
 				"usage": map[string]any{
@@ -561,13 +582,19 @@ func TestSubagentManager_InheritsWebSearchResolver(t *testing.T) {
 	r.currentModelID = "openai/gpt-5-mini"
 
 	created, err := r.manageSubagents(context.Background(), map[string]any{
-		"action":         "create",
-		"objective":      "Search the web and summarize the results.",
-		"agent_type":     "explore",
-		"trigger_reason": "Need independent source lookup before drafting the final response.",
-		"expected_output": map[string]any{
-			"summary":       "A concise summary of relevant sources.",
-			"required_keys": []any{"summary"},
+		"action":             "create",
+		"title":              "Web source summary",
+		"objective":          "Search the web and summarize the results.",
+		"agent_type":         "explore",
+		"trigger_reason":     "Need independent source lookup before drafting the final response.",
+		"deliverables":       []any{"summary", "sources"},
+		"definition_of_done": []any{"Summary must cite source URLs through evidence_refs."},
+		"output_schema": map[string]any{
+			"type":     "object",
+			"required": []any{"summary"},
+			"properties": map[string]any{
+				"summary": map[string]any{"type": "string", "minLength": 10},
+			},
 		},
 		"mode": "plan",
 		"budget": map[string]any{
@@ -778,18 +805,44 @@ func TestSubagentManager_CreateRejectsLegacyTaskID(t *testing.T) {
 	r.subagentManager = mgr
 
 	_, err := mgr.create(context.Background(), map[string]any{
-		"task_id":        "task_existing",
-		"objective":      "continue with new detail",
-		"agent_type":     "explore",
-		"trigger_reason": "legacy resume input should be rejected",
-		"expected_output": map[string]any{
-			"summary": "legacy",
+		"task_id":            "task_existing",
+		"objective":          "continue with new detail",
+		"agent_type":         "explore",
+		"trigger_reason":     "legacy resume input should be rejected",
+		"deliverables":       []any{"summary"},
+		"definition_of_done": []any{"Provide a summary."},
+		"output_schema": map[string]any{
+			"type":     "object",
+			"required": []any{"summary"},
+			"properties": map[string]any{
+				"summary": map[string]any{"type": "string"},
+			},
 		},
 	})
 	if err == nil {
 		t.Fatalf("expected create to reject task_id")
 	}
 	if !strings.Contains(err.Error(), "task_id is not supported") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestSubagentManager_CreateRequiresPromptContract(t *testing.T) {
+	t.Parallel()
+
+	r := newRun(runOptions{Log: slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{})), FSRoot: t.TempDir()})
+	mgr := newSubagentManager(r)
+	r.subagentManager = mgr
+
+	_, err := mgr.create(context.Background(), map[string]any{
+		"objective":      "summarize workspace",
+		"agent_type":     "explore",
+		"trigger_reason": "need delegated summary",
+	})
+	if err == nil {
+		t.Fatalf("expected missing contract fields to fail")
+	}
+	if !strings.Contains(err.Error(), "missing deliverables") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

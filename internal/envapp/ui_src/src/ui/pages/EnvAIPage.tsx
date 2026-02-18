@@ -973,6 +973,16 @@ function CompactSubagentsSummary(props: {
                         <span>•</span>
                         <span>Tokens {formatSubagentInteger(item.stats.tokens)}</span>
                       </div>
+                      <Show when={item.title || item.objective}>
+                        <div class="mt-1 text-[11px] text-foreground leading-relaxed">
+                          {summarizeSubagentText(String(item.title ?? item.objective ?? ''), 108)}
+                        </div>
+                      </Show>
+                      <Show when={item.delegationPromptMarkdown}>
+                        <div class="mt-1 text-[11px] text-muted-foreground leading-relaxed">
+                          Prompt: {summarizeSubagentText(String(item.delegationPromptMarkdown ?? ''), 108)}
+                        </div>
+                      </Show>
                       <Show when={item.triggerReason}>
                         <div class="mt-1 text-[11px] text-muted-foreground leading-relaxed">
                           Trigger: {summarizeSubagentText(item.triggerReason, 108)}
@@ -1386,6 +1396,17 @@ export function EnvAIPage() {
           const view: SubagentView = {
             subagentId,
             taskId: String(candidate.taskId ?? '').trim(),
+            specId: String(candidate.specId ?? '').trim() || undefined,
+            title: String(candidate.title ?? '').trim() || undefined,
+            objective: String(candidate.objective ?? '').trim() || undefined,
+            contextMode: String(candidate.contextMode ?? '').trim() || undefined,
+            promptHash: String(candidate.promptHash ?? '').trim() || undefined,
+            delegationPromptMarkdown: String(candidate.delegationPromptMarkdown ?? '').trim() || undefined,
+            deliverables: Array.isArray(candidate.deliverables) ? candidate.deliverables : [],
+            definitionOfDone: Array.isArray(candidate.definitionOfDone) ? candidate.definitionOfDone : [],
+            outputSchema: candidate.outputSchema && typeof candidate.outputSchema === 'object' && !Array.isArray(candidate.outputSchema)
+              ? candidate.outputSchema
+              : {},
             agentType: String(candidate.agentType ?? '').trim(),
             triggerReason: String(candidate.triggerReason ?? '').trim(),
             status: normalizeSubagentStatus(candidate.status),
@@ -1419,6 +1440,15 @@ export function EnvAIPage() {
               mergeIntoMap(mapSubagentPayloadSnakeToCamel({
                 ...(result as any),
                 status: (result as any).subagent_status ?? (result as any).subagentStatus ?? (result as any).status,
+                spec_id: (result as any).spec_id ?? (result as any).specId,
+                title: (result as any).title ?? (args as any).title,
+                objective: (result as any).objective ?? (args as any).objective,
+                context_mode: (result as any).context_mode ?? (args as any).context_mode,
+                prompt_hash: (result as any).prompt_hash ?? (result as any).promptHash,
+                delegation_prompt_markdown: (result as any).delegation_prompt_markdown ?? (result as any).delegationPromptMarkdown,
+                deliverables: (result as any).deliverables ?? (args as any).deliverables,
+                definition_of_done: (result as any).definition_of_done ?? (args as any).definition_of_done,
+                output_schema: (result as any).output_schema ?? (args as any).output_schema,
                 agent_type: (result as any).agent_type ?? (args as any).agent_type,
                 trigger_reason: (result as any).trigger_reason ?? (args as any).trigger_reason,
               }), messageTimestamp);
@@ -1482,11 +1512,20 @@ export function EnvAIPage() {
               const same =
                 currentStatus === latestStatus &&
                 String((block as any).summary ?? '').trim() === latest.summary &&
+                String((block as any).title ?? '').trim() === String(latest.title ?? '').trim() &&
+                String((block as any).objective ?? '').trim() === String(latest.objective ?? '').trim() &&
+                String((block as any).contextMode ?? '').trim() === String(latest.contextMode ?? '').trim() &&
+                String((block as any).promptHash ?? '').trim() === String(latest.promptHash ?? '').trim() &&
+                String((block as any).delegationPromptMarkdown ?? '').trim() === String(latest.delegationPromptMarkdown ?? '').trim() &&
                 String((block as any).agentType ?? '').trim() === latest.agentType &&
                 String((block as any).triggerReason ?? '').trim() === latest.triggerReason &&
                 String((block as any).taskId ?? '').trim() === latest.taskId &&
+                String((block as any).specId ?? '').trim() === String(latest.specId ?? '').trim() &&
                 currentError === latestError &&
                 currentUpdatedAt === latest.updatedAtUnixMs &&
+                JSON.stringify((block as any).deliverables ?? []) === JSON.stringify(latest.deliverables ?? []) &&
+                JSON.stringify((block as any).definitionOfDone ?? []) === JSON.stringify(latest.definitionOfDone ?? []) &&
+                JSON.stringify((block as any).outputSchema ?? {}) === JSON.stringify(latest.outputSchema ?? {}) &&
                 JSON.stringify((block as any).evidenceRefs ?? []) === JSON.stringify(latest.evidenceRefs) &&
                 JSON.stringify((block as any).keyFiles ?? []) === JSON.stringify(latest.keyFiles) &&
                 JSON.stringify((block as any).openRisks ?? []) === JSON.stringify(latest.openRisks) &&
@@ -1498,6 +1537,15 @@ export function EnvAIPage() {
                   ...(block as any),
                   subagentId: latest.subagentId,
                   taskId: latest.taskId,
+                  specId: latest.specId,
+                  title: latest.title,
+                  objective: latest.objective,
+                  contextMode: latest.contextMode,
+                  promptHash: latest.promptHash,
+                  delegationPromptMarkdown: latest.delegationPromptMarkdown,
+                  deliverables: latest.deliverables ?? [],
+                  definitionOfDone: latest.definitionOfDone ?? [],
+                  outputSchema: latest.outputSchema ?? {},
                   agentType: latest.agentType,
                   triggerReason: latest.triggerReason,
                   status: latestStatus,
