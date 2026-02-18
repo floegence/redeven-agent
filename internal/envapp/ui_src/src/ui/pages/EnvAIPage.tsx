@@ -508,6 +508,16 @@ function InlineButtonSnakeLoading() {
   );
 }
 
+function InlineStatusSnakeLoading() {
+  return (
+    <span class="relative inline-flex w-3 h-3 shrink-0" aria-hidden="true">
+      <span class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 scale-[0.56] origin-center text-blue-600 dark:text-blue-300">
+        <SnakeLoader size="sm" />
+      </span>
+    </span>
+  );
+}
+
 // Custom working indicator — neural animation + minimal waveform bars
 function ChatWorkingIndicator(props: { phaseLabel?: string }) {
   const uid = `neural-${Math.random().toString(36).slice(2, 8)}`;
@@ -696,6 +706,7 @@ function CompactTasksSummary(props: {
   const [expanded, setExpanded] = createSignal(false);
   let containerRef: HTMLDivElement | undefined;
   const doneCount = createMemo(() => props.todos.filter((item) => item.status === 'completed').length);
+  const inProgressCount = createMemo(() => props.todos.filter((item) => item.status === 'in_progress').length);
   const progressLabel = createMemo(() => `${doneCount()} done/${props.todos.length} total`);
 
   // Close the popover when clicking outside.
@@ -733,10 +744,14 @@ function CompactTasksSummary(props: {
           'border transition-all duration-150',
           expanded()
             ? 'bg-primary/10 text-primary border-primary/30'
-            : 'bg-muted/50 text-muted-foreground border-border/60 hover:bg-muted hover:text-foreground',
+            : inProgressCount() > 0
+              ? 'bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/25 hover:bg-blue-500/14'
+              : 'bg-muted/50 text-muted-foreground border-border/60 hover:bg-muted hover:text-foreground',
         )}
       >
-        <CheckCircle class="w-3.5 h-3.5" />
+        <Show when={inProgressCount() > 0} fallback={<CheckCircle class="w-3.5 h-3.5" />}>
+          <InlineButtonSnakeLoading />
+        </Show>
         <span>{progressLabel()}</span>
         <ChevronUp class={cn('w-3 h-3 transition-transform duration-200', expanded() ? '' : 'rotate-180')} />
       </button>
@@ -779,6 +794,9 @@ function CompactTasksSummary(props: {
                         <div class="rounded-md border border-border/60 bg-background/70 px-2 py-1.5">
                           <div class="flex items-center gap-2">
                             <span class={cn('inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium shrink-0', todoStatusBadgeClass(item.status))}>
+                              <Show when={item.status === 'in_progress'}>
+                                <InlineStatusSnakeLoading />
+                              </Show>
                               {todoStatusLabel(item.status)}
                             </span>
                             <span class="text-xs text-foreground leading-relaxed break-words">{item.content}</span>
@@ -833,7 +851,7 @@ function subagentStatusBadgeClass(status: string): string {
   const normalized = String(status ?? '').trim().toLowerCase();
   switch (normalized) {
     case 'running':
-      return 'bg-primary/10 text-primary border-primary/20';
+      return 'bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/25';
     case 'waiting_input':
       return 'bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/20';
     case 'completed':
@@ -897,10 +915,14 @@ function CompactSubagentsSummary(props: {
           'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium cursor-pointer border transition-all duration-150',
           expanded()
             ? 'bg-primary/10 text-primary border-primary/30'
-            : 'bg-muted/50 text-muted-foreground border-border/60 hover:bg-muted hover:text-foreground',
+            : runningCount() > 0
+              ? 'bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/25 hover:bg-blue-500/14'
+              : 'bg-muted/50 text-muted-foreground border-border/60 hover:bg-muted hover:text-foreground',
         )}
       >
-        <Settings class="w-3.5 h-3.5" />
+        <Show when={runningCount() > 0} fallback={<Settings class="w-3.5 h-3.5" />}>
+          <InlineButtonSnakeLoading />
+        </Show>
         <span>{runningCount()} running</span>
         <ChevronUp class={cn('w-3 h-3 transition-transform duration-200', expanded() ? '' : 'rotate-180')} />
       </button>
@@ -927,6 +949,9 @@ function CompactSubagentsSummary(props: {
                     <div class="rounded-md border border-border/60 bg-background/70 px-2 py-1.5">
                       <div class="flex items-center gap-2">
                         <span class={cn('inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium shrink-0', subagentStatusBadgeClass(item.status))}>
+                          <Show when={String(item.status ?? '').toLowerCase() === 'running'}>
+                            <InlineStatusSnakeLoading />
+                          </Show>
                           {subagentStatusLabel(item.status)}
                         </span>
                         <span class="text-[11px] text-muted-foreground">{item.agentType || 'subagent'}</span>
