@@ -61,6 +61,7 @@ type runOptions struct {
 	AllowSubagentDelegate bool
 	ToolAllowlist         []string
 	ForceReadonlyExec     bool
+	NoUserInteraction     bool
 	SkillManager          *skillManager
 }
 
@@ -139,6 +140,7 @@ type run struct {
 	allowSubagentDelegate bool
 	toolAllowlist         map[string]struct{}
 	forceReadonlyExec     bool
+	noUserInteraction     bool
 
 	skillManager    *skillManager
 	subagentManager *subagentManager
@@ -183,6 +185,7 @@ func newRun(opts runOptions) *run {
 		subagentDepth:           opts.SubagentDepth,
 		forceReadonlyExec:       opts.ForceReadonlyExec,
 		skillManager:            opts.SkillManager,
+		noUserInteraction:       opts.NoUserInteraction,
 		allowSubagentDelegate: func() bool {
 			if opts.AllowSubagentDelegate {
 				return true
@@ -1436,9 +1439,13 @@ func (r *run) handleToolCall(ctx context.Context, toolID string, toolName string
 	readonlyRisk := string(aitools.TerminalCommandRiskReadonly)
 	denyReadonlyExec := r.forceReadonlyExec && toolName == "terminal.exec" && commandRisk != "" && commandRisk != readonlyRisk
 	requireApprovalForInvocation := requireUserApproval && needsApproval && !denyReadonlyExec
+	denyNoUserInteractionApproval := r.noUserInteraction && requireApprovalForInvocation
 	policyDecision := "allow"
 	policyReason := "none"
-	if denyReadonlyExec {
+	if denyNoUserInteractionApproval {
+		policyDecision = "deny"
+		policyReason = "no_user_interaction_policy"
+	} else if denyReadonlyExec {
 		policyDecision = "deny"
 		policyReason = "subagent_readonly_guard_blocked"
 	} else if denyDangerous {
@@ -1469,6 +1476,7 @@ func (r *run) handleToolCall(ctx context.Context, toolID string, toolName string
 			"policy_reason":                   policyReason,
 			"policy_force_readonly_exec":      r.forceReadonlyExec,
 			"policy_require_user_approval":    requireUserApproval,
+			"policy_no_user_interaction":      r.noUserInteraction,
 			"policy_enforce_plan_mode_guard":  enforcePlanModeGuard,
 			"policy_block_dangerous_commands": blockDangerousCommands,
 		})
@@ -1499,6 +1507,7 @@ func (r *run) handleToolCall(ctx context.Context, toolID string, toolName string
 		"mutating", mutating,
 		"dangerous", dangerous,
 		"policy_require_user_approval", requireUserApproval,
+		"policy_no_user_interaction", r.noUserInteraction,
 		"policy_enforce_plan_mode_guard", enforcePlanModeGuard,
 		"policy_block_dangerous_commands", blockDangerousCommands,
 		"command_risk", commandRisk,
@@ -1617,6 +1626,20 @@ func (r *run) handleToolCall(ctx context.Context, toolID string, toolName string
 				"Use a readonly command for investigation.",
 				"Use apply_patch for file edits instead of destructive shell commands.",
 				"Disable block_dangerous_commands in Settings > AI > Execution policy only if you accept the risk.",
+			},
+		}
+		setToolError(toolErr, "")
+		return outcome, nil
+	}
+
+	if denyNoUserInteractionApproval {
+		toolErr := &aitools.ToolError{
+			Code:      aitools.ErrorCodePermissionDenied,
+			Message:   "Tool invocation requires user approval, but user interaction is disabled in this run",
+			Retryable: false,
+			SuggestedFixes: []string{
+				"Use a tool invocation that does not require user approval.",
+				"Complete with task_complete and report blockers instead of requesting approval.",
 			},
 		}
 		setToolError(toolErr, "")
