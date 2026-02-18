@@ -90,9 +90,20 @@ func (r *run) manageSubagents(ctx context.Context, args map[string]any) (map[str
 		if triggerReason == "" {
 			return nil, fmt.Errorf("missing trigger_reason")
 		}
-		expectedOutput, ok := args["expected_output"].(map[string]any)
-		if !ok || len(expectedOutput) == 0 {
-			return nil, fmt.Errorf("missing expected_output")
+		deliverables := extractStringSlice(args["deliverables"])
+		if len(deliverables) == 0 {
+			return nil, fmt.Errorf("missing deliverables")
+		}
+		definitionOfDone := extractStringSlice(args["definition_of_done"])
+		if len(definitionOfDone) == 0 {
+			return nil, fmt.Errorf("missing definition_of_done")
+		}
+		outputSchema, ok := args["output_schema"].(map[string]any)
+		if !ok || len(outputSchema) == 0 {
+			return nil, fmt.Errorf("missing output_schema")
+		}
+		if err := validateSubagentOutputSchemaDefinition(outputSchema); err != nil {
+			return nil, err
 		}
 	case subagentActionWait:
 		// Optional fields only.

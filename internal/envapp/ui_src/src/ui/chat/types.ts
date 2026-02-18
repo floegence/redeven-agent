@@ -130,6 +130,15 @@ export interface SubagentBlock {
   type: 'subagent';
   subagentId: string;
   taskId: string;
+  specId?: string;
+  title?: string;
+  objective?: string;
+  contextMode?: string;
+  promptHash?: string;
+  delegationPromptMarkdown?: string;
+  deliverables?: string[];
+  definitionOfDone?: string[];
+  outputSchema?: Record<string, unknown>;
   agentType: string;
   triggerReason: string;
   status: SubagentStatus;
