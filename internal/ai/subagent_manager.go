@@ -419,9 +419,10 @@ func (m *subagentManager) closeAll() {
 }
 
 func sanitizeReadonlyAllowlist(allowlist []string) []string {
-	if len(allowlist) == 0 {
-		return defaultSubagentToolAllowlistReadonly()
-	}
+	return sanitizeSubagentToolAllowlist(allowlist, defaultSubagentToolAllowlistReadonly(), true)
+}
+
+func sanitizeSubagentToolAllowlist(allowlist []string, fallback []string, readonlyOnly bool) []string {
 	defByName := make(map[string]ToolDef)
 	for _, def := range builtInToolDefinitions() {
 		name := strings.TrimSpace(def.Name)
@@ -430,30 +431,49 @@ func sanitizeReadonlyAllowlist(allowlist []string) []string {
 		}
 		defByName[name] = def
 	}
-	seen := make(map[string]struct{})
-	out := make([]string, 0, len(allowlist))
-	for _, rawName := range allowlist {
-		name := strings.TrimSpace(rawName)
-		if name == "" {
-			continue
+	filter := func(source []string) []string {
+		if len(source) == 0 {
+			return nil
 		}
-		if name == "delegate_task" || name == "wait_subagents" || name == "subagents" || name == "write_todos" {
-			continue
+		seen := make(map[string]struct{})
+		out := make([]string, 0, len(source))
+		for _, rawName := range source {
+			name := strings.TrimSpace(rawName)
+			if name == "" {
+				continue
+			}
+			if isSubagentDisallowedTool(name) {
+				continue
+			}
+			if def, ok := defByName[name]; ok && readonlyOnly && def.Mutating {
+				continue
+			}
+			if _, ok := seen[name]; ok {
+				continue
+			}
+			seen[name] = struct{}{}
+			out = append(out, name)
 		}
-		def, ok := defByName[name]
-		if ok && def.Mutating {
-			continue
-		}
-		if _, ok := seen[name]; ok {
-			continue
-		}
-		seen[name] = struct{}{}
-		out = append(out, name)
+		return out
 	}
-	if len(out) == 0 {
-		return defaultSubagentToolAllowlistReadonly()
+	source := allowlist
+	if len(source) == 0 {
+		source = append([]string(nil), fallback...)
+	}
+	out := filter(source)
+	if len(out) == 0 && len(fallback) > 0 {
+		out = filter(fallback)
 	}
 	return out
+}
+
+func isSubagentDisallowedTool(name string) bool {
+	switch strings.TrimSpace(name) {
+	case "delegate_task", "wait_subagents", "subagents", "write_todos", "ask_user":
+		return true
+	default:
+		return false
+	}
 }
 
 func (m *subagentManager) delegate(ctx context.Context, args map[string]any) (map[string]any, error) {
@@ -535,13 +555,7 @@ func (m *subagentManager) delegate(ctx context.Context, args map[string]any) (ma
 		timeoutSec = 900
 	}
 
-	allowedTools := extractStringSlice(args["allowed_tools"])
-	if len(allowedTools) == 0 {
-		allowedTools = append([]string(nil), defaults.Allowlist...)
-	}
-	if defaults.ForceReadonlyExec {
-		allowedTools = sanitizeReadonlyAllowlist(allowedTools)
-	}
+	allowedTools := sanitizeSubagentToolAllowlist(extractStringSlice(args["allowed_tools"]), defaults.Allowlist, defaults.ForceReadonlyExec)
 
 	modelID := strings.TrimSpace(m.parent.currentModelID)
 	if modelID == "" && m.parent.cfg != nil {
@@ -608,118 +622,108 @@ func (m *subagentManager) runTask(task *subagentTask, firstInput string) {
 	defer close(task.doneCh)
 	defer task.cancel()
 	input := strings.TrimSpace(firstInput)
-	for {
-		if err := task.ctx.Err(); err != nil {
-			if errors.Is(err, context.DeadlineExceeded) {
-				task.setStatus(subagentStatusTimedOut)
-				task.setResult(task.result.Summary, "subagent timed out")
-			} else {
-				task.setStatus(subagentStatusCanceled)
-				task.setResult(task.result.Summary, "subagent canceled")
-			}
-			m.parent.persistRunEvent("delegation.spawn.end", RealtimeStreamKindLifecycle, task.eventPayload())
-			return
-		}
 
-		runID, err := NewRunID()
-		if err != nil {
-			task.setStatus(subagentStatusFailed)
-			task.setResult("", err.Error())
-			m.parent.persistRunEvent("delegation.spawn.end", RealtimeStreamKindLifecycle, task.eventPayload())
-			return
+	if err := task.ctx.Err(); err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			task.setStatus(subagentStatusTimedOut)
+			task.setResult(task.result.Summary, "subagent timed out")
+		} else {
+			task.setStatus(subagentStatusCanceled)
+			task.setResult(task.result.Summary, "subagent canceled")
 		}
-		messageID, err := newMessageID()
-		if err != nil {
-			task.setStatus(subagentStatusFailed)
-			task.setResult("", err.Error())
-			m.parent.persistRunEvent("delegation.spawn.end", RealtimeStreamKindLifecycle, task.eventPayload())
-			return
-		}
-
-		task.incrementSteps()
-		history := task.historySnapshot()
-		child := newRun(runOptions{
-			Log:                   m.parent.log,
-			StateDir:              m.parent.stateDir,
-			FSRoot:                m.parent.fsRoot,
-			Shell:                 m.parent.shell,
-			AIConfig:              m.parent.cfg,
-			SessionMeta:           m.parent.sessionMeta,
-			ResolveProviderKey:    m.parent.resolveProviderKey,
-			ResolveWebSearchKey:   m.parent.resolveWebSearchKey,
-			RunID:                 runID,
-			ChannelID:             m.parent.channelID,
-			EndpointID:            m.parent.endpointID,
-			ThreadID:              m.parent.threadID,
-			UserPublicID:          m.parent.userPublicID,
-			MessageID:             messageID,
-			MaxWallTime:           time.Duration(task.timeoutSec) * time.Second,
-			IdleTimeout:           m.parent.idleTimeout,
-			ToolApprovalTimeout:   m.parent.toolApprovalTO,
-			SubagentDepth:         m.parent.subagentDepth + 1,
-			AllowSubagentDelegate: false,
-			ToolAllowlist:         append([]string(nil), task.allowedTools...),
-			ForceReadonlyExec:     task.forceReadonlyExec,
-		})
-
-		req := RunRequest{
-			Model:     task.modelID,
-			Objective: task.objective,
-			History:   history,
-			Input:     RunInput{Text: input},
-			Options: RunOptions{
-				Mode:            task.mode,
-				MaxSteps:        task.maxSteps,
-				MaxNoToolRounds: nativeDefaultNoToolRounds,
-			},
-		}
-
-		err = child.run(task.ctx, req)
-		_, assistantText, _, snapshotErr := child.snapshotAssistantMessageJSON()
-		if snapshotErr != nil {
-			assistantText = ""
-		}
-		task.appendHistory(input, assistantText)
-
-		if err != nil {
-			if errors.Is(err, context.DeadlineExceeded) {
-				task.setStatus(subagentStatusTimedOut)
-				task.setResult(assistantText, "subagent timed out")
-			} else if errors.Is(err, context.Canceled) {
-				task.setStatus(subagentStatusCanceled)
-				task.setResult(assistantText, "subagent canceled")
-			} else {
-				task.setStatus(subagentStatusFailed)
-				task.setResult(assistantText, strings.TrimSpace(err.Error()))
-			}
-			m.parent.persistRunEvent("delegation.spawn.end", RealtimeStreamKindLifecycle, task.eventPayload())
-			return
-		}
-
-		finalReason := strings.TrimSpace(child.getFinalizationReason())
-		if classifyFinalizationReason(finalReason) == finalizationClassWaitingUser {
-			task.setStatus(subagentStatusWaiting)
-			task.setResult(assistantText, "")
-			m.parent.persistRunEvent("delegation.interaction.end", RealtimeStreamKindLifecycle, task.eventPayload())
-			select {
-			case <-task.ctx.Done():
-				continue
-			case next := <-task.input:
-				input = strings.TrimSpace(next)
-				if input == "" {
-					input = "Continue with previous objective."
-				}
-				task.setStatus(subagentStatusRunning)
-				m.parent.persistRunEvent("delegation.interaction.begin", RealtimeStreamKindLifecycle, task.eventPayload())
-				continue
-			}
-		}
-
-		task.setStatus(subagentStatusCompleted)
-		task.setResult(assistantText, "")
 		m.parent.persistRunEvent("delegation.spawn.end", RealtimeStreamKindLifecycle, task.eventPayload())
 		return
 	}
+
+	runID, err := NewRunID()
+	if err != nil {
+		task.setStatus(subagentStatusFailed)
+		task.setResult("", err.Error())
+		m.parent.persistRunEvent("delegation.spawn.end", RealtimeStreamKindLifecycle, task.eventPayload())
+		return
+	}
+	messageID, err := newMessageID()
+	if err != nil {
+		task.setStatus(subagentStatusFailed)
+		task.setResult("", err.Error())
+		m.parent.persistRunEvent("delegation.spawn.end", RealtimeStreamKindLifecycle, task.eventPayload())
+		return
+	}
+
+	task.incrementSteps()
+	history := task.historySnapshot()
+	child := newRun(runOptions{
+		Log:                   m.parent.log,
+		StateDir:              m.parent.stateDir,
+		FSRoot:                m.parent.fsRoot,
+		Shell:                 m.parent.shell,
+		AIConfig:              m.parent.cfg,
+		SessionMeta:           m.parent.sessionMeta,
+		ResolveProviderKey:    m.parent.resolveProviderKey,
+		ResolveWebSearchKey:   m.parent.resolveWebSearchKey,
+		RunID:                 runID,
+		ChannelID:             m.parent.channelID,
+		EndpointID:            m.parent.endpointID,
+		ThreadID:              m.parent.threadID,
+		UserPublicID:          m.parent.userPublicID,
+		MessageID:             messageID,
+		MaxWallTime:           time.Duration(task.timeoutSec) * time.Second,
+		IdleTimeout:           m.parent.idleTimeout,
+		ToolApprovalTimeout:   m.parent.toolApprovalTO,
+		SubagentDepth:         m.parent.subagentDepth + 1,
+		AllowSubagentDelegate: false,
+		ToolAllowlist:         append([]string(nil), task.allowedTools...),
+		ForceReadonlyExec:     task.forceReadonlyExec,
+		NoUserInteraction:     true,
+	})
+
+	req := RunRequest{
+		Model:     task.modelID,
+		Objective: task.objective,
+		History:   history,
+		Input:     RunInput{Text: input},
+		Options: RunOptions{
+			Mode:            task.mode,
+			MaxSteps:        task.maxSteps,
+			MaxNoToolRounds: nativeDefaultNoToolRounds,
+		},
+	}
+
+	err = child.run(task.ctx, req)
+	_, assistantText, _, snapshotErr := child.snapshotAssistantMessageJSON()
+	if snapshotErr != nil {
+		assistantText = ""
+	}
+	task.appendHistory(input, assistantText)
+
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			task.setStatus(subagentStatusTimedOut)
+			task.setResult(assistantText, "subagent timed out")
+		} else if errors.Is(err, context.Canceled) {
+			task.setStatus(subagentStatusCanceled)
+			task.setResult(assistantText, "subagent canceled")
+		} else {
+			task.setStatus(subagentStatusFailed)
+			task.setResult(assistantText, strings.TrimSpace(err.Error()))
+		}
+		m.parent.persistRunEvent("delegation.spawn.end", RealtimeStreamKindLifecycle, task.eventPayload())
+		return
+	}
+
+	finalReason := strings.TrimSpace(child.getFinalizationReason())
+	if classifyFinalizationReason(finalReason) == finalizationClassWaitingUser {
+		task.setStatus(subagentStatusFailed)
+		task.setResult(assistantText, "subagent blocked by no-user-interaction policy")
+		payload := task.eventPayload()
+		payload["reason"] = "no_user_interaction_policy"
+		m.parent.persistRunEvent("delegation.spawn.end", RealtimeStreamKindLifecycle, payload)
+		return
+	}
+
+	task.setStatus(subagentStatusCompleted)
+	task.setResult(assistantText, "")
+	m.parent.persistRunEvent("delegation.spawn.end", RealtimeStreamKindLifecycle, task.eventPayload())
 }
 
 func (m *subagentManager) sendInput(id string, message string, interrupt bool) (map[string]any, error) {
@@ -1152,7 +1156,7 @@ func defaultSubagentToolAllowlistReadonly() []string {
 		if name == "" {
 			continue
 		}
-		if name == "delegate_task" || name == "wait_subagents" || name == "subagents" || name == "write_todos" {
+		if isSubagentDisallowedTool(name) {
 			continue
 		}
 		out = append(out, name)
@@ -1168,7 +1172,7 @@ func defaultSubagentToolAllowlistWorker() []string {
 		if name == "" {
 			continue
 		}
-		if name == "delegate_task" || name == "wait_subagents" || name == "subagents" || name == "write_todos" {
+		if isSubagentDisallowedTool(name) {
 			continue
 		}
 		out = append(out, name)

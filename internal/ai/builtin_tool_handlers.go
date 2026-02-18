@@ -376,6 +376,9 @@ func registerBuiltInTools(reg *InMemoryToolRegistry, r *run) error {
 		if def.Name == "web.search" && (r == nil || !r.webSearchToolEnabled) {
 			continue
 		}
+		if def.Name == "ask_user" && r != nil && r.noUserInteraction {
+			continue
+		}
 		if !r.allowSubagentDelegate {
 			switch def.Name {
 			case "delegate_task", "wait_subagents", "subagents":
