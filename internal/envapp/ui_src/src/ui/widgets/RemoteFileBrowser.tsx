@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createSignal, onCleanup } from 'solid-js';
+import { For, Show, createEffect, createSignal, onCleanup, untrack } from 'solid-js';
 import { useDeck, useNotification, useResolvedFloeConfig } from '@floegence/floe-webapp-core';
 import { ArrowRightLeft, Copy, Folder, Pencil, Sparkles, Trash } from '@floegence/floe-webapp-core/icons';
 import { FileBrowser, type ContextMenuCallbacks, type ContextMenuItem, type FileItem } from '@floegence/floe-webapp-core/file-browser';
@@ -7,7 +7,7 @@ import { Button, ConfirmDialog, Dialog, DirectoryPicker, FileSavePicker, Floatin
 import type { Client } from '@floegence/flowersec-core';
 import { DEFAULT_MAX_JSON_FRAME_BYTES, readJsonFrame, writeJsonFrame } from '@floegence/flowersec-core/framing';
 import { ByteReader, type YamuxStream } from '@floegence/flowersec-core/yamux';
-import { useProtocol } from '@floegence/floe-webapp-protocol';
+import { RpcError, useProtocol } from '@floegence/floe-webapp-protocol';
 import { useRedevenRpc, type FsFileInfo } from '../protocol/redeven_v1';
 import { getExtDot, isLikelyTextContent, mimeFromExtDot, previewModeByName, type PreviewMode } from '../utils/filePreview';
 import { useEnvContext } from '../pages/EnvContext';
@@ -39,6 +39,13 @@ type FsReadFileStreamRespMeta = {
     code: number;
     message?: string;
   };
+};
+
+type PathLoadStatus = 'ok' | 'canceled' | 'invalid_path' | 'permission_denied' | 'transport_error';
+
+type PathLoadResult = {
+  status: PathLoadStatus;
+  message?: string;
 };
 
 function InputDialog(props: {
@@ -125,6 +132,27 @@ function normalizePath(path: string): string {
   const p = raw.startsWith('/') ? raw : `/${raw}`;
   if (p === '/') return '/';
   return p.endsWith('/') ? p.replace(/\/+$/, '') || '/' : p;
+}
+
+function classifyPathLoadError(err: unknown): PathLoadResult {
+  if (err instanceof RpcError) {
+    if (err.code === 400 || err.code === 404 || err.code === 416) {
+      return { status: 'invalid_path', message: err.message };
+    }
+    if (err.code === 403) {
+      return { status: 'permission_denied', message: err.message };
+    }
+    return { status: 'transport_error', message: err.message };
+  }
+
+  if (err instanceof Error) {
+    const msg = String(err.message ?? '').trim();
+    if (msg) return { status: 'transport_error', message: msg };
+    return { status: 'transport_error' };
+  }
+
+  const text = String(err ?? '').trim();
+  return text ? { status: 'transport_error', message: text } : { status: 'transport_error' };
 }
 
 function toFileItem(entry: FsFileInfo): FileItem {
@@ -400,6 +428,7 @@ export function RemoteFileBrowser(props: RemoteFileBrowserProps = {}) {
   const [copyToLoading, setCopyToLoading] = createSignal(false);
 
   const [currentBrowserPath, setCurrentBrowserPath] = createSignal('/');
+  const [lastLoadedBrowserPath, setLastLoadedBrowserPath] = createSignal('/');
 
   const [fsRootAbs, setFsRootAbs] = createSignal('');
 
@@ -544,6 +573,7 @@ export function RemoteFileBrowser(props: RemoteFileBrowserProps = {}) {
     setFiles([]);
     setLoading(false);
     setCurrentBrowserPath('/');
+    setLastLoadedBrowserPath('/');
     setFsRootAbs('');
     setDragMoveLoading(false);
     setFileBrowserResetSeq(0);
@@ -554,32 +584,42 @@ export function RemoteFileBrowser(props: RemoteFileBrowserProps = {}) {
     setPreviewOpen(false);
   });
 
-  const loadDirOnce = async (path: string, seq: number) => {
-    const client = protocol.client();
-    if (!client) return;
-    if (seq !== dirReqSeq) return;
+  const loadDirOnce = async (path: string, seq: number): Promise<PathLoadResult> => {
+    if (seq !== dirReqSeq) return { status: 'canceled' };
 
     const p = normalizePath(path);
     if (cache.has(p)) {
       if (seq === dirReqSeq) setFiles((prev) => withChildren(prev, p, cache.get(p)!));
-      return;
+      return { status: 'ok' };
     }
 
-    const resp = await rpc.fs.list({ path: p, showHidden: false });
-    if (seq !== dirReqSeq) return;
+    if (!protocol.client()) {
+      return { status: 'transport_error', message: 'Connection is not ready.' };
+    }
 
-    const entries = resp?.entries ?? [];
-    const items = entries
-      .map(toFileItem)
-      .sort((a: FileItem, b: FileItem) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'folder' ? -1 : 1));
-    if (seq !== dirReqSeq) return;
-    cache.set(p, items);
+    try {
+      const resp = await rpc.fs.list({ path: p, showHidden: false });
+      if (seq !== dirReqSeq) return { status: 'canceled' };
 
-    if (seq === dirReqSeq) setFiles((prev) => withChildren(prev, p, items));
+      const entries = resp?.entries ?? [];
+      const items = entries
+        .map(toFileItem)
+        .sort((a: FileItem, b: FileItem) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'folder' ? -1 : 1));
+      if (seq !== dirReqSeq) return { status: 'canceled' };
+      cache.set(p, items);
+
+      if (seq === dirReqSeq) setFiles((prev) => withChildren(prev, p, items));
+      return { status: 'ok' };
+    } catch (e) {
+      if (seq !== dirReqSeq) return { status: 'canceled' };
+      return classifyPathLoadError(e);
+    }
   };
 
-  const loadPathChain = async (path: string): Promise<boolean> => {
-    if (!protocol.client()) return false;
+  const loadPathChain = async (path: string): Promise<PathLoadResult> => {
+    if (!protocol.client()) {
+      return { status: 'transport_error', message: 'Connection is not ready.' };
+    }
 
     const seq = ++dirReqSeq;
     const p = normalizePath(path);
@@ -592,17 +632,19 @@ export function RemoteFileBrowser(props: RemoteFileBrowserProps = {}) {
     setLoading(true);
     try {
       for (const dir of chain) {
-        await loadDirOnce(dir, seq);
-        if (seq !== dirReqSeq) return false;
+        const step = await loadDirOnce(dir, seq);
+        if (step.status !== 'ok') return step;
       }
-      return true;
-    } catch (e) {
-      if (seq !== dirReqSeq) return false;
-      notification.error('Failed to load directory', e instanceof Error ? e.message : String(e));
-      return false;
+      setLastLoadedBrowserPath(p);
+      return { status: 'ok' };
     } finally {
       if (seq === dirReqSeq) setLoading(false);
     }
+  };
+
+  const notifyPathLoadFailure = (result: PathLoadResult) => {
+    if (result.status === 'canceled' || result.status === 'invalid_path') return;
+    notification.error('Failed to load directory', result.message ?? 'Unable to load directory.');
   };
 
   const openPreview = async (item: FileItem) => {
@@ -844,7 +886,8 @@ export function RemoteFileBrowser(props: RemoteFileBrowserProps = {}) {
 
   const refreshDir = async (dirPath: string) => {
     invalidateDirCache(dirPath);
-    await loadPathChain(dirPath);
+    const result = await loadPathChain(dirPath);
+    if (result.status !== 'ok') notifyPathLoadFailure(result);
   };
 
   const rewriteCachePathPrefix = (fromPrefix: string, toPrefix: string) => {
@@ -1151,15 +1194,22 @@ export function RemoteFileBrowser(props: RemoteFileBrowserProps = {}) {
     if (!protocol.client()) return;
     const id = envId();
     if (!id) return;
-    const startPath = readPersistedLastPath(id);
+    const rememberedPath = normalizePath(currentBrowserPath());
+    const persistedPath = untrack(() => readPersistedLastPath(id));
+    const startPath = rememberedPath !== '/' ? rememberedPath : persistedPath;
     setCurrentBrowserPath(startPath);
     void (async () => {
-      const ok = await loadPathChain(startPath);
-      if (ok || startPath === '/') return;
-      writePersistedLastPath(id, '/');
-      setCurrentBrowserPath('/');
-      setFileBrowserResetSeq((n) => n + 1);
-      await loadPathChain('/');
+      const result = await loadPathChain(startPath);
+      if (result.status === 'ok' || result.status === 'canceled') return;
+      if (result.status === 'invalid_path' && startPath !== '/') {
+        writePersistedLastPath(id, '/');
+        setCurrentBrowserPath('/');
+        setFileBrowserResetSeq((n) => n + 1);
+        const rootResult = await loadPathChain('/');
+        if (rootResult.status !== 'ok') notifyPathLoadFailure(rootResult);
+        return;
+      }
+      notifyPathLoadFailure(result);
     })();
 
     void (async () => {
@@ -1569,9 +1619,23 @@ export function RemoteFileBrowser(props: RemoteFileBrowserProps = {}) {
                 persistenceKey={`files:${id}`}
                 instanceId={props.widgetId ? `redeven-files:${id}:${props.widgetId}` : `redeven-files:${id}`}
                 onNavigate={(path) => {
-                  writePersistedLastPath(id, path);
-                  setCurrentBrowserPath(path);
-                  void loadPathChain(path);
+                  const targetPath = normalizePath(path);
+                  writePersistedLastPath(id, targetPath);
+                  setCurrentBrowserPath(targetPath);
+                  void (async () => {
+                    const result = await loadPathChain(targetPath);
+                    if (result.status === 'ok' || result.status === 'canceled') return;
+                    if (result.status === 'invalid_path') {
+                      const fallbackPath = normalizePath(lastLoadedBrowserPath());
+                      writePersistedLastPath(id, fallbackPath);
+                      setCurrentBrowserPath(fallbackPath);
+                      setFileBrowserResetSeq((n) => n + 1);
+                      const fallbackResult = await loadPathChain(fallbackPath);
+                      if (fallbackResult.status !== 'ok') notifyPathLoadFailure(fallbackResult);
+                      return;
+                    }
+                    notifyPathLoadFailure(result);
+                  })();
                 }}
                 onOpen={(item) => void openPreview(item)}
                 onDragMove={(items, targetPath) => void handleDragMove(items, targetPath)}
