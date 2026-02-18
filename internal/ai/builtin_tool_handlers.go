@@ -285,7 +285,7 @@ func builtInToolDefinitions() []ToolDef {
 		},
 		{
 			Name:        "subagents",
-			Description: "Manage subagents with actions: create, wait, list, inspect, steer, terminate, terminate_all.",
+			Description: "Manage subagents with actions: create, wait, list, inspect, steer, terminate, terminate_all. Create requires a strict delegation contract (deliverables, definition_of_done, output_schema).",
 			InputSchema: toSchema(map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -293,15 +293,91 @@ func builtInToolDefinitions() []ToolDef {
 						"type": "string",
 						"enum": []string{"create", "wait", "list", "inspect", "steer", "terminate", "terminate_all"},
 					},
+					"title":          map[string]any{"type": "string", "maxLength": 140},
 					"objective":      map[string]any{"type": "string", "minLength": 1},
 					"agent_type":     map[string]any{"type": "string", "enum": []string{"explore", "worker", "reviewer"}},
 					"trigger_reason": map[string]any{"type": "string", "minLength": 1},
-					"expected_output": map[string]any{
+					"context_mode": map[string]any{
+						"type": "string",
+						"enum": []string{"isolated", "minimal_pack", "thread_compact", "thread_full"},
+					},
+					"inputs": map[string]any{
+						"type": "array",
+						"items": map[string]any{
+							"oneOf": []any{
+								map[string]any{"type": "string"},
+								map[string]any{
+									"type": "object",
+									"properties": map[string]any{
+										"kind":   map[string]any{"type": "string"},
+										"value":  map[string]any{"type": "string"},
+										"source": map[string]any{"type": "string"},
+									},
+									"required":             []string{"value"},
+									"additionalProperties": false,
+								},
+							},
+						},
+					},
+					"deliverables": map[string]any{
+						"type":     "array",
+						"minItems": 1,
+						"items":    map[string]any{"type": "string", "minLength": 1},
+					},
+					"definition_of_done": map[string]any{
+						"type":     "array",
+						"minItems": 1,
+						"items":    map[string]any{"type": "string", "minLength": 1},
+					},
+					"output_schema": map[string]any{
 						"type": "object",
 						"properties": map[string]any{
-							"summary":       map[string]any{"type": "string"},
-							"required_keys": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+							"type": map[string]any{
+								"type": "string",
+								"enum": []string{"object"},
+							},
+							"required": map[string]any{
+								"type":     "array",
+								"minItems": 1,
+								"items":    map[string]any{"type": "string", "minLength": 1},
+							},
+							"properties": map[string]any{
+								"type":                 "object",
+								"additionalProperties": false,
+								"patternProperties": map[string]any{
+									"^.{1,120}$": map[string]any{
+										"type": "object",
+										"properties": map[string]any{
+											"type": map[string]any{
+												"type": "string",
+												"enum": []string{"string", "number", "integer", "boolean", "array", "object"},
+											},
+											"description": map[string]any{"type": "string", "maxLength": 400},
+											"enum": map[string]any{
+												"type":     "array",
+												"items":    map[string]any{"type": "string"},
+												"minItems": 1,
+											},
+											"items": map[string]any{
+												"type":                 "object",
+												"additionalProperties": false,
+												"properties": map[string]any{
+													"type": map[string]any{
+														"type": "string",
+														"enum": []string{"string", "number", "integer", "boolean", "array", "object"},
+													},
+													"description": map[string]any{"type": "string", "maxLength": 400},
+												},
+											},
+										},
+										"required":             []string{"type"},
+										"additionalProperties": false,
+									},
+								},
+							},
+							"additionalProperties": map[string]any{"type": "boolean"},
 						},
+						"required":             []string{"type", "required", "properties"},
 						"additionalProperties": false,
 					},
 					"mode": map[string]any{"type": "string"},
