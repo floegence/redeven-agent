@@ -719,6 +719,16 @@ function webSearchStateClass(status: ToolCallBlockType['status']): string {
   }
 }
 
+function isLegacyWebSearchMarkdownChild(block: unknown): boolean {
+  const rec = asRecord(block);
+  if (!rec) return false;
+  if (String(rec.type ?? '').trim().toLowerCase() !== 'markdown') {
+    return false;
+  }
+  const content = asTrimmedString(rec.content).toLowerCase();
+  return content.startsWith('top results:');
+}
+
 async function copyToolText(text: string): Promise<boolean> {
   const value = String(text ?? '').trim();
   if (!value) return false;
@@ -775,6 +785,10 @@ const WebSearchToolCard: Component<WebSearchToolCardProps> = (props) => {
   const statusClass = createMemo(() => webSearchStateClass(props.block.status));
   const providerLabel = createMemo(() => normalizeWebSearchProvider(props.display.provider));
   const isWorking = createMemo(() => props.block.status === 'pending' || props.block.status === 'running');
+  const visibleChildren = createMemo(() => {
+    const children = Array.isArray(props.block.children) ? props.block.children : [];
+    return children.filter((child) => !isLegacyWebSearchMarkdownChild(child));
+  });
   const emptyMessage = createMemo(() => {
     if (isWorking()) return 'Searching the web...';
     if (props.block.status === 'success') return 'No results returned.';
@@ -952,9 +966,9 @@ const WebSearchToolCard: Component<WebSearchToolCardProps> = (props) => {
         <div class="chat-tool-web-search-error">{props.block.error}</div>
       </Show>
 
-      <Show when={props.block.children && props.block.children.length > 0}>
+      <Show when={visibleChildren().length > 0}>
         <div class="chat-tool-web-search-children">
-          <For each={props.block.children}>
+          <For each={visibleChildren()}>
             {(child) => (
               <BlockRenderer
                 block={child}
