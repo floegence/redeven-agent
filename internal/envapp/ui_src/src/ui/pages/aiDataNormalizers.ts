@@ -97,7 +97,7 @@ export function todoStatusLabel(status: TodoStatus): string {
 export function todoStatusBadgeClass(status: TodoStatus): string {
   switch (status) {
     case 'in_progress':
-      return 'bg-primary/10 text-primary border-primary/20';
+      return 'bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/25';
     case 'completed':
       return 'bg-success/10 text-success border-success/20';
     case 'cancelled':

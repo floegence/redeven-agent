@@ -1,6 +1,7 @@
 import { For, Show, createMemo, createSignal } from 'solid-js';
 import type { Component } from 'solid-js';
 import { cn } from '@floegence/floe-webapp-core';
+import { SnakeLoader } from '@floegence/floe-webapp-core/loading';
 import type { SubagentBlock as SubagentBlockType } from '../types';
 
 export interface SubagentBlockProps {
@@ -95,7 +96,14 @@ export const SubagentBlock: Component<SubagentBlockProps> = (props) => {
         aria-expanded={!collapsed()}
       >
         <span class="chat-subagent-header-main">
-          <span class={subagentStatusClass(props.block.status)}>{statusText()}</span>
+          <span class={subagentStatusClass(props.block.status)}>
+            <Show when={props.block.status === 'running'}>
+              <span class="chat-subagent-status-loader" aria-hidden="true">
+                <SnakeLoader size="sm" />
+              </span>
+            </Show>
+            {statusText()}
+          </span>
           <span class="chat-subagent-meta chat-subagent-agent">{props.block.agentType || 'subagent'}</span>
         </span>
         <span class="chat-subagent-header-right">
