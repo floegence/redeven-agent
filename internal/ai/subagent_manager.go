@@ -2,8 +2,10 @@ package ai
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"sync"
@@ -41,6 +43,12 @@ type subagentStats struct {
 	Cost      float64
 	ElapsedMS int64
 	Outcome   string
+}
+
+type subagentExecutionStats struct {
+	toolCalls int64
+	tokens    int64
+	cost      float64
 }
 
 type subagentResult struct {
@@ -133,6 +141,25 @@ func (t *subagentTask) incrementSteps() {
 	t.recalculateDerivedStatsLocked()
 }
 
+func (t *subagentTask) setExecutionStats(toolCalls int64, tokens int64, cost float64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if toolCalls < 0 {
+		toolCalls = 0
+	}
+	if tokens < 0 {
+		tokens = 0
+	}
+	if math.IsNaN(cost) || math.IsInf(cost, 0) || cost < 0 {
+		cost = 0
+	}
+	t.stats.ToolCalls = toolCalls
+	t.stats.Tokens = tokens
+	t.stats.Cost = cost
+	t.updatedAt = time.Now().UnixMilli()
+	t.recalculateDerivedStatsLocked()
+}
+
 func (t *subagentTask) allowSteer(minInterval time.Duration) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -182,6 +209,71 @@ func (t *subagentTask) historySnapshot() []RunHistoryMsg {
 	out := make([]RunHistoryMsg, len(t.history))
 	copy(out, t.history)
 	return out
+}
+
+func collectSubagentExecutionStats(child *run, assistantMessageJSON string) subagentExecutionStats {
+	stats := subagentExecutionStats{
+		toolCalls: countToolCallsFromAssistantMessageJSON(assistantMessageJSON),
+	}
+	if child == nil {
+		return stats
+	}
+	runtimeToolCalls, runtimeTokens := child.runtimeStatsSnapshot()
+	if runtimeToolCalls > 0 || stats.toolCalls == 0 {
+		stats.toolCalls = runtimeToolCalls
+	}
+	if runtimeTokens > 0 {
+		stats.tokens = runtimeTokens
+	}
+	return stats
+}
+
+func countToolCallsFromAssistantMessageJSON(messageJSON string) int64 {
+	messageJSON = strings.TrimSpace(messageJSON)
+	if messageJSON == "" {
+		return 0
+	}
+	var message map[string]any
+	if err := json.Unmarshal([]byte(messageJSON), &message); err != nil {
+		return 0
+	}
+	rawBlocks, _ := message["blocks"].([]any)
+	if len(rawBlocks) == 0 {
+		return 0
+	}
+	return countToolCallsInBlocks(rawBlocks)
+}
+
+func countToolCallsInBlocks(blocks []any) int64 {
+	if len(blocks) == 0 {
+		return 0
+	}
+	var total int64
+	for _, raw := range blocks {
+		block, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		blockType := strings.ToLower(strings.TrimSpace(anyToString(block["type"])))
+		if blockType == "tool-call" {
+			name := strings.ToLower(strings.TrimSpace(anyToString(block["toolName"])))
+			if shouldCountSubagentTool(name) {
+				total++
+			}
+		}
+		children, _ := block["children"].([]any)
+		total += countToolCallsInBlocks(children)
+	}
+	return total
+}
+
+func shouldCountSubagentTool(toolName string) bool {
+	switch strings.ToLower(strings.TrimSpace(toolName)) {
+	case "", "sources", "task_complete", "ask_user":
+		return false
+	default:
+		return true
+	}
 }
 
 func cloneStringSlice(in []string) []string {
@@ -710,10 +802,13 @@ func (m *subagentManager) runTask(task *subagentTask, firstInput string) {
 	}
 
 	err = child.run(task.ctx, req)
-	_, assistantText, _, snapshotErr := child.snapshotAssistantMessageJSON()
+	assistantMessageJSON, assistantText, _, snapshotErr := child.snapshotAssistantMessageJSON()
 	if snapshotErr != nil {
+		assistantMessageJSON = ""
 		assistantText = ""
 	}
+	stats := collectSubagentExecutionStats(child, assistantMessageJSON)
+	task.setExecutionStats(stats.toolCalls, stats.tokens, stats.cost)
 	task.appendHistory(input, assistantText)
 
 	if err != nil {

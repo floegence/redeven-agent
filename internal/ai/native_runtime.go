@@ -1890,6 +1890,7 @@ mainLoop:
 		if strings.TrimSpace(stepResult.Text) != "" {
 			turnTextSeen = true
 		}
+		r.recordRuntimeTurnUsage(stepResult.Usage, estimateTokens)
 		r.persistRunEvent("native.turn.result", RealtimeStreamKindLifecycle, map[string]any{
 			"step_index":    step,
 			"finish_reason": strings.TrimSpace(stepResult.FinishReason),
@@ -2606,6 +2607,7 @@ func (r *run) runNativeConversational(
 		return r.failRun("Failed to generate conversational response", stepErr)
 	}
 
+	r.recordRuntimeTurnUsage(stepResult.Usage, estimateTokens)
 	r.persistRunEvent("native.turn.result", RealtimeStreamKindLifecycle, map[string]any{
 		"step_index":    0,
 		"finish_reason": strings.TrimSpace(stepResult.FinishReason),
