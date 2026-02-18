@@ -263,8 +263,96 @@ WHERE type = 'table' AND name = ?
 	if err := s.db.QueryRowContext(ctx, `PRAGMA user_version;`).Scan(&version); err != nil {
 		t.Fatalf("read user_version: %v", err)
 	}
-	if version != 9 {
-		t.Fatalf("user_version=%d, want 9", version)
+	if version != 10 {
+		t.Fatalf("user_version=%d, want 10", version)
+	}
+}
+
+func TestStore_MigrateFromV9ScrubsLegacyModelDefaultToken(t *testing.T) {
+	t.Parallel()
+
+	legacyToken := strings.Join([]string{"is", "default"}, "_")
+	toolCallPayload := strings.Replace(`{"TOKEN":true}`, "TOKEN", legacyToken, 1)
+	runEventPayload := strings.Replace(`{"legacy":"TOKEN"}`, "TOKEN", legacyToken, 1)
+
+	dbPath := filepath.Join(t.TempDir(), "threads.sqlite")
+	s, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+
+	raw, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	defer func() { _ = raw.Close() }()
+
+	if _, err := raw.Exec(`PRAGMA user_version=9;`); err != nil {
+		t.Fatalf("set user_version: %v", err)
+	}
+	if _, err := raw.Exec(`
+INSERT INTO ai_tool_calls(run_id, tool_id, tool_name, status, result_json)
+VALUES(?, ?, ?, ?, ?)
+`, "run_legacy", "tool_legacy", "terminal.exec", "succeeded", toolCallPayload); err != nil {
+		t.Fatalf("seed tool call: %v", err)
+	}
+	if _, err := raw.Exec(`
+INSERT INTO ai_run_events(endpoint_id, thread_id, run_id, event_type, payload_json)
+VALUES(?, ?, ?, ?, ?)
+`, "env_legacy", "th_legacy", "run_legacy", "stream_event", runEventPayload); err != nil {
+		t.Fatalf("seed legacy data: %v", err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatalf("close seeded db: %v", err)
+	}
+
+	s, err = Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open after v9 seed: %v", err)
+	}
+	defer func() { _ = s.Close() }()
+
+	ctx := context.Background()
+
+	var cleanedToolCall string
+	if err := s.db.QueryRowContext(ctx, `
+SELECT result_json
+FROM ai_tool_calls
+WHERE run_id = 'run_legacy' AND tool_id = 'tool_legacy'
+`).Scan(&cleanedToolCall); err != nil {
+		t.Fatalf("load tool call: %v", err)
+	}
+	if strings.Contains(cleanedToolCall, legacyToken) {
+		t.Fatalf("tool call result_json still contains legacy token: %s", cleanedToolCall)
+	}
+	if !strings.Contains(cleanedToolCall, "current_model_id") {
+		t.Fatalf("tool call result_json not rewritten: %s", cleanedToolCall)
+	}
+
+	var cleanedEvent string
+	if err := s.db.QueryRowContext(ctx, `
+SELECT payload_json
+FROM ai_run_events
+WHERE run_id = 'run_legacy'
+`).Scan(&cleanedEvent); err != nil {
+		t.Fatalf("load run event: %v", err)
+	}
+	if strings.Contains(cleanedEvent, legacyToken) {
+		t.Fatalf("run event payload_json still contains legacy token: %s", cleanedEvent)
+	}
+	if !strings.Contains(cleanedEvent, "current_model_id") {
+		t.Fatalf("run event payload_json not rewritten: %s", cleanedEvent)
+	}
+
+	var version int
+	if err := s.db.QueryRowContext(ctx, `PRAGMA user_version;`).Scan(&version); err != nil {
+		t.Fatalf("read user_version: %v", err)
+	}
+	if version != 10 {
+		t.Fatalf("user_version=%d, want 10", version)
 	}
 }
 
