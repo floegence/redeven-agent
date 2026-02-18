@@ -130,6 +130,15 @@ function buildSubagentBlock(block: ChatToolCallBlock): SubagentBlockType | null 
     const merged = {
       ...result,
       status: result.subagent_status ?? result.subagentStatus ?? result.status,
+      spec_id: result.spec_id ?? result.specId,
+      title: result.title ?? args.title,
+      objective: result.objective ?? args.objective,
+      context_mode: result.context_mode ?? args.context_mode,
+      prompt_hash: result.prompt_hash ?? result.promptHash,
+      delegation_prompt_markdown: result.delegation_prompt_markdown ?? result.delegationPromptMarkdown,
+      deliverables: result.deliverables ?? args.deliverables,
+      definition_of_done: result.definition_of_done ?? args.definition_of_done,
+      output_schema: result.output_schema ?? args.output_schema,
       agent_type: result.agent_type ?? args.agent_type,
       trigger_reason: result.trigger_reason ?? args.trigger_reason,
     };
@@ -259,6 +268,15 @@ function buildSourcesBlock(block: ChatToolCallBlock): SourcesBlockType | null {
 function toSubagentBlock(view: {
   subagentId: string;
   taskId: string;
+  specId?: string;
+  title?: string;
+  objective?: string;
+  contextMode?: string;
+  promptHash?: string;
+  delegationPromptMarkdown?: string;
+  deliverables?: string[];
+  definitionOfDone?: string[];
+  outputSchema?: Record<string, unknown>;
   agentType: string;
   triggerReason: string;
   status: string;
@@ -282,6 +300,15 @@ function toSubagentBlock(view: {
     type: 'subagent',
     subagentId: view.subagentId,
     taskId: view.taskId,
+    specId: view.specId,
+    title: view.title,
+    objective: view.objective,
+    contextMode: view.contextMode,
+    promptHash: view.promptHash,
+    delegationPromptMarkdown: view.delegationPromptMarkdown,
+    deliverables: view.deliverables ?? [],
+    definitionOfDone: view.definitionOfDone ?? [],
+    outputSchema: view.outputSchema ?? {},
     agentType: view.agentType,
     triggerReason: view.triggerReason,
     status: view.status as SubagentBlockType['status'],

@@ -139,6 +139,15 @@ export interface SubagentHistoryMessageView {
 export interface SubagentView {
   readonly subagentId: string;
   readonly taskId: string;
+  readonly specId?: string;
+  readonly title?: string;
+  readonly objective?: string;
+  readonly contextMode?: string;
+  readonly promptHash?: string;
+  readonly delegationPromptMarkdown?: string;
+  readonly deliverables?: string[];
+  readonly definitionOfDone?: string[];
+  readonly outputSchema?: Record<string, unknown>;
   readonly agentType: string;
   readonly triggerReason: string;
   readonly status: SubagentStatus;
@@ -275,6 +284,15 @@ export function mapSubagentPayloadSnakeToCamel(raw: unknown): SubagentView | nul
   const subagentId = String(rec.subagent_id ?? rec.subagentId ?? rec.id ?? '').trim();
   if (!subagentId) return null;
   const taskId = String(rec.task_id ?? rec.taskId ?? '').trim();
+  const specId = String(rec.spec_id ?? rec.specId ?? '').trim();
+  const title = String(rec.title ?? '').trim();
+  const objective = String(rec.objective ?? '').trim();
+  const contextMode = String(rec.context_mode ?? rec.contextMode ?? '').trim();
+  const promptHash = String(rec.prompt_hash ?? rec.promptHash ?? '').trim();
+  const delegationPromptMarkdown = String(rec.delegation_prompt_markdown ?? rec.delegationPromptMarkdown ?? '').trim();
+  const deliverables = toStringArray(rec.deliverables);
+  const definitionOfDone = toStringArray(rec.definition_of_done ?? rec.definitionOfDone);
+  const outputSchemaRaw = asRecord(rec.output_schema ?? rec.outputSchema);
   const agentType = String(rec.agent_type ?? rec.agentType ?? '').trim();
   const triggerReason = String(rec.trigger_reason ?? rec.triggerReason ?? '').trim();
   const status = normalizeSubagentStatus(rec.status ?? rec.subagent_status ?? rec.subagentStatus);
@@ -295,6 +313,15 @@ export function mapSubagentPayloadSnakeToCamel(raw: unknown): SubagentView | nul
   return {
     subagentId,
     taskId,
+    specId: specId || undefined,
+    title: title || undefined,
+    objective: objective || undefined,
+    contextMode: contextMode || undefined,
+    promptHash: promptHash || undefined,
+    delegationPromptMarkdown: delegationPromptMarkdown || undefined,
+    deliverables,
+    definitionOfDone,
+    outputSchema: outputSchemaRaw,
     agentType,
     triggerReason,
     status,
@@ -334,16 +361,28 @@ export function mergeSubagentEventsByTimestamp(
 ): SubagentView | null {
   if (!current) return incoming;
   if (!incoming) return current;
-  if (incoming.updatedAtUnixMs > current.updatedAtUnixMs) return incoming;
-  if (incoming.updatedAtUnixMs < current.updatedAtUnixMs) return current;
+  const mergeComplementaryFields = (base: SubagentView, patch: SubagentView): SubagentView => ({
+    ...base,
+    specId: base.specId || patch.specId,
+    title: base.title || patch.title,
+    objective: base.objective || patch.objective,
+    contextMode: base.contextMode || patch.contextMode,
+    promptHash: base.promptHash || patch.promptHash,
+    delegationPromptMarkdown: base.delegationPromptMarkdown || patch.delegationPromptMarkdown,
+    deliverables: (base.deliverables && base.deliverables.length > 0) ? base.deliverables : (patch.deliverables ?? []),
+    definitionOfDone: (base.definitionOfDone && base.definitionOfDone.length > 0) ? base.definitionOfDone : (patch.definitionOfDone ?? []),
+    outputSchema: (base.outputSchema && Object.keys(base.outputSchema).length > 0) ? base.outputSchema : (patch.outputSchema ?? {}),
+  });
+  if (incoming.updatedAtUnixMs > current.updatedAtUnixMs) return mergeComplementaryFields(incoming, current);
+  if (incoming.updatedAtUnixMs < current.updatedAtUnixMs) return mergeComplementaryFields(current, incoming);
   const incomingRank = subagentStatusRank(incoming.status);
   const currentRank = subagentStatusRank(current.status);
-  if (incomingRank > currentRank) return incoming;
-  if (incomingRank < currentRank) return current;
-  if (incoming.history.length > current.history.length) return incoming;
-  if (incoming.history.length < current.history.length) return current;
-  if (incoming.summary.length > current.summary.length) return incoming;
-  return current;
+  if (incomingRank > currentRank) return mergeComplementaryFields(incoming, current);
+  if (incomingRank < currentRank) return mergeComplementaryFields(current, incoming);
+  if (incoming.history.length > current.history.length) return mergeComplementaryFields(incoming, current);
+  if (incoming.history.length < current.history.length) return mergeComplementaryFields(current, incoming);
+  if (incoming.summary.length > current.summary.length) return mergeComplementaryFields(incoming, current);
+  return mergeComplementaryFields(current, incoming);
 }
 
 export function extractSubagentViewsFromWaitResult(raw: unknown): SubagentView[] {
