@@ -364,6 +364,13 @@ func TestSubagentManager_DelegateAndWait(t *testing.T) {
 	if !strings.Contains(strings.TrimSpace(anyToString(entry["result"])), "Subagent completed") {
 		t.Fatalf("unexpected subagent result: %#v", entry)
 	}
+	stats, _ := entry["stats"].(map[string]any)
+	if parseIntRaw(stats["steps"], 0) < 1 {
+		t.Fatalf("unexpected subagent steps stats: %#v", stats)
+	}
+	if parseIntRaw(stats["tokens"], 0) <= 0 {
+		t.Fatalf("unexpected subagent token stats: %#v", stats)
+	}
 
 	managedList, err := r.manageSubagents(context.Background(), map[string]any{
 		"action": "list",
@@ -572,6 +579,21 @@ func TestSubagentManager_InheritsWebSearchResolver(t *testing.T) {
 	statuses, timedOut := r.waitSubagents(waitCtx, []string{id})
 	if timedOut {
 		t.Fatalf("wait timed out: %#v", statuses)
+	}
+	entryRaw, ok := statuses[id]
+	if !ok {
+		t.Fatalf("missing subagent status for id=%s: %#v", id, statuses)
+	}
+	entry, ok := entryRaw.(map[string]any)
+	if !ok {
+		t.Fatalf("invalid status payload type: %T", entryRaw)
+	}
+	stats, _ := entry["stats"].(map[string]any)
+	if parseIntRaw(stats["tool_calls"], 0) < 1 {
+		t.Fatalf("unexpected subagent tool call stats: %#v", stats)
+	}
+	if parseIntRaw(stats["tokens"], 0) <= 0 {
+		t.Fatalf("unexpected subagent token stats: %#v", stats)
 	}
 
 	if !resolverCalled.Load() {
