@@ -197,6 +197,10 @@ type WaitSubagentStatus =
 
 type WaitSubagentItem = {
   subagentId: string;
+  specId: string;
+  title: string;
+  objective: string;
+  delegationPromptMarkdown: string;
   agentType: string;
   status: WaitSubagentStatus;
   triggerReason: string;
@@ -361,6 +365,10 @@ function buildWaitSubagentsDisplay(block: ToolCallBlockType): WaitSubagentsDispl
     const stats = asRecord(snapshot.stats);
     const item: WaitSubagentItem = {
       subagentId,
+      specId: asTrimmedString(snapshot.spec_id ?? snapshot.specId),
+      title: asTrimmedString(snapshot.title),
+      objective: asTrimmedString(snapshot.objective),
+      delegationPromptMarkdown: asTrimmedString(snapshot.delegation_prompt_markdown ?? snapshot.delegationPromptMarkdown),
       agentType: asTrimmedString(snapshot.agent_type ?? snapshot.agentType) || 'subagent',
       status,
       triggerReason: asTrimmedString(snapshot.trigger_reason ?? snapshot.triggerReason),
@@ -534,6 +542,11 @@ const WaitSubagentsToolCard: Component<WaitSubagentsToolCardProps> = (props) => 
                   <span class="chat-tool-wait-subagents-item-agent">{item.agentType || 'subagent'}</span>
                   <span class="chat-tool-wait-subagents-item-id" title={item.subagentId}>{item.subagentId}</span>
                 </div>
+                <Show when={item.title || item.objective}>
+                  <div class="chat-tool-wait-subagents-item-trigger">
+                    Title: {item.title || item.objective}
+                  </div>
+                </Show>
 
                 <div class="chat-tool-wait-subagents-item-metrics">
                   <span>Steps {formatSubagentInteger(item.steps)}</span>

@@ -2,6 +2,8 @@ package ai
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,6 +35,11 @@ const (
 	subagentActionTerminate    = "terminate"
 	subagentActionTerminateAll = "terminate_all"
 
+	subagentContextModeIsolated      = "isolated"
+	subagentContextModeMinimalPack   = "minimal_pack"
+	subagentContextModeThreadCompact = "thread_compact"
+	subagentContextModeThreadFull    = "thread_full"
+
 	subagentDefaultMaxSteps   = 8
 	subagentDefaultTimeoutSec = 180
 	subagentSteerMinInterval  = 2 * time.Second
@@ -53,12 +60,37 @@ type subagentExecutionStats struct {
 	cost      float64
 }
 
+type subagentResultValidation struct {
+	Passed bool
+	Errors []string
+}
+
 type subagentResult struct {
 	Summary      string
 	EvidenceRefs []string
 	KeyFiles     []map[string]any
 	OpenRisks    []string
 	NextActions  []string
+	Structured   map[string]any
+	Validation   subagentResultValidation
+}
+
+type subagentSpec struct {
+	SpecID                   string
+	Title                    string
+	AgentType                string
+	Objective                string
+	DelegationPromptMarkdown string
+	TriggerReason            string
+	ContextMode              string
+	Inputs                   []map[string]any
+	Constraints              map[string]any
+	Deliverables             []string
+	DefinitionOfDone         []string
+	OutputSchema             map[string]any
+	Budget                   map[string]any
+	PromptHash               string
+	CreatedAtMS              int64
 }
 
 func defaultSubagentResult() subagentResult {
@@ -68,16 +100,21 @@ func defaultSubagentResult() subagentResult {
 		KeyFiles:     []map[string]any{},
 		OpenRisks:    []string{},
 		NextActions:  []string{},
+		Structured:   map[string]any{},
+		Validation: subagentResultValidation{
+			Passed: false,
+			Errors: []string{},
+		},
 	}
 }
 
 type subagentTask struct {
-	id             string
-	taskID         string
-	objective      string
-	agentType      string
-	triggerReason  string
-	expectedOutput map[string]any
+	id            string
+	taskID        string
+	objective     string
+	agentType     string
+	triggerReason string
+	spec          subagentSpec
 
 	mode              string
 	modelID           string
@@ -122,6 +159,25 @@ func (t *subagentTask) setResult(summary string, errMsg string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.result.Summary = strings.TrimSpace(summary)
+	t.errMsg = strings.TrimSpace(errMsg)
+	now := time.Now().UnixMilli()
+	if t.startedAt == 0 {
+		t.startedAt = now
+	}
+	t.updatedAt = now
+	t.recalculateDerivedStatsLocked()
+}
+
+func (t *subagentTask) setResultDetailed(summary string, evidenceRefs []string, structured map[string]any, validation subagentResultValidation, errMsg string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.result.Summary = strings.TrimSpace(summary)
+	t.result.EvidenceRefs = cloneStringSlice(evidenceRefs)
+	t.result.Structured = cloneAnyMap(structured)
+	t.result.Validation = subagentResultValidation{
+		Passed: validation.Passed,
+		Errors: cloneStringSlice(validation.Errors),
+	}
 	t.errMsg = strings.TrimSpace(errMsg)
 	now := time.Now().UnixMilli()
 	if t.startedAt == 0 {
@@ -321,16 +377,63 @@ func cloneHistoryList(in []RunHistoryMsg) []map[string]any {
 	return out
 }
 
+func cloneRecordList(in []map[string]any) []map[string]any {
+	if len(in) == 0 {
+		return []map[string]any{}
+	}
+	out := make([]map[string]any, 0, len(in))
+	for _, item := range in {
+		out = append(out, cloneAnyMap(item))
+	}
+	return out
+}
+
+func cloneSpec(spec subagentSpec) subagentSpec {
+	return subagentSpec{
+		SpecID:                   strings.TrimSpace(spec.SpecID),
+		Title:                    strings.TrimSpace(spec.Title),
+		AgentType:                strings.TrimSpace(spec.AgentType),
+		Objective:                strings.TrimSpace(spec.Objective),
+		DelegationPromptMarkdown: strings.TrimSpace(spec.DelegationPromptMarkdown),
+		TriggerReason:            strings.TrimSpace(spec.TriggerReason),
+		ContextMode:              strings.TrimSpace(spec.ContextMode),
+		Inputs:                   cloneRecordList(spec.Inputs),
+		Constraints:              cloneAnyMap(spec.Constraints),
+		Deliverables:             cloneStringSlice(spec.Deliverables),
+		DefinitionOfDone:         cloneStringSlice(spec.DefinitionOfDone),
+		OutputSchema:             cloneAnyMap(spec.OutputSchema),
+		Budget:                   cloneAnyMap(spec.Budget),
+		PromptHash:               strings.TrimSpace(spec.PromptHash),
+		CreatedAtMS:              spec.CreatedAtMS,
+	}
+}
+
+func specPreview(spec subagentSpec) map[string]any {
+	return map[string]any{
+		"spec_id":      strings.TrimSpace(spec.SpecID),
+		"title":        strings.TrimSpace(spec.Title),
+		"objective":    strings.TrimSpace(spec.Objective),
+		"context_mode": strings.TrimSpace(spec.ContextMode),
+		"prompt_hash":  strings.TrimSpace(spec.PromptHash),
+	}
+}
+
 func (t *subagentTask) snapshot() map[string]any {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 
+	specCopy := cloneSpec(t.spec)
 	resultPayload := map[string]any{
 		"summary":       t.result.Summary,
 		"evidence_refs": cloneStringSlice(t.result.EvidenceRefs),
 		"key_files":     cloneMapList(t.result.KeyFiles),
 		"open_risks":    cloneStringSlice(t.result.OpenRisks),
 		"next_actions":  cloneStringSlice(t.result.NextActions),
+		"structured":    cloneAnyMap(t.result.Structured),
+		"validation": map[string]any{
+			"passed": t.result.Validation.Passed,
+			"errors": cloneStringSlice(t.result.Validation.Errors),
+		},
 	}
 	statsPayload := map[string]any{
 		"steps":      t.stats.Steps,
@@ -341,20 +444,47 @@ func (t *subagentTask) snapshot() map[string]any {
 		"outcome":    t.stats.Outcome,
 	}
 	return map[string]any{
-		"id":             t.id,
-		"subagent_id":    t.id,
-		"task_id":        t.taskID,
-		"agent_type":     t.agentType,
-		"trigger_reason": t.triggerReason,
-		"status":         t.status,
-		"result":         t.result.Summary,
-		"result_struct":  resultPayload,
-		"error":          t.errMsg,
-		"started_at_ms":  t.startedAt,
-		"ended_at_ms":    t.endedAt,
-		"updated_at_ms":  t.updatedAt,
-		"stats":          statsPayload,
-		"history":        cloneHistoryList(t.history),
+		"id":           t.id,
+		"subagent_id":  t.id,
+		"task_id":      t.taskID,
+		"agent_type":   t.agentType,
+		"spec_id":      specCopy.SpecID,
+		"title":        specCopy.Title,
+		"objective":    specCopy.Objective,
+		"context_mode": specCopy.ContextMode,
+		"prompt_hash":  specCopy.PromptHash,
+		"spec_preview": specPreview(specCopy),
+		"spec": map[string]any{
+			"spec_id":                    specCopy.SpecID,
+			"title":                      specCopy.Title,
+			"agent_type":                 specCopy.AgentType,
+			"objective":                  specCopy.Objective,
+			"delegation_prompt_markdown": specCopy.DelegationPromptMarkdown,
+			"trigger_reason":             specCopy.TriggerReason,
+			"context_mode":               specCopy.ContextMode,
+			"inputs":                     cloneRecordList(specCopy.Inputs),
+			"constraints":                cloneAnyMap(specCopy.Constraints),
+			"deliverables":               cloneStringSlice(specCopy.Deliverables),
+			"definition_of_done":         cloneStringSlice(specCopy.DefinitionOfDone),
+			"output_schema":              cloneAnyMap(specCopy.OutputSchema),
+			"budget":                     cloneAnyMap(specCopy.Budget),
+			"prompt_hash":                specCopy.PromptHash,
+			"created_at_ms":              specCopy.CreatedAtMS,
+		},
+		"delegation_prompt_markdown": specCopy.DelegationPromptMarkdown,
+		"deliverables":               cloneStringSlice(specCopy.Deliverables),
+		"definition_of_done":         cloneStringSlice(specCopy.DefinitionOfDone),
+		"output_schema":              cloneAnyMap(specCopy.OutputSchema),
+		"trigger_reason":             t.triggerReason,
+		"status":                     t.status,
+		"result":                     t.result.Summary,
+		"result_struct":              resultPayload,
+		"error":                      t.errMsg,
+		"started_at_ms":              t.startedAt,
+		"ended_at_ms":                t.endedAt,
+		"updated_at_ms":              t.updatedAt,
+		"stats":                      statsPayload,
+		"history":                    cloneHistoryList(t.history),
 	}
 }
 
@@ -364,6 +494,9 @@ func (t *subagentTask) eventPayload() map[string]any {
 		"subagent_id":    snapshot["subagent_id"],
 		"task_id":        snapshot["task_id"],
 		"agent_type":     snapshot["agent_type"],
+		"spec_id":        snapshot["spec_id"],
+		"title":          snapshot["title"],
+		"objective":      snapshot["objective"],
 		"trigger_reason": snapshot["trigger_reason"],
 		"status":         snapshot["status"],
 		"updated_at_ms":  snapshot["updated_at_ms"],
@@ -518,6 +651,244 @@ func (m *subagentManager) closeAll() {
 	}
 }
 
+func normalizeSubagentContextMode(raw string) string {
+	switch strings.TrimSpace(strings.ToLower(raw)) {
+	case subagentContextModeIsolated, subagentContextModeMinimalPack, subagentContextModeThreadCompact, subagentContextModeThreadFull:
+		return strings.TrimSpace(strings.ToLower(raw))
+	default:
+		return subagentContextModeIsolated
+	}
+}
+
+func normalizeUniqueNonEmptyList(in []string) []string {
+	if len(in) == 0 {
+		return []string{}
+	}
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(in))
+	for _, item := range in {
+		value := strings.TrimSpace(item)
+		if value == "" {
+			continue
+		}
+		key := strings.ToLower(value)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
+func normalizeSubagentSpecInputs(raw any) []map[string]any {
+	rawList, ok := raw.([]any)
+	if !ok {
+		return []map[string]any{}
+	}
+	out := make([]map[string]any, 0, len(rawList))
+	for _, item := range rawList {
+		switch typed := item.(type) {
+		case string:
+			value := strings.TrimSpace(typed)
+			if value == "" {
+				continue
+			}
+			out = append(out, map[string]any{"kind": "fact", "value": value})
+		case map[string]any:
+			kind := strings.TrimSpace(anyToString(typed["kind"]))
+			if kind == "" {
+				kind = "fact"
+			}
+			value := strings.TrimSpace(anyToString(typed["value"]))
+			if value == "" {
+				continue
+			}
+			entry := map[string]any{
+				"kind":  kind,
+				"value": value,
+			}
+			if source := strings.TrimSpace(anyToString(typed["source"])); source != "" {
+				entry["source"] = source
+			}
+			out = append(out, entry)
+		}
+	}
+	if len(out) > 16 {
+		out = out[:16]
+	}
+	return out
+}
+
+func marshalSubagentSchemaPretty(schema map[string]any) string {
+	if len(schema) == 0 {
+		return "{}"
+	}
+	b, err := json.MarshalIndent(schema, "", "  ")
+	if err != nil {
+		return "{}"
+	}
+	return string(b)
+}
+
+func computeSHA256(text string) string {
+	sum := sha256.Sum256([]byte(text))
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+func validateSubagentOutputSchemaDefinition(schema map[string]any) error {
+	if len(schema) == 0 {
+		return errors.New("missing output_schema")
+	}
+	if strings.TrimSpace(strings.ToLower(anyToString(schema["type"]))) != "object" {
+		return errors.New("output_schema.type must be object")
+	}
+	rawRequired, ok := schema["required"].([]any)
+	if !ok || len(rawRequired) == 0 {
+		return errors.New("output_schema.required must include at least one key")
+	}
+	properties, ok := schema["properties"].(map[string]any)
+	if !ok || len(properties) == 0 {
+		return errors.New("output_schema.properties must be a non-empty object")
+	}
+	required := normalizeUniqueNonEmptyList(extractStringSlice(rawRequired))
+	if len(required) == 0 {
+		return errors.New("output_schema.required must include at least one non-empty key")
+	}
+	for _, key := range required {
+		if _, ok := properties[key]; !ok {
+			return fmt.Errorf("output_schema.required key %q missing in properties", key)
+		}
+	}
+	return nil
+}
+
+func buildSubagentDelegationPrompt(spec subagentSpec) string {
+	inputLines := make([]string, 0, len(spec.Inputs))
+	for _, input := range spec.Inputs {
+		kind := strings.TrimSpace(anyToString(input["kind"]))
+		value := strings.TrimSpace(anyToString(input["value"]))
+		if value == "" {
+			continue
+		}
+		if kind == "" {
+			kind = "fact"
+		}
+		inputLines = append(inputLines, fmt.Sprintf("- [%s] %s", kind, value))
+	}
+	if len(inputLines) == 0 {
+		inputLines = append(inputLines, "- No additional trusted inputs were provided.")
+	}
+
+	deliverableLines := make([]string, 0, len(spec.Deliverables))
+	for i, item := range spec.Deliverables {
+		deliverableLines = append(deliverableLines, fmt.Sprintf("%d. %s", i+1, item))
+	}
+
+	dodLines := make([]string, 0, len(spec.DefinitionOfDone))
+	for i, item := range spec.DefinitionOfDone {
+		dodLines = append(dodLines, fmt.Sprintf("%d. %s", i+1, item))
+	}
+
+	allowedTools := extractStringSlice(spec.Constraints["allowed_tools"])
+	readonlyExec := spec.Constraints["readonly_exec"] == true
+	noUserInteraction := spec.Constraints["no_user_interaction"] == true
+	subdelegateAllowed := spec.Constraints["allow_subdelegate"] == true
+	maxSteps := parseIntRaw(spec.Budget["max_steps"], subagentDefaultMaxSteps)
+	timeoutSec := parseIntRaw(spec.Budget["timeout_sec"], subagentDefaultTimeoutSec)
+
+	promptParts := []string{
+		"# Mission",
+		strings.TrimSpace(spec.Objective),
+		"",
+		"# Context You Can Trust",
+		strings.Join(inputLines, "\n"),
+		"",
+		"# Scope Boundaries",
+		fmt.Sprintf("- Context mode: %s", strings.TrimSpace(spec.ContextMode)),
+		fmt.Sprintf("- No user interaction: %t", noUserInteraction),
+		fmt.Sprintf("- Allow sub-delegation: %t", subdelegateAllowed),
+		fmt.Sprintf("- Readonly execution policy: %t", readonlyExec),
+		fmt.Sprintf("- Trigger reason: %s", strings.TrimSpace(spec.TriggerReason)),
+		"",
+		"# Required Deliverables",
+		strings.Join(deliverableLines, "\n"),
+		"",
+		"# Definition of Done",
+		strings.Join(dodLines, "\n"),
+		"",
+		"# Output JSON Contract",
+		"Return a JSON object that follows this schema in your final `task_complete.result`:",
+		"```json",
+		marshalSubagentSchemaPretty(spec.OutputSchema),
+		"```",
+		"",
+		"# Execution Policy",
+		fmt.Sprintf("- Allowed tools: %s", strings.Join(allowedTools, ", ")),
+		"- Do not ask the user for clarification.",
+		"- Use concrete evidence and references in the final result.",
+		"",
+		"# Budget",
+		fmt.Sprintf("- Max steps: %d", maxSteps),
+		fmt.Sprintf("- Timeout: %d seconds", timeoutSec),
+	}
+	return strings.TrimSpace(strings.Join(promptParts, "\n"))
+}
+
+func buildSubagentSpec(args map[string]any, agentType string, objective string, triggerReason string, allowedTools []string, maxSteps int, timeoutSec int, forceReadonlyExec bool) (subagentSpec, error) {
+	title := strings.TrimSpace(anyToString(args["title"]))
+	if title == "" {
+		title = objective
+	}
+	if len([]rune(title)) > 140 {
+		title = string([]rune(title)[:140])
+	}
+	contextMode := normalizeSubagentContextMode(anyToString(args["context_mode"]))
+
+	deliverables := normalizeUniqueNonEmptyList(extractStringSlice(args["deliverables"]))
+	if len(deliverables) == 0 {
+		return subagentSpec{}, errors.New("missing deliverables")
+	}
+	definitionOfDone := normalizeUniqueNonEmptyList(extractStringSlice(args["definition_of_done"]))
+	if len(definitionOfDone) == 0 {
+		return subagentSpec{}, errors.New("missing definition_of_done")
+	}
+
+	outputSchema, _ := args["output_schema"].(map[string]any)
+	if err := validateSubagentOutputSchemaDefinition(outputSchema); err != nil {
+		return subagentSpec{}, err
+	}
+
+	specID, err := newToolID()
+	if err != nil {
+		return subagentSpec{}, err
+	}
+	specID = "spec_" + strings.TrimPrefix(specID, "tool_")
+	spec := subagentSpec{
+		SpecID:        specID,
+		Title:         strings.TrimSpace(title),
+		AgentType:     strings.TrimSpace(agentType),
+		Objective:     strings.TrimSpace(objective),
+		TriggerReason: strings.TrimSpace(triggerReason),
+		ContextMode:   contextMode,
+		Inputs:        normalizeSubagentSpecInputs(args["inputs"]),
+		Constraints: map[string]any{
+			"no_user_interaction": true,
+			"allow_subdelegate":   false,
+			"allowed_tools":       cloneStringSlice(allowedTools),
+			"readonly_exec":       forceReadonlyExec,
+		},
+		Deliverables:     cloneStringSlice(deliverables),
+		DefinitionOfDone: cloneStringSlice(definitionOfDone),
+		OutputSchema:     cloneAnyMap(outputSchema),
+		Budget:           map[string]any{"max_steps": maxSteps, "timeout_sec": timeoutSec},
+		CreatedAtMS:      time.Now().UnixMilli(),
+	}
+	spec.DelegationPromptMarkdown = buildSubagentDelegationPrompt(spec)
+	spec.PromptHash = computeSHA256(spec.DelegationPromptMarkdown)
+	return spec, nil
+}
+
 func sanitizeReadonlyAllowlist(allowlist []string) []string {
 	return sanitizeSubagentToolAllowlist(allowlist, defaultSubagentToolAllowlistReadonly(), true)
 }
@@ -604,14 +975,6 @@ func (m *subagentManager) create(ctx context.Context, args map[string]any) (map[
 	if triggerReason == "" {
 		return nil, fmt.Errorf("missing trigger_reason")
 	}
-	expectedOutput, _ := args["expected_output"].(map[string]any)
-	if len(expectedOutput) == 0 {
-		return nil, fmt.Errorf("missing expected_output")
-	}
-	expectedOutputCopy := map[string]any{}
-	for k, v := range expectedOutput {
-		expectedOutputCopy[strings.TrimSpace(k)] = v
-	}
 
 	defaults := buildRoleDefaults(agentType)
 	mode := strings.ToLower(strings.TrimSpace(anyToString(args["mode"])))
@@ -638,6 +1001,10 @@ func (m *subagentManager) create(ctx context.Context, args map[string]any) (map[
 	}
 
 	allowedTools := sanitizeSubagentToolAllowlist(extractStringSlice(args["allowed_tools"]), defaults.Allowlist, defaults.ForceReadonlyExec)
+	spec, err := buildSubagentSpec(args, agentType, objective, triggerReason, allowedTools, maxSteps, timeoutSec, defaults.ForceReadonlyExec)
+	if err != nil {
+		return nil, err
+	}
 
 	modelID := strings.TrimSpace(m.parent.currentModelID)
 	if modelID == "" && m.parent.cfg != nil {
@@ -659,10 +1026,10 @@ func (m *subagentManager) create(ctx context.Context, args map[string]any) (map[
 	task := &subagentTask{
 		id:                subagentID,
 		taskID:            taskID,
-		objective:         objective,
+		objective:         spec.Objective,
 		agentType:         agentType,
 		triggerReason:     triggerReason,
-		expectedOutput:    expectedOutputCopy,
+		spec:              cloneSpec(spec),
 		mode:              mode,
 		modelID:           modelID,
 		allowedTools:      append([]string(nil), allowedTools...),
@@ -684,16 +1051,22 @@ func (m *subagentManager) create(ctx context.Context, args map[string]any) (map[
 
 	beginPayload := task.eventPayload()
 	m.parent.persistRunEvent("delegation.create.begin", RealtimeStreamKindLifecycle, beginPayload)
-	go m.runTask(task, objective)
+	go m.runTask(task, spec.DelegationPromptMarkdown)
 
 	return map[string]any{
-		"status":          "ok",
-		"action":          subagentActionCreate,
-		"subagent_id":     task.id,
-		"task_id":         task.taskID,
-		"agent_type":      task.agentType,
-		"trigger_reason":  task.triggerReason,
-		"subagent_status": task.statusSnapshot(),
+		"status":                     "ok",
+		"action":                     subagentActionCreate,
+		"subagent_id":                task.id,
+		"task_id":                    task.taskID,
+		"agent_type":                 task.agentType,
+		"title":                      spec.Title,
+		"objective":                  spec.Objective,
+		"spec_id":                    spec.SpecID,
+		"context_mode":               spec.ContextMode,
+		"delegation_prompt_markdown": spec.DelegationPromptMarkdown,
+		"prompt_hash":                spec.PromptHash,
+		"trigger_reason":             task.triggerReason,
+		"subagent_status":            task.statusSnapshot(),
 	}, nil
 }
 
@@ -704,6 +1077,9 @@ func (m *subagentManager) runTask(task *subagentTask, firstInput string) {
 	defer close(task.doneCh)
 	defer task.cancel()
 	input := strings.TrimSpace(firstInput)
+	if input == "" {
+		input = strings.TrimSpace(task.objective)
+	}
 
 	if err := task.ctx.Err(); err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
@@ -717,98 +1093,414 @@ func (m *subagentManager) runTask(task *subagentTask, firstInput string) {
 		return
 	}
 
-	runID, err := NewRunID()
-	if err != nil {
-		task.setStatus(subagentStatusFailed)
-		task.setResult("", err.Error())
-		m.parent.persistRunEvent("delegation.create.end", RealtimeStreamKindLifecycle, task.eventPayload())
-		return
-	}
-	messageID, err := newMessageID()
-	if err != nil {
-		task.setStatus(subagentStatusFailed)
-		task.setResult("", err.Error())
-		m.parent.persistRunEvent("delegation.create.end", RealtimeStreamKindLifecycle, task.eventPayload())
-		return
-	}
+	var (
+		totalToolCalls int64
+		totalTokens    int64
+		totalCost      float64
+		attemptInput   = input
+	)
 
-	task.incrementSteps()
-	history := task.historySnapshot()
-	child := newRun(runOptions{
-		Log:                   m.parent.log,
-		StateDir:              m.parent.stateDir,
-		FSRoot:                m.parent.fsRoot,
-		Shell:                 m.parent.shell,
-		AIConfig:              m.parent.cfg,
-		SessionMeta:           m.parent.sessionMeta,
-		ResolveProviderKey:    m.parent.resolveProviderKey,
-		ResolveWebSearchKey:   m.parent.resolveWebSearchKey,
-		RunID:                 runID,
-		ChannelID:             m.parent.channelID,
-		EndpointID:            m.parent.endpointID,
-		ThreadID:              m.parent.threadID,
-		UserPublicID:          m.parent.userPublicID,
-		MessageID:             messageID,
-		MaxWallTime:           time.Duration(task.timeoutSec) * time.Second,
-		IdleTimeout:           m.parent.idleTimeout,
-		ToolApprovalTimeout:   m.parent.toolApprovalTO,
-		SubagentDepth:         m.parent.subagentDepth + 1,
-		AllowSubagentDelegate: false,
-		ToolAllowlist:         append([]string(nil), task.allowedTools...),
-		ForceReadonlyExec:     task.forceReadonlyExec,
-		NoUserInteraction:     true,
-	})
-
-	req := RunRequest{
-		Model:     task.modelID,
-		Objective: task.objective,
-		History:   history,
-		Input:     RunInput{Text: input},
-		Options: RunOptions{
-			Mode:            task.mode,
-			MaxSteps:        task.maxSteps,
-			MaxNoToolRounds: nativeDefaultNoToolRounds,
-		},
-	}
-
-	err = child.run(task.ctx, req)
-	assistantMessageJSON, assistantText, _, snapshotErr := child.snapshotAssistantMessageJSON()
-	if snapshotErr != nil {
-		assistantMessageJSON = ""
-		assistantText = ""
-	}
-	stats := collectSubagentExecutionStats(child, assistantMessageJSON)
-	task.setExecutionStats(stats.toolCalls, stats.tokens, stats.cost)
-	task.appendHistory(input, assistantText)
-
-	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			task.setStatus(subagentStatusTimedOut)
-			task.setResult(assistantText, "subagent timed out")
-		} else if errors.Is(err, context.Canceled) {
-			task.setStatus(subagentStatusCanceled)
-			task.setResult(assistantText, "subagent canceled")
-		} else {
-			task.setStatus(subagentStatusFailed)
-			task.setResult(assistantText, strings.TrimSpace(err.Error()))
+	for attempt := 1; attempt <= 2; attempt++ {
+		if err := task.ctx.Err(); err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				task.setStatus(subagentStatusTimedOut)
+				task.setResult(task.result.Summary, "subagent timed out")
+			} else {
+				task.setStatus(subagentStatusCanceled)
+				task.setResult(task.result.Summary, "subagent canceled")
+			}
+			m.parent.persistRunEvent("delegation.create.end", RealtimeStreamKindLifecycle, task.eventPayload())
+			return
 		}
-		m.parent.persistRunEvent("delegation.create.end", RealtimeStreamKindLifecycle, task.eventPayload())
-		return
+
+		runID, err := NewRunID()
+		if err != nil {
+			task.setStatus(subagentStatusFailed)
+			task.setResult("", err.Error())
+			m.parent.persistRunEvent("delegation.create.end", RealtimeStreamKindLifecycle, task.eventPayload())
+			return
+		}
+		messageID, err := newMessageID()
+		if err != nil {
+			task.setStatus(subagentStatusFailed)
+			task.setResult("", err.Error())
+			m.parent.persistRunEvent("delegation.create.end", RealtimeStreamKindLifecycle, task.eventPayload())
+			return
+		}
+
+		task.incrementSteps()
+		history := task.historySnapshot()
+		child := newRun(runOptions{
+			Log:                   m.parent.log,
+			StateDir:              m.parent.stateDir,
+			FSRoot:                m.parent.fsRoot,
+			Shell:                 m.parent.shell,
+			AIConfig:              m.parent.cfg,
+			SessionMeta:           m.parent.sessionMeta,
+			ResolveProviderKey:    m.parent.resolveProviderKey,
+			ResolveWebSearchKey:   m.parent.resolveWebSearchKey,
+			RunID:                 runID,
+			ChannelID:             m.parent.channelID,
+			EndpointID:            m.parent.endpointID,
+			ThreadID:              m.parent.threadID,
+			UserPublicID:          m.parent.userPublicID,
+			MessageID:             messageID,
+			MaxWallTime:           time.Duration(task.timeoutSec) * time.Second,
+			IdleTimeout:           m.parent.idleTimeout,
+			ToolApprovalTimeout:   m.parent.toolApprovalTO,
+			SubagentDepth:         m.parent.subagentDepth + 1,
+			AllowSubagentDelegate: false,
+			ToolAllowlist:         append([]string(nil), task.allowedTools...),
+			ForceReadonlyExec:     task.forceReadonlyExec,
+			NoUserInteraction:     true,
+		})
+
+		req := RunRequest{
+			Model:     task.modelID,
+			Objective: task.objective,
+			History:   history,
+			Input:     RunInput{Text: attemptInput},
+			Options: RunOptions{
+				Mode:            task.mode,
+				MaxSteps:        task.maxSteps,
+				MaxNoToolRounds: nativeDefaultNoToolRounds,
+			},
+		}
+
+		err = child.run(task.ctx, req)
+		assistantMessageJSON, assistantText, _, snapshotErr := child.snapshotAssistantMessageJSON()
+		if snapshotErr != nil {
+			assistantMessageJSON = ""
+			assistantText = ""
+		}
+		stats := collectSubagentExecutionStats(child, assistantMessageJSON)
+		totalToolCalls += stats.toolCalls
+		totalTokens += stats.tokens
+		totalCost += stats.cost
+		task.setExecutionStats(totalToolCalls, totalTokens, totalCost)
+		task.appendHistory(attemptInput, assistantText)
+
+		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				task.setStatus(subagentStatusTimedOut)
+				task.setResult(assistantText, "subagent timed out")
+			} else if errors.Is(err, context.Canceled) {
+				task.setStatus(subagentStatusCanceled)
+				task.setResult(assistantText, "subagent canceled")
+			} else {
+				task.setStatus(subagentStatusFailed)
+				task.setResult(assistantText, strings.TrimSpace(err.Error()))
+			}
+			m.parent.persistRunEvent("delegation.create.end", RealtimeStreamKindLifecycle, task.eventPayload())
+			return
+		}
+
+		finalReason := strings.TrimSpace(child.getFinalizationReason())
+		if classifyFinalizationReason(finalReason) == finalizationClassWaitingUser {
+			task.setStatus(subagentStatusFailed)
+			task.setResult(assistantText, "subagent blocked by no-user-interaction policy")
+			payload := task.eventPayload()
+			payload["reason"] = "no_user_interaction_policy"
+			m.parent.persistRunEvent("delegation.create.end", RealtimeStreamKindLifecycle, payload)
+			return
+		}
+
+		completion := extractSubagentCompletionPayload(assistantMessageJSON, assistantText)
+		hydrateSubagentStructuredResultFromSummary(task.spec, &completion)
+		validation := validateSubagentCompletion(task.spec, completion)
+		task.setResultDetailed(completion.summary, completion.evidenceRefs, completion.structured, validation, "")
+		if validation.Passed {
+			task.setStatus(subagentStatusCompleted)
+			task.setResultDetailed(completion.summary, completion.evidenceRefs, completion.structured, validation, "")
+			m.parent.persistRunEvent("delegation.create.end", RealtimeStreamKindLifecycle, task.eventPayload())
+			return
+		}
+
+		if attempt >= 2 {
+			task.setStatus(subagentStatusFailed)
+			task.setResultDetailed(completion.summary, completion.evidenceRefs, completion.structured, validation, "subagent result contract violation")
+			payload := task.eventPayload()
+			payload["reason"] = "result_contract_violation"
+			payload["validation_errors"] = cloneStringSlice(validation.Errors)
+			m.parent.persistRunEvent("delegation.create.end", RealtimeStreamKindLifecycle, payload)
+			return
+		}
+
+		attemptInput = buildSubagentRepairPrompt(task.spec, validation)
+		m.parent.persistRunEvent("delegation.validation.retry", RealtimeStreamKindLifecycle, map[string]any{
+			"subagent_id":        task.id,
+			"attempt":            attempt,
+			"validation_errors":  cloneStringSlice(validation.Errors),
+			"prompt_contract_id": task.spec.SpecID,
+		})
+	}
+}
+
+type subagentCompletionPayload struct {
+	summary      string
+	evidenceRefs []string
+	structured   map[string]any
+}
+
+func extractSubagentCompletionPayload(messageJSON string, fallbackSummary string) subagentCompletionPayload {
+	payload := subagentCompletionPayload{
+		summary:      strings.TrimSpace(fallbackSummary),
+		evidenceRefs: []string{},
+		structured:   map[string]any{},
 	}
 
-	finalReason := strings.TrimSpace(child.getFinalizationReason())
-	if classifyFinalizationReason(finalReason) == finalizationClassWaitingUser {
-		task.setStatus(subagentStatusFailed)
-		task.setResult(assistantText, "subagent blocked by no-user-interaction policy")
-		payload := task.eventPayload()
-		payload["reason"] = "no_user_interaction_policy"
-		m.parent.persistRunEvent("delegation.create.end", RealtimeStreamKindLifecycle, payload)
-		return
+	messageJSON = strings.TrimSpace(messageJSON)
+	if messageJSON == "" {
+		if structured := tryParseJSONResultObject(payload.summary); len(structured) > 0 {
+			payload.structured = structured
+		}
+		return payload
 	}
 
-	task.setStatus(subagentStatusCompleted)
-	task.setResult(assistantText, "")
-	m.parent.persistRunEvent("delegation.create.end", RealtimeStreamKindLifecycle, task.eventPayload())
+	var message map[string]any
+	if err := json.Unmarshal([]byte(messageJSON), &message); err != nil {
+		if structured := tryParseJSONResultObject(payload.summary); len(structured) > 0 {
+			payload.structured = structured
+		}
+		return payload
+	}
+
+	var candidateResultText string
+	var candidateEvidenceRefs []string
+	var walk func(blocks []any)
+	walk = func(blocks []any) {
+		for _, raw := range blocks {
+			block, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			blockType := strings.ToLower(strings.TrimSpace(anyToString(block["type"])))
+			if blockType == "tool-call" && strings.TrimSpace(anyToString(block["toolName"])) == "task_complete" {
+				args, _ := block["args"].(map[string]any)
+				resultText := strings.TrimSpace(anyToString(args["result"]))
+				evidenceRefs := normalizeUniqueNonEmptyList(extractStringSlice(args["evidence_refs"]))
+				if resultText != "" {
+					candidateResultText = resultText
+				}
+				if len(evidenceRefs) > 0 {
+					candidateEvidenceRefs = evidenceRefs
+				}
+			}
+			children, _ := block["children"].([]any)
+			if len(children) > 0 {
+				walk(children)
+			}
+		}
+	}
+	rawBlocks, _ := message["blocks"].([]any)
+	if len(rawBlocks) > 0 {
+		walk(rawBlocks)
+	}
+
+	if strings.TrimSpace(candidateResultText) != "" {
+		payload.summary = strings.TrimSpace(candidateResultText)
+	}
+	if len(candidateEvidenceRefs) > 0 {
+		payload.evidenceRefs = candidateEvidenceRefs
+	}
+	if structured := tryParseJSONResultObject(payload.summary); len(structured) > 0 {
+		payload.structured = structured
+	}
+	return payload
+}
+
+func tryParseJSONResultObject(input string) map[string]any {
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return nil
+	}
+
+	parse := func(candidate string) map[string]any {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			return nil
+		}
+		var out map[string]any
+		if err := json.Unmarshal([]byte(candidate), &out); err != nil {
+			return nil
+		}
+		return out
+	}
+
+	if parsed := parse(input); len(parsed) > 0 {
+		return parsed
+	}
+
+	lower := strings.ToLower(input)
+	startFence := strings.Index(lower, "```json")
+	if startFence >= 0 {
+		rest := input[startFence+7:]
+		if endFence := strings.Index(rest, "```"); endFence >= 0 {
+			if parsed := parse(rest[:endFence]); len(parsed) > 0 {
+				return parsed
+			}
+		}
+	}
+
+	open := strings.Index(input, "{")
+	close := strings.LastIndex(input, "}")
+	if open >= 0 && close > open {
+		if parsed := parse(input[open : close+1]); len(parsed) > 0 {
+			return parsed
+		}
+	}
+	return nil
+}
+
+func hydrateSubagentStructuredResultFromSummary(spec subagentSpec, completion *subagentCompletionPayload) {
+	if completion == nil {
+		return
+	}
+	if len(completion.structured) > 0 {
+		return
+	}
+	summary := strings.TrimSpace(completion.summary)
+	if summary == "" {
+		return
+	}
+	requiredKeys := normalizeUniqueNonEmptyList(extractStringSlice(spec.OutputSchema["required"]))
+	if len(requiredKeys) == 1 && requiredKeys[0] == "summary" {
+		completion.structured = map[string]any{
+			"summary": summary,
+		}
+	}
+}
+
+func validateSubagentCompletion(spec subagentSpec, completion subagentCompletionPayload) subagentResultValidation {
+	validation := subagentResultValidation{
+		Passed: true,
+		Errors: []string{},
+	}
+	if strings.TrimSpace(completion.summary) == "" {
+		validation.Passed = false
+		validation.Errors = append(validation.Errors, "missing result summary")
+	}
+	if len(spec.OutputSchema) > 0 {
+		structured := completion.structured
+		if len(structured) == 0 {
+			validation.Passed = false
+			validation.Errors = append(validation.Errors, "task_complete.result must contain a JSON object matching output_schema")
+		} else {
+			schemaErrors := validateMapAgainstSchema(structured, spec.OutputSchema, "$")
+			if len(schemaErrors) > 0 {
+				validation.Passed = false
+				validation.Errors = append(validation.Errors, schemaErrors...)
+			}
+		}
+	}
+	if len(validation.Errors) > 0 {
+		validation.Errors = normalizeUniqueNonEmptyList(validation.Errors)
+	}
+	return validation
+}
+
+func validateMapAgainstSchema(value map[string]any, schema map[string]any, path string) []string {
+	return validateValueAgainstSchema(value, schema, path)
+}
+
+func validateValueAgainstSchema(value any, schema map[string]any, path string) []string {
+	errorsOut := []string{}
+	if len(schema) == 0 {
+		return errorsOut
+	}
+	schemaType := strings.TrimSpace(strings.ToLower(anyToString(schema["type"])))
+	switch schemaType {
+	case "object":
+		obj, ok := value.(map[string]any)
+		if !ok {
+			return []string{fmt.Sprintf("%s must be an object", path)}
+		}
+		required := normalizeUniqueNonEmptyList(extractStringSlice(schema["required"]))
+		for _, key := range required {
+			if _, ok := obj[key]; !ok {
+				errorsOut = append(errorsOut, fmt.Sprintf("%s missing required key %q", path, key))
+			}
+		}
+		properties, _ := schema["properties"].(map[string]any)
+		for key, rawPropSchema := range properties {
+			propSchema, ok := rawPropSchema.(map[string]any)
+			if !ok {
+				continue
+			}
+			propValue, exists := obj[key]
+			if !exists {
+				continue
+			}
+			errorsOut = append(errorsOut, validateValueAgainstSchema(propValue, propSchema, path+"."+key)...)
+		}
+	case "array":
+		arr, ok := value.([]any)
+		if !ok {
+			switch typed := value.(type) {
+			case []string:
+				arr = make([]any, 0, len(typed))
+				for _, item := range typed {
+					arr = append(arr, item)
+				}
+			default:
+				return []string{fmt.Sprintf("%s must be an array", path)}
+			}
+		}
+		minItems := parseIntRaw(schema["minItems"], 0)
+		if minItems > 0 && len(arr) < minItems {
+			errorsOut = append(errorsOut, fmt.Sprintf("%s must contain at least %d items", path, minItems))
+		}
+		itemSchema, _ := schema["items"].(map[string]any)
+		if len(itemSchema) > 0 {
+			for i, item := range arr {
+				errorsOut = append(errorsOut, validateValueAgainstSchema(item, itemSchema, fmt.Sprintf("%s[%d]", path, i))...)
+			}
+		}
+	case "string":
+		text, ok := value.(string)
+		if !ok {
+			return []string{fmt.Sprintf("%s must be a string", path)}
+		}
+		minLength := parseIntRaw(schema["minLength"], 0)
+		if minLength > 0 && len([]rune(strings.TrimSpace(text))) < minLength {
+			errorsOut = append(errorsOut, fmt.Sprintf("%s must be at least %d characters", path, minLength))
+		}
+	case "number", "integer":
+		switch value.(type) {
+		case int, int32, int64, float32, float64, json.Number:
+		default:
+			errorsOut = append(errorsOut, fmt.Sprintf("%s must be a number", path))
+		}
+	case "boolean":
+		if _, ok := value.(bool); !ok {
+			errorsOut = append(errorsOut, fmt.Sprintf("%s must be a boolean", path))
+		}
+	case "":
+		// No explicit type: treat as pass-through.
+	default:
+		errorsOut = append(errorsOut, fmt.Sprintf("%s schema type %q is not supported", path, schemaType))
+	}
+	return errorsOut
+}
+
+func buildSubagentRepairPrompt(spec subagentSpec, validation subagentResultValidation) string {
+	lines := []string{
+		"The previous output failed contract validation.",
+		"Fix the output and call task_complete again.",
+		"",
+		"Validation errors:",
+	}
+	for _, item := range validation.Errors {
+		lines = append(lines, "- "+item)
+	}
+	lines = append(lines,
+		"",
+		"Requirements:",
+		"- Return task_complete.result as a JSON object (or fenced ```json block) that matches the output schema.",
+		"- Include concrete evidence_refs.",
+		"- Keep the response aligned with mission: "+strings.TrimSpace(spec.Objective),
+	)
+	return strings.Join(lines, "\n")
 }
 
 func (m *subagentManager) sendInput(id string, message string, interrupt bool) (map[string]any, error) {
@@ -1034,6 +1726,12 @@ func (m *subagentManager) manageList(args map[string]any) (map[string]any, error
 		item := map[string]any{
 			"subagent_id":    snapshot["subagent_id"],
 			"task_id":        snapshot["task_id"],
+			"spec_id":        snapshot["spec_id"],
+			"title":          snapshot["title"],
+			"objective":      snapshot["objective"],
+			"context_mode":   snapshot["context_mode"],
+			"prompt_hash":    snapshot["prompt_hash"],
+			"spec_preview":   snapshot["spec_preview"],
 			"agent_type":     snapshot["agent_type"],
 			"trigger_reason": snapshot["trigger_reason"],
 			"status":         status,

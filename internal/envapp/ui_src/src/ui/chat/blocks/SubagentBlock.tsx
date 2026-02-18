@@ -113,6 +113,17 @@ function subagentBlockToView(block: SubagentBlockType): SubagentView {
   return {
     subagentId: String(block.subagentId ?? '').trim(),
     taskId: String(block.taskId ?? '').trim(),
+    specId: String(block.specId ?? '').trim() || undefined,
+    title: String(block.title ?? '').trim() || undefined,
+    objective: String(block.objective ?? '').trim() || undefined,
+    contextMode: String(block.contextMode ?? '').trim() || undefined,
+    promptHash: String(block.promptHash ?? '').trim() || undefined,
+    delegationPromptMarkdown: String(block.delegationPromptMarkdown ?? '').trim() || undefined,
+    deliverables: Array.isArray(block.deliverables) ? block.deliverables : [],
+    definitionOfDone: Array.isArray(block.definitionOfDone) ? block.definitionOfDone : [],
+    outputSchema: block.outputSchema && typeof block.outputSchema === 'object' && !Array.isArray(block.outputSchema)
+      ? (block.outputSchema as Record<string, unknown>)
+      : {},
     agentType: String(block.agentType ?? '').trim(),
     triggerReason: String(block.triggerReason ?? '').trim(),
     status: normalizeSubagentStatus(block.status),
@@ -139,6 +150,15 @@ function subagentViewToBlock(view: SubagentView): SubagentBlockType {
     type: 'subagent',
     subagentId: view.subagentId,
     taskId: view.taskId,
+    specId: String(view.specId ?? '').trim() || undefined,
+    title: String(view.title ?? '').trim() || undefined,
+    objective: String(view.objective ?? '').trim() || undefined,
+    contextMode: String(view.contextMode ?? '').trim() || undefined,
+    promptHash: String(view.promptHash ?? '').trim() || undefined,
+    delegationPromptMarkdown: String(view.delegationPromptMarkdown ?? '').trim() || undefined,
+    deliverables: Array.isArray(view.deliverables) ? view.deliverables : [],
+    definitionOfDone: Array.isArray(view.definitionOfDone) ? view.definitionOfDone : [],
+    outputSchema: view.outputSchema ?? {},
     agentType: view.agentType,
     triggerReason: view.triggerReason,
     status: normalizeSubagentStatus(view.status),
@@ -195,6 +215,13 @@ function resolveLatestSubagentView(messages: Message[], subagentId: string, seed
               mapSubagentPayloadSnakeToCamel({
                 ...(result as any),
                 status: (result as any).subagent_status ?? (result as any).subagentStatus ?? (result as any).status,
+                title: (result as any).title ?? (args as any).title,
+                objective: (result as any).objective ?? (args as any).objective,
+                context_mode: (result as any).context_mode ?? (args as any).context_mode,
+                delegation_prompt_markdown: (result as any).delegation_prompt_markdown,
+                deliverables: (result as any).deliverables ?? (args as any).deliverables,
+                definition_of_done: (result as any).definition_of_done ?? (args as any).definition_of_done,
+                output_schema: (result as any).output_schema ?? (args as any).output_schema,
                 agent_type: (result as any).agent_type ?? (args as any).agent_type,
                 trigger_reason: (result as any).trigger_reason ?? (args as any).trigger_reason,
               }),
@@ -240,6 +267,18 @@ export const SubagentBlock: Component<SubagentBlockProps> = (props) => {
     if (value) return summarizeText(value, 120);
     return 'No trigger reason provided.';
   });
+  const titleText = createMemo(() => {
+    const title = String(blockView().title ?? '').trim();
+    if (title) return summarizeText(title, 120);
+    const objective = String(blockView().objective ?? '').trim();
+    if (objective) return summarizeText(objective, 120);
+    return triggerReasonText();
+  });
+  const promptPreview = createMemo(() => {
+    const prompt = String(blockView().delegationPromptMarkdown ?? '').trim();
+    if (!prompt) return '';
+    return summarizeText(prompt.replace(/\s+/g, ' '), 200);
+  });
   const outcomeText = createMemo(() => {
     const value = String(blockView().stats.outcome ?? '').trim();
     if (value) return value;
@@ -263,9 +302,19 @@ export const SubagentBlock: Component<SubagentBlockProps> = (props) => {
 
       <div class="chat-subagent-compact-body">
         <div class="chat-subagent-compact-line">
+          <span class="chat-subagent-compact-label">Title</span>
+          <span class="chat-subagent-compact-value">{titleText()}</span>
+        </div>
+        <div class="chat-subagent-compact-line">
           <span class="chat-subagent-compact-label">Trigger</span>
           <span class="chat-subagent-compact-value">{triggerReasonText()}</span>
         </div>
+        <Show when={promptPreview()}>
+          <div class="chat-subagent-compact-line">
+            <span class="chat-subagent-compact-label">Prompt</span>
+            <span class="chat-subagent-compact-value">{promptPreview()}</span>
+          </div>
+        </Show>
         <div class="chat-subagent-kpi-grid">
           <div class="chat-subagent-kpi-chip">
             <span class="chat-subagent-kpi-label">Steps</span>
