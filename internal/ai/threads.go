@@ -40,11 +40,19 @@ func normalizeThreadRunState(status string, runError string) (string, string) {
 	switch s {
 	case RunStateFailed, RunStateTimedOut:
 		return string(s), runError
-	case RunStateAccepted, RunStateRunning, RunStateWaitingApproval, RunStateRecovering, RunStateWaitingUser, RunStateSuccess, RunStateCanceled:
+	case RunStateAccepted, RunStateRunning, RunStateWaitingApproval, RunStateRecovering, RunStateFinalizing, RunStateWaitingUser, RunStateSuccess, RunStateCanceled:
 		return string(s), ""
 	default:
 		return string(RunStateIdle), ""
 	}
+}
+
+func activeThreadEffectiveRunState(status string, runError string) (string, string) {
+	runStatus, _ := normalizeThreadRunState(status, runError)
+	if IsActiveRunState(runStatus) {
+		return runStatus, ""
+	}
+	return string(RunStateRunning), ""
 }
 
 func threadWaitingPromptView(t *threadstore.Thread, effectiveRunStatus string) *WaitingPrompt {
@@ -105,8 +113,7 @@ func (s *Service) GetThread(ctx context.Context, meta *session.Meta, threadID st
 
 	runStatus, runError := normalizeThreadRunState(th.RunStatus, th.RunError)
 	if s.HasActiveThreadForEndpoint(strings.TrimSpace(meta.EndpointID), strings.TrimSpace(th.ThreadID)) {
-		runStatus = "running"
-		runError = ""
+		runStatus, runError = activeThreadEffectiveRunState(th.RunStatus, th.RunError)
 	}
 
 	workingDir := strings.TrimSpace(th.WorkingDir)
@@ -158,8 +165,7 @@ func (s *Service) ListThreads(ctx context.Context, meta *session.Meta, limit int
 	for _, t := range list {
 		runStatus, runError := normalizeThreadRunState(t.RunStatus, t.RunError)
 		if _, ok := activeThreads[strings.TrimSpace(t.ThreadID)]; ok {
-			runStatus = "running"
-			runError = ""
+			runStatus, runError = activeThreadEffectiveRunState(t.RunStatus, t.RunError)
 		}
 		workingDir := strings.TrimSpace(t.WorkingDir)
 		if workingDir == "" {

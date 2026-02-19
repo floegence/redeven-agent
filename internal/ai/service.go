@@ -859,6 +859,7 @@ func (s *Service) prepareRun(meta *session.Meta, runID string, req RunStartReque
 		s.mu.Unlock()
 		return nil, err
 	}
+	finalizingThreadStatePublished := false
 	r := newRun(runOptions{
 		Log:                 s.log,
 		StateDir:            s.stateDir,
@@ -883,6 +884,25 @@ func (s *Service) prepareRun(meta *session.Meta, runID string, req RunStartReque
 		PersistOpTimeout:    persistTO,
 		SkillManager:        s.skillManager,
 		OnStreamEvent: func(ev any) {
+			if !finalizingThreadStatePublished && isFinalizingLifecycleStreamEvent(ev) {
+				finalizingThreadStatePublished = true
+				uctx, cancel := context.WithTimeout(context.Background(), persistTO)
+				_ = db.UpdateThreadRunState(
+					uctx,
+					endpointID,
+					threadID,
+					string(RunStateFinalizing),
+					"",
+					"",
+					"",
+					"",
+					metaRef.UserPublicID,
+					metaRef.UserEmail,
+				)
+				cancel()
+				s.broadcastThreadState(endpointID, threadID, runID, string(RunStateFinalizing), "")
+				s.broadcastThreadSummary(endpointID, threadID)
+			}
 			s.broadcastStreamEvent(endpointID, threadID, runID, ev)
 		},
 		Writer: w,
@@ -1532,6 +1552,26 @@ func deriveThreadRunState(endReason string, finalizationReason string, runErr er
 			}
 		}
 		return "failed", "AI run ended unexpectedly."
+	}
+}
+
+func isFinalizingLifecycleStreamEvent(ev any) bool {
+	switch e := ev.(type) {
+	case streamEventLifecyclePhase:
+		return normalizeLifecyclePhase(e.Phase) == "finalizing"
+	case *streamEventLifecyclePhase:
+		if e == nil {
+			return false
+		}
+		return normalizeLifecyclePhase(e.Phase) == "finalizing"
+	case map[string]any:
+		eventType := strings.TrimSpace(strings.ToLower(fmt.Sprint(e["type"])))
+		if eventType != "lifecycle-phase" {
+			return false
+		}
+		return normalizeLifecyclePhase(fmt.Sprint(e["phase"])) == "finalizing"
+	default:
+		return false
 	}
 }
 

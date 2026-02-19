@@ -101,6 +101,8 @@ function statusDotClass(status: ThreadRunStatus): string {
       return 'bg-amber-500';
     case 'recovering':
       return 'bg-sky-500';
+    case 'finalizing':
+      return 'bg-indigo-500';
     case 'success':
       return 'bg-emerald-500';
     case 'failed':
@@ -121,6 +123,7 @@ function statusLabel(status: ThreadRunStatus): string {
     case 'waiting_approval': return 'Waiting Approval';
     case 'waiting_user': return 'Waiting Input';
     case 'recovering': return 'Recovering';
+    case 'finalizing': return 'Finalizing';
     case 'success': return 'Done';
     case 'failed': return 'Failed';
     case 'timed_out': return 'Timed Out';
@@ -145,6 +148,7 @@ function normalizeThreadStatus(raw: string | null | undefined): ThreadRunStatus 
     status === 'waiting_approval' ||
     status === 'waiting_user' ||
     status === 'recovering' ||
+    status === 'finalizing' ||
     status === 'success' ||
     status === 'failed' ||
     status === 'canceled' ||
@@ -156,7 +160,7 @@ function normalizeThreadStatus(raw: string | null | undefined): ThreadRunStatus 
 }
 
 function isActiveThreadStatus(status: ThreadRunStatus): boolean {
-  return status === 'accepted' || status === 'running' || status === 'waiting_approval' || status === 'waiting_user' || status === 'recovering';
+  return status === 'accepted' || status === 'running' || status === 'waiting_approval' || status === 'waiting_user' || status === 'recovering' || status === 'finalizing';
 }
 
 function normalizeThreadAgePreset(value: string): ThreadAgePreset {
@@ -363,8 +367,12 @@ export function AIChatSidebar() {
   };
 
   const managerStatusFor = (thread: ThreadView): ThreadRunStatus => {
-    if (ctx.isThreadRunning(thread.thread_id)) return 'running';
-    return normalizeThreadStatus(thread.run_status);
+    const persisted = normalizeThreadStatus(thread.run_status);
+    if (!ctx.isThreadRunning(thread.thread_id)) return persisted;
+    if (persisted === 'accepted' || persisted === 'waiting_approval' || persisted === 'recovering' || persisted === 'finalizing') {
+      return persisted;
+    }
+    return 'running';
   };
 
   const managerFilteredThreads = createMemo(() => {
@@ -857,22 +865,12 @@ function ThreadCard(props: {
   onDelete: () => void;
 }) {
   const status = (): ThreadRunStatus => {
-    if (props.isRunning) return 'running';
-    const raw = String(props.thread.run_status ?? '').trim().toLowerCase();
-    if (
-      raw === 'accepted' ||
-      raw === 'running' ||
-      raw === 'waiting_approval' ||
-      raw === 'recovering' ||
-      raw === 'waiting_user' ||
-      raw === 'success' ||
-      raw === 'failed' ||
-      raw === 'canceled' ||
-      raw === 'timed_out'
-    ) {
-      return raw as ThreadRunStatus;
+    const persisted = normalizeThreadStatus(props.thread.run_status);
+    if (!props.isRunning) return persisted;
+    if (persisted === 'accepted' || persisted === 'waiting_approval' || persisted === 'recovering' || persisted === 'finalizing') {
+      return persisted;
     }
-    return 'idle';
+    return 'running';
   };
 
   const title = () => props.thread.title?.trim() || 'New chat';
