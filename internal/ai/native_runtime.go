@@ -2367,6 +2367,13 @@ mainLoop:
 				"mode":                strings.TrimSpace(req.Options.Mode),
 			})
 			if !gatePassed {
+				r.emitLifecyclePhase("finalizing", map[string]any{
+					"reason":                "completion_gate_rejected",
+					"step_index":            step,
+					"gate_reason":           gateReason,
+					"todo_open_count":       state.TodoOpenCount,
+					"todo_tracking_enabled": state.TodoTrackingEnabled,
+				})
 				if gateReason == "empty_result" {
 					emptyTaskCompleteRejects++
 					r.persistRunEvent("completion.empty_result_retry", RealtimeStreamKindLifecycle, map[string]any{
@@ -2524,6 +2531,12 @@ mainLoop:
 		}
 
 		noToolRounds++
+		r.emitLifecyclePhase("finalizing", map[string]any{
+			"reason":             "waiting_explicit_completion",
+			"step_index":         step,
+			"no_tool_rounds":     noToolRounds,
+			"max_no_tool_rounds": maxNoToolRounds,
+		})
 		if noToolRounds <= maxNoToolRounds {
 			if noToolRounds == maxNoToolRounds {
 				exceptionOverlay = fmt.Sprintf("[COMPLETION REQUIRED] You have produced no-tool rounds (%d/%d). Unless an external blocker exists, finalize with task_complete now after summarizing verified outcomes.", noToolRounds, maxNoToolRounds)
