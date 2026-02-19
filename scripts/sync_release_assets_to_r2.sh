@@ -82,6 +82,8 @@ EXPECTED_FILES=(
   'SHA256SUMS'
   'SHA256SUMS.sig'
   'SHA256SUMS.pem'
+  'knowledge_bundle.manifest.json'
+  'knowledge_bundle.sha256'
 )
 
 log_info 'Downloading release assets from GitHub'
@@ -94,7 +96,9 @@ for attempt in 1 2 3 4 5; do
     --pattern 'redeven_*.tar.gz' \
     --pattern 'SHA256SUMS' \
     --pattern 'SHA256SUMS.sig' \
-    --pattern 'SHA256SUMS.pem'; then
+    --pattern 'SHA256SUMS.pem' \
+    --pattern 'knowledge_bundle.manifest.json' \
+    --pattern 'knowledge_bundle.sha256'; then
     DOWNLOAD_OK=1
     break
   fi
