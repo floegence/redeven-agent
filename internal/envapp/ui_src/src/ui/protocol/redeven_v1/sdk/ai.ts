@@ -2,7 +2,7 @@ import type { StreamEvent } from '../../../chat';
 
 export type AIRealtimeEventType = 'stream_event' | 'thread_state' | 'transcript_message' | 'thread_summary';
 
-export type AIThreadRunStatus = 'idle' | 'accepted' | 'running' | 'waiting_approval' | 'recovering' | 'waiting_user' | 'success' | 'failed' | 'canceled' | 'timed_out';
+export type AIThreadRunStatus = 'idle' | 'accepted' | 'running' | 'waiting_approval' | 'recovering' | 'finalizing' | 'waiting_user' | 'success' | 'failed' | 'canceled' | 'timed_out';
 
 export type AIActiveRun = {
   threadId: string;

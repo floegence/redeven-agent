@@ -27,7 +27,7 @@ export type SettingsResponse = Readonly<{
   ai: any | null;
 }>;
 
-export type ThreadRunStatus = 'idle' | 'accepted' | 'running' | 'waiting_approval' | 'recovering' | 'waiting_user' | 'success' | 'failed' | 'canceled' | 'timed_out';
+export type ThreadRunStatus = 'idle' | 'accepted' | 'running' | 'waiting_approval' | 'recovering' | 'finalizing' | 'waiting_user' | 'success' | 'failed' | 'canceled' | 'timed_out';
 
 export type WaitingPromptView = Readonly<{
   prompt_id: string;
@@ -125,6 +125,7 @@ function normalizeThreadRunStatus(raw: string | null | undefined): ThreadRunStat
     status === 'running' ||
     status === 'waiting_approval' ||
     status === 'recovering' ||
+    status === 'finalizing' ||
     status === 'waiting_user' ||
     status === 'success' ||
     status === 'failed' ||
@@ -150,7 +151,7 @@ function normalizeWaitingPrompt(raw: any): WaitingPromptView | null {
 }
 
 function isActiveRunStatus(status: ThreadRunStatus): boolean {
-  return status === 'accepted' || status === 'running' || status === 'waiting_approval' || status === 'recovering';
+  return status === 'accepted' || status === 'running' || status === 'waiting_approval' || status === 'recovering' || status === 'finalizing';
 }
 
 // ---- Context value type ----
