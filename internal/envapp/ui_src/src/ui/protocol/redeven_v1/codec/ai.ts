@@ -191,6 +191,7 @@ export function fromWireAIEventNotify(payload: wire_ai_event_notify): AIRealtime
     rawStatus === 'running' ||
     rawStatus === 'waiting_approval' ||
     rawStatus === 'recovering' ||
+    rawStatus === 'finalizing' ||
     rawStatus === 'waiting_user' ||
     rawStatus === 'success' ||
     rawStatus === 'failed' ||

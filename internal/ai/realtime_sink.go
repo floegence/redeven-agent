@@ -301,7 +301,7 @@ func lifecyclePhaseForStatus(status string, runErr string) RealtimeLifecyclePhas
 	s := NormalizeRunState(status)
 	runErr = strings.TrimSpace(runErr)
 	switch s {
-	case RunStateAccepted, RunStateRunning, RunStateWaitingApproval, RunStateRecovering:
+	case RunStateAccepted, RunStateRunning, RunStateWaitingApproval, RunStateRecovering, RunStateFinalizing:
 		if s == RunStateAccepted || s == RunStateRunning {
 			return RealtimePhaseStart
 		}
@@ -457,8 +457,7 @@ func (s *Service) broadcastThreadSummary(endpointID string, threadID string) {
 
 	runStatus, runError := normalizeThreadRunState(th.RunStatus, th.RunError)
 	if activeRunID != "" {
-		runStatus = "running"
-		runError = ""
+		runStatus, runError = activeThreadEffectiveRunState(th.RunStatus, th.RunError)
 	}
 
 	ev := RealtimeEvent{

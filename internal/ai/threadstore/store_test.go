@@ -121,6 +121,7 @@ func TestStore_ResetStaleActiveThreadRunStates(t *testing.T) {
 		{threadID: "th_running", status: "running", wantStatus: "canceled"},
 		{threadID: "th_waiting_approval", status: "waiting_approval", wantStatus: "canceled"},
 		{threadID: "th_recovering", status: "recovering", wantStatus: "canceled"},
+		{threadID: "th_finalizing", status: "finalizing", wantStatus: "canceled"},
 		{threadID: "th_waiting_user", status: "waiting_user", wantStatus: "waiting_user"},
 		{threadID: "th_success", status: "success", wantStatus: "success"},
 		{threadID: "th_failed", status: "failed", runError: "boom", wantStatus: "failed", wantRunErr: "boom"},
@@ -139,8 +140,8 @@ func TestStore_ResetStaleActiveThreadRunStates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResetStaleActiveThreadRunStates: %v", err)
 	}
-	if affected != 4 {
-		t.Fatalf("affected=%d, want 4", affected)
+	if affected != 5 {
+		t.Fatalf("affected=%d, want 5", affected)
 	}
 
 	for _, tc := range cases {
