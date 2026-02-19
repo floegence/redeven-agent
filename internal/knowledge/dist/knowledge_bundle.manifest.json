@@ -1,0 +1,17 @@
+{
+  "schema_version": 2,
+  "built_at": "2026-02-19T00:00:00Z",
+  "knowledge_id": "redeven-agent-core",
+  "allowed_repos": [
+    "floe-webapp",
+    "floeterm",
+    "flowersec",
+    "redeven-agent"
+  ],
+  "card_count": 5,
+  "bundle_sha256": "43c580279accf9397ec9ef8faafdfaba1a1ee822db40de563e19bac226769afe",
+  "cards_sha256": "e6432a4434a3319f86f060e29da0773abdd20f9d0f73c1d8a4110fd9e1c75a98",
+  "topic_index_sha256": "dfd7c78e54aa4a5c0db5dc3c5cd00b6cc91ba2443c417587f3d2d37a03f58d49",
+  "code_index_sha256": "7b58a2e3fe3c2f8461159ef75ad93598478471931555efceed2d5115bc2b7b04",
+  "source_sha256": "7479132fd87c39069bc100d3a250736dd5bb49f35cf9e651a52fd9cb7d7c80dd"
+}
