@@ -133,9 +133,9 @@ Multi-environment mode uses isolated state per environment:
 
 ## Operations and Release
 
-- GitHub Release is the source of truth for versioned binaries and checksums.
-- On `v*` tag push, `Release Agent` publishes GitHub Release assets, then `.github/workflows/sync-release-assets-to-r2.yml` auto-runs via `workflow_run` and mirrors assets to Cloudflare R2 (`agent-install-pkg/<tag>/...`).
-- After mirror integrity verification succeeds, the workflow deploys the version-manifest Worker for `https://version.agent.example.invalid/v1/manifest.json` (no manifest bucket required).
+- GitHub Release remains the source of truth for versioned binaries and checksums.
+- On `v*` tag push, `Release Agent` publishes GitHub Release assets and then sends a `repository_dispatch` event to the Private Ops repository.
+- Private Ops workflow handles Cloudflare R2 mirror sync (`agent-install-pkg/<tag>/...`) and version-manifest Worker deployment for `https://version.agent.example.invalid/v1/manifest.json`.
 - `install.sh` downloads from GitHub first, then falls back to Cloudflare mirror.
 - Installer worker deployment (`example.invalid/install.sh`) stays on Cloudflare Workers Builds and is triggered only via the `release` branch flow.
 
