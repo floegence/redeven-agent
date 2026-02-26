@@ -106,9 +106,10 @@ The installer script source of truth is in this repository:
 - Primary: GitHub Release assets
 - Fallback: Cloudflare package mirror (`<package-mirror-host>`)
 
-## Install worker deployment (separate from package mirror)
+## Install worker deployment (automatic on tag)
 
-Cloudflare Worker deployment for `<install-host>/install.sh` is managed by **Cloudflare Workers Builds** (GitHub integration), not by GitHub Actions.
+Cloudflare Worker deployment for `<install-host>/install.sh` is managed by **Cloudflare Workers Builds** (GitHub integration).
+GitHub Actions automatically updates the `release` branch to the tagged commit during the release workflow, and Workers Builds deploys from that branch.
 
 Worker files:
 
@@ -126,23 +127,18 @@ Configure the Worker build in Cloudflare Dashboard:
 4. Build command: `node generate-worker.js`.
 5. Deploy command: `npx wrangler deploy --config wrangler.toml`.
 
-Also ensure `release` branch exists on origin (run once if needed):
-
-```bash
-git push origin origin/main:refs/heads/release
-```
-
 This setup ensures merges into `main` do not deploy the install worker.
 
-### Tag-driven install worker rollout (when installer changed)
+### Tag-driven install worker rollout (automatic)
 
-Use this only when installer/worker source changes need rollout:
+On every `v*` tag push:
 
-```bash
-./scripts/publish_install_worker_release_branch.sh vX.Y.Z
-```
+1. `.github/workflows/release.yml` runs.
+2. The workflow runs `./scripts/publish_install_worker_release_branch.sh "${GITHUB_REF_NAME}" release`.
+3. `release` is force-updated to the tagged commit.
+4. Cloudflare Workers Builds deploys from `release`.
 
-This force-updates `release` to the tag commit and triggers Cloudflare Workers Builds.
+No manual approval step is required in the normal release path.
 
 ## Local verification example
 
