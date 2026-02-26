@@ -20,8 +20,6 @@ const (
 
 	RunObjectiveModeReplace  = "replace"
 	RunObjectiveModeContinue = "continue"
-
-	modelRunPolicyMaxAttempts = 2
 )
 
 type runPolicyDecision struct {
@@ -77,11 +75,9 @@ func classifyRunPolicy(userInput string, attachments []RunAttachmentIn, openGoal
 	}
 
 	if classifyByModel != nil {
-		for attempt := 0; attempt < modelRunPolicyMaxAttempts; attempt++ {
-			decision, err := classifyByModel()
-			if err == nil {
-				return normalizeModelRunPolicyDecision(decision)
-			}
+		decision, err := classifyByModel()
+		if err == nil {
+			return normalizeModelRunPolicyDecision(decision)
 		}
 	}
 
