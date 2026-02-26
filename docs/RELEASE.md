@@ -92,7 +92,7 @@ Private Ops workflow responsibilities:
 
 Manifest endpoint served by Worker:
 
-- URL: `https://version.agent.example.invalid/v1/manifest.json`
+- URL shape: `https://<manifest-host>/v1/manifest.json`
 - Worker source of truth is in the Private Ops repository.
 
 ## Install script delivery
@@ -104,11 +104,11 @@ The installer script source of truth is in this repository:
 `install.sh` download strategy:
 
 - Primary: GitHub Release assets
-- Fallback: Cloudflare package mirror (`agent.package.example.invalid`)
+- Fallback: Cloudflare package mirror (`<package-mirror-host>`)
 
 ## Install worker deployment (separate from package mirror)
 
-Cloudflare Worker deployment for `example.invalid/install.sh` is managed by **Cloudflare Workers Builds** (GitHub integration), not by GitHub Actions.
+Cloudflare Worker deployment for `<install-host>/install.sh` is managed by **Cloudflare Workers Builds** (GitHub integration), not by GitHub Actions.
 
 Worker files:
 

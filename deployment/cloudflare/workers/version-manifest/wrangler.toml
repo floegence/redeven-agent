@@ -2,6 +2,8 @@ name = "redeven-agent-version-manifest"
 main = "src/worker.mjs"
 compatibility_date = "2024-01-01"
 
+# Public repository template.
+# Use example.invalid placeholders only; production routes must be injected by private ops.
 [[routes]]
 pattern = "version.agent.example.invalid/v1/manifest.json"
 zone_name = "example.invalid"
