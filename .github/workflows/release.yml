@@ -135,6 +135,9 @@ jobs:
             dist/knowledge_bundle.manifest.json
             dist/knowledge_bundle.sha256
 
+      - name: Publish install worker release branch
+        run: ./scripts/publish_install_worker_release_branch.sh "${GITHUB_REF_NAME}" release
+
   notify_private_ops:
     name: Notify Private Ops
     needs: release

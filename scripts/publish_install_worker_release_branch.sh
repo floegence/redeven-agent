@@ -2,6 +2,7 @@
 set -euo pipefail
 
 # Publish a tagged commit to the dedicated Cloudflare production branch.
+# This is called automatically by .github/workflows/release.yml on every v* tag.
 # Cloudflare Workers Builds should watch this branch instead of main.
 
 usage() {
