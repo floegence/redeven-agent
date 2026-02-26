@@ -30,7 +30,9 @@ if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
     exit 1
 fi
 
-git fetch origin --tags --prune
+# GitHub Actions tag checkouts may materialize tags differently from remote objects.
+# Force-sync tags to avoid "would clobber existing tag" fetch failures.
+git fetch origin --tags --prune --force
 
 if ! git rev-parse -q --verify "${TAG}^{commit}" >/dev/null; then
     echo "[ERROR] Tag not found: $TAG"
