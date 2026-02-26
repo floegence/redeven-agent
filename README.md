@@ -54,6 +54,14 @@ Notes:
 - `internal/**/dist/` is generated and embedded via Go `embed`.
 - Generated `dist` assets are not checked into git.
 
+### Enable local guardrails (recommended)
+
+```bash
+./scripts/install_git_hooks.sh
+```
+
+This enables the repository pre-commit hook that runs `scripts/open_source_hygiene_check.sh --staged`.
+
 ### Bootstrap and run
 
 ```bash
@@ -135,9 +143,9 @@ Multi-environment mode uses isolated state per environment:
 
 - GitHub Release remains the source of truth for versioned binaries and checksums.
 - On `v*` tag push, `Release Agent` publishes GitHub Release assets and then sends a `repository_dispatch` event to the Private Ops repository.
-- Private Ops workflow handles Cloudflare R2 mirror sync (`agent-install-pkg/<tag>/...`) and version-manifest Worker deployment for `https://version.agent.example.invalid/v1/manifest.json`.
+- Private Ops workflow handles Cloudflare R2 mirror sync (`agent-install-pkg/<tag>/...`) and version-manifest Worker deployment for `https://<manifest-host>/v1/manifest.json`.
 - `install.sh` downloads from GitHub first, then falls back to Cloudflare mirror.
-- Installer worker deployment (`example.invalid/install.sh`) stays on Cloudflare Workers Builds and is triggered only via the `release` branch flow.
+- Installer worker deployment (`https://<install-host>/install.sh`) stays on Cloudflare Workers Builds and is triggered only via the `release` branch flow.
 
 Release details:
 
