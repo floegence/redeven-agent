@@ -107,6 +107,7 @@ const MAX_PREVIEW_BYTES = 5 * 1024 * 1024;
 const SNIFF_BYTES = 64 * 1024;
 const FAB_SIZE = 44;
 const EDGE_MARGIN = 12;
+const FILE_BROWSER_MENU_ELEVATION_CLASS = 'redeven-chat-fab-browser-open';
 
 // ---- component ----
 
@@ -152,6 +153,16 @@ export function ChatFileBrowserFAB(props: ChatFileBrowserFABProps) {
     setFiles([]);
     setResetSeq((n) => n + 1);
     void loadPathChain(wd);
+  });
+
+  // Keep the file-browser context menu above the floating window layer.
+  createEffect(() => {
+    if (typeof document === 'undefined') return;
+    if (browserOpen()) {
+      document.body.classList.add(FILE_BROWSER_MENU_ELEVATION_CLASS);
+    } else {
+      document.body.classList.remove(FILE_BROWSER_MENU_ELEVATION_CLASS);
+    }
   });
 
   async function loadDirOnce(path: string, seq: number): Promise<'ok' | 'error'> {
@@ -278,7 +289,12 @@ export function ChatFileBrowserFAB(props: ChatFileBrowserFABProps) {
     }
   }
 
-  onCleanup(() => cleanupPreview());
+  onCleanup(() => {
+    if (typeof document !== 'undefined') {
+      document.body.classList.remove(FILE_BROWSER_MENU_ELEVATION_CLASS);
+    }
+    cleanupPreview();
+  });
 
   // -- Snap to nearest edge of the container --
   function snapToEdge(left: number, top: number) {
