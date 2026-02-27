@@ -862,21 +862,249 @@ pre.chat-md-code-block code { display: block; padding: 0.875rem 1rem; font-size:
   padding: 0.2rem 0.48rem;
 }
 
-.chat-tool-apply-patch-files {
+.chat-tool-apply-patch-workspace {
   display: grid;
-  gap: 0.34rem;
-  padding: 0 0.8rem 0.5rem;
+  grid-template-columns: minmax(12rem, 18rem) minmax(0, 1fr);
+  gap: 0.62rem;
+  padding: 0 0.8rem 0.62rem;
 }
 
-.chat-tool-apply-patch-file-row {
+@media (max-width: 880px) {
+  .chat-tool-apply-patch-workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.chat-tool-apply-patch-sidebar {
+  border: 1px solid color-mix(in srgb, var(--border) 74%, transparent);
+  border-radius: 0.58rem;
+  background: color-mix(in srgb, var(--background) 84%, transparent);
+  padding: 0.46rem;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
   gap: 0.48rem;
+}
+
+.chat-tool-apply-patch-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.32rem;
+}
+
+.chat-tool-apply-patch-filter-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.34rem;
+  border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+  border-radius: 9999px;
+  background: color-mix(in srgb, var(--background) 88%, transparent);
+  color: var(--muted-foreground);
+  padding: 0.16rem 0.42rem;
+  font-size: 0.62rem;
+  cursor: pointer;
+  transition: border-color 120ms ease, background-color 120ms ease, color 120ms ease;
+}
+
+.chat-tool-apply-patch-filter-btn:hover {
+  border-color: color-mix(in srgb, var(--primary) 24%, var(--border));
+  color: var(--foreground);
+}
+
+.chat-tool-apply-patch-filter-btn-active {
+  border-color: color-mix(in srgb, var(--primary) 30%, var(--border));
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  color: var(--primary);
+}
+
+.chat-tool-apply-patch-filter-count {
+  border-radius: 9999px;
+  border: 1px solid color-mix(in srgb, var(--border) 74%, transparent);
+  padding: 0.08rem 0.32rem;
+  font-size: 0.6rem;
+  line-height: 1;
+}
+
+.chat-tool-apply-patch-file-list {
+  display: grid;
+  gap: 0.34rem;
+  max-height: 14.4rem;
+  overflow-y: auto;
+  padding-right: 0.1rem;
+}
+
+.chat-tool-apply-patch-file-item {
+  border: 1px solid color-mix(in srgb, var(--border) 74%, transparent);
+  border-radius: 0.52rem;
+  background: color-mix(in srgb, var(--background) 90%, transparent);
+  padding: 0.38rem 0.44rem;
+  display: grid;
+  gap: 0.22rem;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.chat-tool-apply-patch-file-item:hover {
+  border-color: color-mix(in srgb, var(--primary) 22%, var(--border));
+  background: color-mix(in srgb, var(--muted) 30%, transparent);
+}
+
+.chat-tool-apply-patch-file-item-active {
+  border-color: color-mix(in srgb, var(--primary) 32%, var(--border));
+  background: color-mix(in srgb, var(--primary) 11%, transparent);
+}
+
+.chat-tool-apply-patch-file-item-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+
+.chat-tool-apply-patch-file-item-metrics {
+  font-size: 0.61rem;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+
+.chat-tool-apply-patch-file-item-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.66rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  color: color-mix(in srgb, var(--foreground) 88%, var(--muted-foreground));
+}
+
+.chat-tool-apply-patch-file-item-hunks {
+  font-size: 0.6rem;
+  color: var(--muted-foreground);
+}
+
+.chat-tool-apply-patch-detail-panel {
   border: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
   border-radius: 0.58rem;
-  background: color-mix(in srgb, var(--background) 82%, transparent);
-  padding: 0.35rem 0.46rem;
+  background: color-mix(in srgb, var(--background) 84%, transparent);
+  padding: 0.44rem;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.chat-tool-apply-patch-detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.chat-tool-apply-patch-detail-main {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.42rem;
+  flex-wrap: wrap;
+}
+
+.chat-tool-apply-patch-detail-path {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.69rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  color: color-mix(in srgb, var(--foreground) 90%, var(--muted-foreground));
+}
+
+.chat-tool-apply-patch-detail-metrics {
+  font-size: 0.62rem;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+
+.chat-tool-apply-patch-copy-inline {
+  flex-shrink: 0;
+}
+
+.chat-tool-apply-patch-rename-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.64rem;
+  color: var(--muted-foreground);
+  min-width: 0;
+}
+
+.chat-tool-apply-patch-rename-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.chat-tool-apply-patch-rename-arrow {
+  opacity: 0.72;
+}
+
+.chat-tool-apply-patch-detail-code {
+  border: 1px solid color-mix(in srgb, var(--border) 74%, transparent);
+  border-radius: 0.52rem;
+  background: color-mix(in srgb, var(--background) 90%, transparent);
+  overflow: auto;
+  max-height: 16.2rem;
+}
+
+.chat-tool-apply-patch-detail-line {
+  display: grid;
+  grid-template-columns: 3.1rem 3.1rem minmax(0, 1fr);
+  align-items: center;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 62%, transparent);
+}
+
+.chat-tool-apply-patch-detail-line:last-child {
+  border-bottom: none;
+}
+
+.chat-tool-apply-patch-detail-line-add {
+  background: color-mix(in srgb, rgb(16 185 129) 11%, transparent);
+}
+
+.chat-tool-apply-patch-detail-line-del {
+  background: color-mix(in srgb, var(--destructive) 10%, transparent);
+}
+
+.chat-tool-apply-patch-detail-line-meta {
+  background: color-mix(in srgb, var(--muted) 38%, transparent);
+}
+
+.chat-tool-apply-patch-detail-line-num {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.62rem;
+  line-height: 1.4;
+  color: var(--muted-foreground);
+  padding: 0.16rem 0.44rem;
+  border-right: 1px solid color-mix(in srgb, var(--border) 62%, transparent);
+  text-align: right;
+}
+
+.chat-tool-apply-patch-detail-line-text {
+  display: block;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.67rem;
+  line-height: 1.45;
+  white-space: pre;
+  padding: 0.16rem 0.5rem;
+}
+
+.chat-tool-apply-patch-detail-empty {
+  border: 1px dashed color-mix(in srgb, var(--border) 72%, transparent);
+  border-radius: 0.52rem;
+  background: color-mix(in srgb, var(--background) 90%, transparent);
+  color: var(--muted-foreground);
+  font-size: 0.67rem;
+  padding: 0.58rem 0.62rem;
 }
 
 .chat-tool-apply-patch-change {
@@ -917,27 +1145,6 @@ pre.chat-md-code-block code { display: block; padding: 0.875rem 1rem; font-size:
   background: rgb(167 139 250 / 0.16);
 }
 
-.chat-tool-apply-patch-file-path {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 0.68rem;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  color: color-mix(in srgb, var(--foreground) 88%, var(--muted-foreground));
-}
-
-.chat-tool-apply-patch-file-metrics {
-  font-size: 0.61rem;
-  color: var(--muted-foreground);
-  white-space: nowrap;
-}
-
-.chat-tool-apply-patch-more-files {
-  font-size: 0.64rem;
-  color: var(--muted-foreground);
-  text-align: center;
-}
 
 .chat-tool-apply-patch-preview-wrap {
   margin: 0 0.8rem 0.66rem;
