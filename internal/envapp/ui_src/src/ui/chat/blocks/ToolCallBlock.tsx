@@ -1446,6 +1446,19 @@ function parseApplyPatchRenderedLines(lines: string[]): ApplyPatchRenderedLine[]
 
   for (let index = 0; index < lines.length; index += 1) {
     const line = String(lines[index] ?? '');
+    const trimmed = line.trim();
+
+    // Skip begin_patch file-level headers — already shown in tab + detail header
+    if (
+      trimmed.startsWith('*** Add File: ') ||
+      trimmed.startsWith('*** Delete File: ') ||
+      trimmed.startsWith('*** Update File: ') ||
+      trimmed.startsWith('*** Move to: ') ||
+      trimmed === '*** Begin Patch' ||
+      trimmed === '*** End Patch'
+    ) {
+      continue;
+    }
 
     if (line.startsWith('@@')) {
       const match = line.match(hunkHeaderRE);
