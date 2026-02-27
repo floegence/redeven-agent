@@ -877,12 +877,38 @@ type ApplyPatchFileSummary = {
 };
 
 type ApplyPatchFormat = 'begin_patch' | 'unified_diff' | 'unknown';
+type ApplyPatchFileFilter = 'all' | ApplyPatchChangeKind;
+
+type ApplyPatchFileSection = {
+  oldPath: string;
+  newPath: string;
+  change: ApplyPatchChangeKind;
+  lines: string[];
+};
+
+type ApplyPatchFileDetail = {
+  id: string;
+  summary: ApplyPatchFileSummary;
+  lines: string[];
+  sectionText: string;
+};
+
+type ApplyPatchLineKind = 'context' | 'add' | 'del' | 'meta';
+
+type ApplyPatchRenderedLine = {
+  key: string;
+  text: string;
+  oldLine: number | null;
+  newLine: number | null;
+  kind: ApplyPatchLineKind;
+};
 
 type ApplyPatchDisplay = {
   patchText: string;
   inputFormat: ApplyPatchFormat;
   normalizedFormat: ApplyPatchFormat;
   files: ApplyPatchFileSummary[];
+  details: ApplyPatchFileDetail[];
   filesChanged: number;
   hunks: number;
   additions: number;
@@ -893,8 +919,8 @@ const WEB_SEARCH_UNKNOWN_DOMAIN_KEY = 'domain:unknown';
 const WEB_SEARCH_DEFAULT_DOMAIN_KEY = 'all';
 const WEB_SEARCH_VISIBLE_RESULTS = 5;
 const KNOWLEDGE_VISIBLE_MATCHES = 4;
-const APPLY_PATCH_VISIBLE_FILES = 8;
-const APPLY_PATCH_PREVIEW_LINES = 24;
+const APPLY_PATCH_SECTION_PREVIEW_LINES = 220;
+const APPLY_PATCH_RAW_PREVIEW_LINES = 40;
 const webSearchIntegerFormatter = new Intl.NumberFormat('en-US');
 const knowledgeIntegerFormatter = new Intl.NumberFormat('en-US');
 const applyPatchIntegerFormatter = new Intl.NumberFormat('en-US');
@@ -1167,6 +1193,330 @@ function parseApplyPatchFilesFromResult(value: unknown): ApplyPatchFileSummary[]
   return files;
 }
 
+function normalizeApplyPatchChange(value: string): ApplyPatchChangeKind {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (normalized === 'added' || normalized === 'modified' || normalized === 'deleted' || normalized === 'renamed') {
+    return normalized;
+  }
+  return 'modified';
+}
+
+function summarizeApplyPatchSectionLines(lines: string[]): { hunks: number; additions: number; deletions: number } {
+  let hunks = 0;
+  let additions = 0;
+  let deletions = 0;
+  for (const line of lines) {
+    if (line.startsWith('@@')) {
+      hunks += 1;
+      continue;
+    }
+    if (line.startsWith('+') && !line.startsWith('+++')) {
+      additions += 1;
+      continue;
+    }
+    if (line.startsWith('-') && !line.startsWith('---')) {
+      deletions += 1;
+    }
+  }
+  if ((additions > 0 || deletions > 0) && hunks === 0) {
+    hunks = 1;
+  }
+  return { hunks, additions, deletions };
+}
+
+function createApplyPatchSummaryFromSection(section: ApplyPatchFileSection): ApplyPatchFileSummary {
+  const summary = createApplyPatchFileSummary(section.change, section.oldPath, section.newPath);
+  const metrics = summarizeApplyPatchSectionLines(section.lines);
+  summary.hunks = metrics.hunks;
+  summary.additions = metrics.additions;
+  summary.deletions = metrics.deletions;
+  return summary;
+}
+
+function parseUnifiedPatchSections(patchText: string): ApplyPatchFileSection[] {
+  const lines = normalizePatchTextForDisplay(patchText).split('\n');
+  const sections: ApplyPatchFileSection[] = [];
+  let current: ApplyPatchFileSection | null = null;
+
+  const pushCurrent = () => {
+    if (!current) return;
+    sections.push(current);
+    current = null;
+  };
+
+  for (const rawLine of lines) {
+    if (rawLine.startsWith('diff --git ')) {
+      pushCurrent();
+      const parts = rawLine.trim().split(/\s+/);
+      current = {
+        oldPath: trimDiffPathPrefix(parts[2] ?? ''),
+        newPath: trimDiffPathPrefix(parts[3] ?? ''),
+        change: 'modified',
+        lines: [rawLine],
+      };
+      continue;
+    }
+    if (!current) continue;
+    current.lines.push(rawLine);
+    if (rawLine.startsWith('new file mode ')) {
+      current.change = 'added';
+      continue;
+    }
+    if (rawLine.startsWith('deleted file mode ')) {
+      current.change = 'deleted';
+      continue;
+    }
+    if (rawLine.startsWith('rename from ')) {
+      current.change = 'renamed';
+      current.oldPath = parseDiffPathFromHeader(rawLine.slice('rename from '.length));
+      continue;
+    }
+    if (rawLine.startsWith('rename to ')) {
+      current.change = 'renamed';
+      current.newPath = parseDiffPathFromHeader(rawLine.slice('rename to '.length));
+      continue;
+    }
+    if (rawLine.startsWith('--- ')) {
+      const oldPath = parseDiffPathFromHeader(rawLine.slice(4));
+      if (oldPath) {
+        current.oldPath = oldPath;
+        if (oldPath === '/dev/null') {
+          current.change = 'added';
+        }
+      }
+      continue;
+    }
+    if (rawLine.startsWith('+++ ')) {
+      const newPath = parseDiffPathFromHeader(rawLine.slice(4));
+      if (newPath) {
+        current.newPath = newPath;
+        if (newPath === '/dev/null') {
+          current.change = 'deleted';
+        }
+      }
+    }
+  }
+
+  pushCurrent();
+  return sections;
+}
+
+function parseBeginPatchSections(patchText: string): ApplyPatchFileSection[] {
+  const lines = normalizePatchTextForDisplay(patchText).split('\n');
+  const sections: ApplyPatchFileSection[] = [];
+  let index = 0;
+
+  while (index < lines.length) {
+    const line = String(lines[index] ?? '');
+    const trimmed = line.trim();
+    if (!trimmed || trimmed === '*** Begin Patch') {
+      index += 1;
+      continue;
+    }
+    if (trimmed === '*** End Patch') {
+      break;
+    }
+
+    if (trimmed.startsWith('*** Add File: ')) {
+      const newPath = trimmed.slice('*** Add File: '.length).trim();
+      const section: ApplyPatchFileSection = {
+        oldPath: '/dev/null',
+        newPath,
+        change: 'added',
+        lines: [line],
+      };
+      index += 1;
+      while (index < lines.length) {
+        const bodyLine = String(lines[index] ?? '');
+        const bodyTrimmed = bodyLine.trim();
+        if (isCodexPatchTopLevelHeader(bodyTrimmed)) break;
+        section.lines.push(bodyLine);
+        index += 1;
+      }
+      sections.push(section);
+      continue;
+    }
+
+    if (trimmed.startsWith('*** Delete File: ')) {
+      const oldPath = trimmed.slice('*** Delete File: '.length).trim();
+      sections.push({
+        oldPath,
+        newPath: '/dev/null',
+        change: 'deleted',
+        lines: [line],
+      });
+      index += 1;
+      continue;
+    }
+
+    if (trimmed.startsWith('*** Update File: ')) {
+      const oldPath = trimmed.slice('*** Update File: '.length).trim();
+      const section: ApplyPatchFileSection = {
+        oldPath,
+        newPath: oldPath,
+        change: 'modified',
+        lines: [line],
+      };
+      index += 1;
+      if (index < lines.length) {
+        const moveLine = String(lines[index] ?? '');
+        const moveTrimmed = moveLine.trim();
+        if (moveTrimmed.startsWith('*** Move to: ')) {
+          section.change = 'renamed';
+          section.newPath = moveTrimmed.slice('*** Move to: '.length).trim();
+          section.lines.push(moveLine);
+          index += 1;
+        }
+      }
+      while (index < lines.length) {
+        const bodyLine = String(lines[index] ?? '');
+        const bodyTrimmed = bodyLine.trim();
+        if (isCodexPatchTopLevelHeader(bodyTrimmed)) break;
+        section.lines.push(bodyLine);
+        index += 1;
+      }
+      sections.push(section);
+      continue;
+    }
+
+    index += 1;
+  }
+
+  return sections;
+}
+
+function buildApplyPatchFileDetails(
+  files: ApplyPatchFileSummary[],
+  patchText: string,
+  inputFormat: ApplyPatchFormat,
+): ApplyPatchFileDetail[] {
+  let sections: ApplyPatchFileSection[] = [];
+  if (patchText) {
+    if (inputFormat === 'begin_patch') {
+      sections = parseBeginPatchSections(patchText);
+    } else if (inputFormat === 'unified_diff') {
+      sections = parseUnifiedPatchSections(patchText);
+    }
+  }
+
+  const total = Math.max(files.length, sections.length);
+  if (total === 0) return [];
+
+  const details: ApplyPatchFileDetail[] = [];
+  for (let index = 0; index < total; index += 1) {
+    const section = sections[index] ?? null;
+    const summary = files[index] ?? (section ? createApplyPatchSummaryFromSection(section) : null);
+    if (!summary) continue;
+
+    const mergedSummary: ApplyPatchFileSummary = {
+      path: summary.path || section?.newPath || section?.oldPath || '',
+      oldPath: summary.oldPath || section?.oldPath || '',
+      newPath: summary.newPath || section?.newPath || '',
+      change: normalizeApplyPatchChange(summary.change || section?.change || 'modified'),
+      hunks: summary.hunks,
+      additions: summary.additions,
+      deletions: summary.deletions,
+    };
+
+    if (section && (mergedSummary.hunks === 0 && mergedSummary.additions === 0 && mergedSummary.deletions === 0)) {
+      const fallback = summarizeApplyPatchSectionLines(section.lines);
+      mergedSummary.hunks = fallback.hunks;
+      mergedSummary.additions = fallback.additions;
+      mergedSummary.deletions = fallback.deletions;
+    }
+
+    const lines = section?.lines ?? [];
+    const identity = mergedSummary.path || mergedSummary.newPath || mergedSummary.oldPath || `file-${index + 1}`;
+    details.push({
+      id: String(index) + ':' + identity,
+      summary: mergedSummary,
+      lines,
+      sectionText: lines.join('\n'),
+    });
+  }
+
+  return details;
+}
+
+function parseApplyPatchRenderedLines(lines: string[]): ApplyPatchRenderedLine[] {
+  const rendered: ApplyPatchRenderedLine[] = [];
+  let oldLineNumber = 1;
+  let newLineNumber = 1;
+  const hunkHeaderRE = /^@@\s+-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = String(lines[index] ?? '');
+
+    if (line.startsWith('@@')) {
+      const match = line.match(hunkHeaderRE);
+      if (match) {
+        oldLineNumber = Number(match[1]);
+        newLineNumber = Number(match[2]);
+      }
+      rendered.push({
+        key: String(index) + ':meta',
+        text: line,
+        oldLine: null,
+        newLine: null,
+        kind: 'meta',
+      });
+      continue;
+    }
+
+    if (line.startsWith('+') && !line.startsWith('+++')) {
+      rendered.push({
+        key: String(index) + ':add',
+        text: line,
+        oldLine: null,
+        newLine: newLineNumber,
+        kind: 'add',
+      });
+      newLineNumber += 1;
+      continue;
+    }
+
+    if (line.startsWith('-') && !line.startsWith('---')) {
+      rendered.push({
+        key: String(index) + ':del',
+        text: line,
+        oldLine: oldLineNumber,
+        newLine: null,
+        kind: 'del',
+      });
+      oldLineNumber += 1;
+      continue;
+    }
+
+    if (line.startsWith(' ')) {
+      rendered.push({
+        key: String(index) + ':ctx',
+        text: line,
+        oldLine: oldLineNumber,
+        newLine: newLineNumber,
+        kind: 'context',
+      });
+      oldLineNumber += 1;
+      newLineNumber += 1;
+      continue;
+    }
+
+    rendered.push({
+      key: String(index) + ':meta-fallback',
+      text: line,
+      oldLine: null,
+      newLine: null,
+      kind: 'meta',
+    });
+  }
+
+  return rendered;
+}
+
+function formatApplyPatchLineNumber(value: number | null): string {
+  if (!Number.isFinite(value)) return '';
+  return String(value);
+}
+
 function buildApplyPatchDisplay(block: ToolCallBlockType): ApplyPatchDisplay | null {
   if (String(block.toolName ?? '').trim() !== APPLY_PATCH_TOOL_NAME) {
     return null;
@@ -1198,6 +1548,11 @@ function buildApplyPatchDisplay(block: ToolCallBlockType): ApplyPatchDisplay | n
     normalizedFormat = inputFormat === 'unknown' ? 'begin_patch' : inputFormat;
   }
 
+  const details = buildApplyPatchFileDetails(files, patchText, inputFormat);
+  if (files.length === 0 && details.length > 0) {
+    files = details.map((detail) => detail.summary);
+  }
+
   const derivedFilesChanged = files.length;
   const derivedHunks = files.reduce((sum, file) => sum + file.hunks, 0);
   const derivedAdditions = files.reduce((sum, file) => sum + file.additions, 0);
@@ -1213,6 +1568,7 @@ function buildApplyPatchDisplay(block: ToolCallBlockType): ApplyPatchDisplay | n
     inputFormat,
     normalizedFormat,
     files,
+    details,
     filesChanged,
     hunks,
     additions,
@@ -1725,6 +2081,36 @@ function applyPatchPreviewLineClass(line: string): string {
   return '';
 }
 
+function applyPatchRenderedLineClass(line: ApplyPatchRenderedLine): string {
+  switch (line.kind) {
+    case 'add':
+      return 'chat-tool-apply-patch-detail-line-add';
+    case 'del':
+      return 'chat-tool-apply-patch-detail-line-del';
+    case 'meta':
+      return 'chat-tool-apply-patch-detail-line-meta';
+    case 'context':
+    default:
+      return '';
+  }
+}
+
+function applyPatchFilterLabel(filter: ApplyPatchFileFilter): string {
+  switch (filter) {
+    case 'added':
+      return 'Added';
+    case 'modified':
+      return 'Updated';
+    case 'deleted':
+      return 'Deleted';
+    case 'renamed':
+      return 'Renamed';
+    case 'all':
+    default:
+      return 'All';
+  }
+}
+
 interface ApplyPatchToolCardProps {
   block: ToolCallBlockType;
   messageId: string;
@@ -1735,17 +2121,12 @@ interface ApplyPatchToolCardProps {
 
 const ApplyPatchToolCard: Component<ApplyPatchToolCardProps> = (props) => {
   const [copied, setCopied] = createSignal(false);
-  const [expanded, setExpanded] = createSignal(false);
+  const [copiedDetailID, setCopiedDetailID] = createSignal('');
+  const [activeFilter, setActiveFilter] = createSignal<ApplyPatchFileFilter>('all');
+  const [selectedDetailID, setSelectedDetailID] = createSignal('');
+  const [sectionExpanded, setSectionExpanded] = createSignal(false);
+  const [rawExpanded, setRawExpanded] = createSignal(false);
 
-  const patchLines = createMemo(() =>
-    props.display.patchText ? props.display.patchText.split('\n') : [],
-  );
-  const hasMorePatchLines = createMemo(() => patchLines().length > APPLY_PATCH_PREVIEW_LINES);
-  const visiblePatchLines = createMemo(() =>
-    expanded() ? patchLines() : patchLines().slice(0, APPLY_PATCH_PREVIEW_LINES),
-  );
-  const visibleFiles = createMemo(() => props.display.files.slice(0, APPLY_PATCH_VISIBLE_FILES));
-  const hasMoreFiles = createMemo(() => props.display.files.length > APPLY_PATCH_VISIBLE_FILES);
   const summaryItems = createMemo(() => {
     const parts: string[] = [];
     parts.push(`${formatApplyPatchInteger(props.display.filesChanged)} files`);
@@ -1755,12 +2136,109 @@ const ApplyPatchToolCard: Component<ApplyPatchToolCardProps> = (props) => {
     return parts;
   });
 
+  const filterItems = createMemo(() => {
+    const counts: Record<ApplyPatchChangeKind, number> = {
+      added: 0,
+      modified: 0,
+      deleted: 0,
+      renamed: 0,
+    };
+    for (const detail of props.display.details) {
+      counts[detail.summary.change] += 1;
+    }
+    const items: Array<{ filter: ApplyPatchFileFilter; count: number }> = [{
+      filter: 'all',
+      count: props.display.details.length,
+    }];
+    (['added', 'modified', 'deleted', 'renamed'] as const).forEach((filter) => {
+      if (counts[filter] > 0) {
+        items.push({ filter, count: counts[filter] });
+      }
+    });
+    return items;
+  });
+
+  createEffect(() => {
+    const available = filterItems();
+    if (!available.some((item) => item.filter === activeFilter())) {
+      setActiveFilter('all');
+    }
+  });
+
+  const filteredDetails = createMemo(() => {
+    const filter = activeFilter();
+    if (filter === 'all') {
+      return props.display.details;
+    }
+    return props.display.details.filter((detail) => detail.summary.change === filter);
+  });
+
+  createEffect(() => {
+    const details = filteredDetails();
+    if (details.length === 0) {
+      setSelectedDetailID('');
+      return;
+    }
+    if (!details.some((detail) => detail.id === selectedDetailID())) {
+      setSelectedDetailID(details[0].id);
+    }
+  });
+
+  createEffect(() => {
+    selectedDetailID();
+    setSectionExpanded(false);
+  });
+
+  const selectedDetail = createMemo<ApplyPatchFileDetail | null>(() => {
+    const details = filteredDetails();
+    if (details.length === 0) return null;
+    const matched = details.find((detail) => detail.id === selectedDetailID());
+    return matched ?? details[0];
+  });
+
+  const selectedRenderedLines = createMemo<ApplyPatchRenderedLine[]>(() => {
+    const detail = selectedDetail();
+    if (!detail || detail.lines.length === 0) return [];
+    return parseApplyPatchRenderedLines(detail.lines);
+  });
+
+  const visibleRenderedLines = createMemo(() => {
+    const lines = selectedRenderedLines();
+    if (sectionExpanded()) {
+      return lines;
+    }
+    return lines.slice(0, APPLY_PATCH_SECTION_PREVIEW_LINES);
+  });
+
+  const hasMoreSectionLines = createMemo(() => selectedRenderedLines().length > APPLY_PATCH_SECTION_PREVIEW_LINES);
+
+  const rawPatchLines = createMemo(() =>
+    props.display.patchText ? props.display.patchText.split('\n') : [],
+  );
+  const visibleRawPatchLines = createMemo(() => {
+    const lines = rawPatchLines();
+    if (rawExpanded()) {
+      return lines;
+    }
+    return lines.slice(0, APPLY_PATCH_RAW_PREVIEW_LINES);
+  });
+  const hasMoreRawPatchLines = createMemo(() => rawPatchLines().length > APPLY_PATCH_RAW_PREVIEW_LINES);
+
   const handleCopyPatch = async () => {
     if (!props.display.patchText) return;
     const ok = await copyToolText(props.display.patchText);
     if (!ok) return;
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1400);
+  };
+
+  const handleCopySelectedDetail = async () => {
+    const detail = selectedDetail();
+    if (!detail || !detail.sectionText) return;
+    const ok = await copyToolText(detail.sectionText);
+    if (!ok) return;
+    setCopiedDetailID(detail.id);
+    window.setTimeout(() => setCopiedDetailID(''), 1400);
   };
 
   return (
@@ -1802,39 +2280,140 @@ const ApplyPatchToolCard: Component<ApplyPatchToolCardProps> = (props) => {
         </For>
       </div>
 
-      <Show when={visibleFiles().length > 0}>
-        <div class="chat-tool-apply-patch-files">
-          <For each={visibleFiles()}>
-            {(file) => (
-              <div class="chat-tool-apply-patch-file-row">
-                <span class={cn('chat-tool-apply-patch-change', applyPatchChangeClass(file.change))}>
-                  {applyPatchChangeLabel(file.change)}
-                </span>
-                <span class="chat-tool-apply-patch-file-path" title={file.path || file.newPath || file.oldPath}>
-                  {file.path || file.newPath || file.oldPath || '(unknown path)'}
-                </span>
-                <span class="chat-tool-apply-patch-file-metrics">
-                  +{formatApplyPatchInteger(file.additions)} / -{formatApplyPatchInteger(file.deletions)}
-                  <Show when={file.hunks > 0}>
-                    <> · {formatApplyPatchInteger(file.hunks)} hunks</>
-                  </Show>
-                </span>
-              </div>
-            )}
-          </For>
-          <Show when={hasMoreFiles()}>
-            <div class="chat-tool-apply-patch-more-files">
-              +{props.display.files.length - APPLY_PATCH_VISIBLE_FILES} more files
+      <Show when={props.display.details.length > 0}>
+        <div class="chat-tool-apply-patch-workspace">
+          <div class="chat-tool-apply-patch-sidebar">
+            <div class="chat-tool-apply-patch-filters">
+              <For each={filterItems()}>
+                {(item) => (
+                  <button
+                    type="button"
+                    class={cn(
+                      'chat-tool-apply-patch-filter-btn',
+                      activeFilter() === item.filter && 'chat-tool-apply-patch-filter-btn-active',
+                    )}
+                    onClick={() => setActiveFilter(item.filter)}
+                  >
+                    <span>{applyPatchFilterLabel(item.filter)}</span>
+                    <span class="chat-tool-apply-patch-filter-count">{formatApplyPatchInteger(item.count)}</span>
+                  </button>
+                )}
+              </For>
             </div>
-          </Show>
+
+            <div class="chat-tool-apply-patch-file-list">
+              <For each={filteredDetails()}>
+                {(detail) => (
+                  <button
+                    type="button"
+                    class={cn(
+                      'chat-tool-apply-patch-file-item',
+                      selectedDetailID() === detail.id && 'chat-tool-apply-patch-file-item-active',
+                    )}
+                    onClick={() => setSelectedDetailID(detail.id)}
+                  >
+                    <div class="chat-tool-apply-patch-file-item-top">
+                      <span class={cn('chat-tool-apply-patch-change', applyPatchChangeClass(detail.summary.change))}>
+                        {applyPatchChangeLabel(detail.summary.change)}
+                      </span>
+                      <span class="chat-tool-apply-patch-file-item-metrics">
+                        +{formatApplyPatchInteger(detail.summary.additions)} / -{formatApplyPatchInteger(detail.summary.deletions)}
+                      </span>
+                    </div>
+                    <span class="chat-tool-apply-patch-file-item-path" title={detail.summary.path || detail.summary.newPath || detail.summary.oldPath}>
+                      {detail.summary.path || detail.summary.newPath || detail.summary.oldPath || '(unknown path)'}
+                    </span>
+                    <Show when={detail.summary.hunks > 0}>
+                      <span class="chat-tool-apply-patch-file-item-hunks">
+                        {formatApplyPatchInteger(detail.summary.hunks)} hunks
+                      </span>
+                    </Show>
+                  </button>
+                )}
+              </For>
+            </div>
+          </div>
+
+          <div class="chat-tool-apply-patch-detail-panel">
+            <Show when={selectedDetail()} fallback={<div class="chat-tool-apply-patch-detail-empty">No file changes in this filter.</div>}>
+              {(detailAccessor) => {
+                const detail = detailAccessor();
+                const summary = detail.summary;
+                return (
+                  <>
+                    <div class="chat-tool-apply-patch-detail-head">
+                      <div class="chat-tool-apply-patch-detail-main">
+                        <span class={cn('chat-tool-apply-patch-change', applyPatchChangeClass(summary.change))}>
+                          {applyPatchChangeLabel(summary.change)}
+                        </span>
+                        <span class="chat-tool-apply-patch-detail-path" title={summary.path || summary.newPath || summary.oldPath}>
+                          {summary.path || summary.newPath || summary.oldPath || '(unknown path)'}
+                        </span>
+                        <span class="chat-tool-apply-patch-detail-metrics">
+                          +{formatApplyPatchInteger(summary.additions)} / -{formatApplyPatchInteger(summary.deletions)}
+                          <Show when={summary.hunks > 0}>
+                            <> · {formatApplyPatchInteger(summary.hunks)} hunks</>
+                          </Show>
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        class="chat-tool-apply-patch-copy chat-tool-apply-patch-copy-inline"
+                        onClick={() => void handleCopySelectedDetail()}
+                        disabled={!detail.sectionText}
+                      >
+                        {copiedDetailID() === detail.id ? 'Copied file patch' : 'Copy file patch'}
+                      </button>
+                    </div>
+
+                    <Show when={summary.change === 'renamed' && summary.oldPath && summary.newPath}>
+                      <div class="chat-tool-apply-patch-rename-row">
+                        <span class="chat-tool-apply-patch-rename-path" title={summary.oldPath}>{summary.oldPath}</span>
+                        <span class="chat-tool-apply-patch-rename-arrow">→</span>
+                        <span class="chat-tool-apply-patch-rename-path" title={summary.newPath}>{summary.newPath}</span>
+                      </div>
+                    </Show>
+
+                    <Show when={visibleRenderedLines().length > 0} fallback={<div class="chat-tool-apply-patch-detail-empty">No inline diff lines available for this file.</div>}>
+                      <div class="chat-tool-apply-patch-detail-code">
+                        <For each={visibleRenderedLines()}>
+                          {(line) => (
+                            <div class={cn('chat-tool-apply-patch-detail-line', applyPatchRenderedLineClass(line))}>
+                              <span class="chat-tool-apply-patch-detail-line-num">{formatApplyPatchLineNumber(line.oldLine)}</span>
+                              <span class="chat-tool-apply-patch-detail-line-num">{formatApplyPatchLineNumber(line.newLine)}</span>
+                              <span class={cn('chat-tool-apply-patch-detail-line-text', applyPatchPreviewLineClass(line.text))}>{line.text}</span>
+                            </div>
+                          )}
+                        </For>
+                      </div>
+                    </Show>
+
+                    <Show when={hasMoreSectionLines()}>
+                      <div class="chat-tool-apply-patch-toggle-row">
+                        <button
+                          type="button"
+                          class="chat-tool-apply-patch-toggle-btn"
+                          onClick={() => setSectionExpanded((value) => !value)}
+                        >
+                          {sectionExpanded()
+                            ? 'Show less for selected file'
+                            : `Show full selected file (${selectedRenderedLines().length} lines)`}
+                        </button>
+                      </div>
+                    </Show>
+                  </>
+                );
+              }}
+            </Show>
+          </div>
         </div>
       </Show>
 
-      <Show when={visiblePatchLines().length > 0}>
+      <Show when={visibleRawPatchLines().length > 0}>
         <div class="chat-tool-apply-patch-preview-wrap">
-          <div class="chat-tool-apply-patch-preview-label">Patch preview</div>
+          <div class="chat-tool-apply-patch-preview-label">Raw patch</div>
           <pre class="chat-tool-apply-patch-preview">
-            <For each={visiblePatchLines()}>
+            <For each={visibleRawPatchLines()}>
               {(line) => (
                 <span class={cn('chat-tool-apply-patch-line', applyPatchPreviewLineClass(line))}>
                   {line}
@@ -1842,14 +2421,14 @@ const ApplyPatchToolCard: Component<ApplyPatchToolCardProps> = (props) => {
               )}
             </For>
           </pre>
-          <Show when={hasMorePatchLines()}>
+          <Show when={hasMoreRawPatchLines()}>
             <div class="chat-tool-apply-patch-toggle-row">
               <button
                 type="button"
                 class="chat-tool-apply-patch-toggle-btn"
-                onClick={() => setExpanded((value) => !value)}
+                onClick={() => setRawExpanded((value) => !value)}
               >
-                {expanded() ? 'Show less' : `Show full patch (${patchLines().length} lines)`}
+                {rawExpanded() ? 'Show less raw patch' : `Show full raw patch (${rawPatchLines().length} lines)`}
               </button>
             </div>
           </Show>
