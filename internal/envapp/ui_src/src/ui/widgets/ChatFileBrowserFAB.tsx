@@ -1,164 +1,478 @@
-// Chat 页面悬浮文件浏览器 FAB 组件
-import { For, Show, createEffect, createSignal, onCleanup } from 'solid-js';
+// Floating file browser FAB for the chat page.
+// The FAB lives inside the message area and can be dragged to any edge.
+import { Show, createEffect, createMemo, createSignal, onCleanup, untrack } from 'solid-js';
 import { Motion } from 'solid-motionone';
-import { Folder, FileText } from '@floegence/floe-webapp-core/icons';
-import { FloatingWindow } from '@floegence/floe-webapp-core/ui';
-import { SnakeLoader } from '@floegence/floe-webapp-core/loading';
+import { useNotification } from '@floegence/floe-webapp-core';
+import { Folder } from '@floegence/floe-webapp-core/icons';
+import { FileBrowser, type ContextMenuCallbacks, type FileItem } from '@floegence/floe-webapp-core/file-browser';
+import { ConfirmDialog, DirectoryPicker, FileSavePicker, FloatingWindow } from '@floegence/floe-webapp-core/ui';
+import { LoadingOverlay } from '@floegence/floe-webapp-core/loading';
 import { useProtocol } from '@floegence/floe-webapp-protocol';
-import { useRedevenRpc, type FsFileInfo } from '../protocol/redeven_v1';
+import { useRedevenRpc } from '../protocol/redeven_v1';
 import { readFileBytesOnce } from '../utils/fileStreamReader';
 import { previewModeByName, isLikelyTextContent, getExtDot, mimeFromExtDot } from '../utils/filePreview';
-
-// 文件列表项
-interface ChatFileItem {
-  name: string;
-  path: string;
-  type: 'folder' | 'file';
-  size?: number;
-}
+import { InputDialog } from './InputDialog';
+import {
+  extNoDot,
+  fileNameFromPath,
+  getParentDir,
+  insertItemToTree,
+  normalizePath,
+  removeItemsFromTree,
+  rewriteCachePathPrefix,
+  rewriteSubtreePaths,
+  sortFileItems,
+  toFileItem,
+  withChildren,
+} from './FileBrowserShared';
 
 export interface ChatFileBrowserFABProps {
   workingDir: string;
   homePath?: string;
   enabled?: boolean;
+  /** Ref to the container element that bounds the FAB drag area. */
+  containerRef?: HTMLElement;
 }
 
-// 格式化文件大小
-function formatSize(bytes: number | undefined): string {
-  if (bytes == null || !Number.isFinite(bytes)) return '';
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+// ---- helpers ----
+
+function normalizeAbsolutePath(path: string): string {
+  const raw = String(path ?? '').trim();
+  if (!raw || !raw.startsWith('/')) return '';
+  return normalizePath(raw);
 }
 
-// 将 FsFileInfo 转换为 ChatFileItem
-function toChatFileItem(entry: FsFileInfo): ChatFileItem {
-  return {
-    name: String(entry.name ?? ''),
-    path: String(entry.path ?? ''),
-    type: entry.isDirectory ? 'folder' : 'file',
-    size: entry.isDirectory ? undefined : (Number.isFinite(entry.size) ? entry.size : undefined),
-  };
-}
+function toVirtualWorkingDirPath(workingDir: string, homePath?: string): string {
+  const normalized = normalizePath(workingDir);
+  const fsRoot = normalizeAbsolutePath(homePath ?? '');
+  if (!fsRoot || fsRoot === '/') return normalized;
 
-// 拆分路径为面包屑段落
-function splitBreadcrumb(dirPath: string, homePath?: string): { label: string; path: string }[] {
-  const normalized = dirPath.replace(/\/+$/, '') || '/';
-  const parts = normalized.split('/').filter(Boolean);
-  const segments: { label: string; path: string }[] = [];
-
-  // 根路径
-  if (homePath && normalized.startsWith(homePath)) {
-    segments.push({ label: '~', path: homePath });
-    const rel = normalized.slice(homePath.length).replace(/^\/+/, '');
-    if (rel) {
-      const relParts = rel.split('/').filter(Boolean);
-      let accum = homePath;
-      for (const p of relParts) {
-        accum = accum.replace(/\/+$/, '') + '/' + p;
-        segments.push({ label: p, path: accum });
-      }
-    }
-  } else {
-    segments.push({ label: '/', path: '/' });
-    let accum = '';
-    for (const p of parts) {
-      accum += '/' + p;
-      segments.push({ label: p, path: accum });
-    }
+  const normalizedWorkingDirAbs = normalizeAbsolutePath(workingDir);
+  if (!normalizedWorkingDirAbs) return normalized;
+  if (normalizedWorkingDirAbs === fsRoot) return '/';
+  if (normalizedWorkingDirAbs.startsWith(`${fsRoot}/`)) {
+    return normalizePath(normalizedWorkingDirAbs.slice(fsRoot.length));
   }
-
-  return segments;
+  return normalized;
 }
 
-// 最大预览字节数
 const MAX_PREVIEW_BYTES = 5 * 1024 * 1024;
 const SNIFF_BYTES = 64 * 1024;
+const FAB_SIZE = 44;
+const EDGE_MARGIN = 12;
+const FILE_BROWSER_WINDOW_Z_INDEX = 44;
+const FILE_PREVIEW_WINDOW_Z_INDEX = 45;
+
+// ---- component ----
 
 export function ChatFileBrowserFAB(props: ChatFileBrowserFABProps) {
   const protocol = useProtocol();
   const rpc = useRedevenRpc();
+  const notification = useNotification();
 
-  // 状态
+  // -- browser state --
   const [browserOpen, setBrowserOpen] = createSignal(false);
-  const [previewOpen, setPreviewOpen] = createSignal(false);
-  const [currentDir, setCurrentDir] = createSignal('');
-  const [items, setItems] = createSignal<ChatFileItem[]>([]);
+  const [files, setFiles] = createSignal<FileItem[]>([]);
   const [loading, setLoading] = createSignal(false);
-  const [loadError, setLoadError] = createSignal<string | null>(null);
+  const [resetSeq, setResetSeq] = createSignal(0);
+  const [currentBrowserPath, setCurrentBrowserPath] = createSignal('/');
 
-  // 预览状态
-  const [previewPath, setPreviewPath] = createSignal('');
-  const [previewName, setPreviewName] = createSignal('');
-  const [previewContent, setPreviewContent] = createSignal<string | null>(null);
-  const [previewImageUrl, setPreviewImageUrl] = createSignal<string | null>(null);
+  // -- preview state --
+  const [previewOpen, setPreviewOpen] = createSignal(false);
+  const [previewItem, setPreviewItem] = createSignal<FileItem | null>(null);
+  const [previewText, setPreviewText] = createSignal<string | null>(null);
+  const [previewObjectUrl, setPreviewObjectUrl] = createSignal<string | null>(null);
   const [previewLoading, setPreviewLoading] = createSignal(false);
   const [previewError, setPreviewError] = createSignal<string | null>(null);
-  const [previewMode, setPreviewMode] = createSignal<'text' | 'image' | 'unsupported'>('unsupported');
+  const [previewMode, setPreviewMode] = createSignal<'text' | 'image' | 'binary' | 'unsupported'>('unsupported');
 
-  // 目录缓存
-  let dirCache = new Map<string, ChatFileItem[]>();
-  let loadSeq = 0;
+  // -- context menu actions --
+  const [deleteDialogOpen, setDeleteDialogOpen] = createSignal(false);
+  const [deleteDialogItems, setDeleteDialogItems] = createSignal<FileItem[]>([]);
+  const [deleteLoading, setDeleteLoading] = createSignal(false);
 
-  // workingDir 变化时重置并导航
+  const [renameDialogOpen, setRenameDialogOpen] = createSignal(false);
+  const [renameDialogItem, setRenameDialogItem] = createSignal<FileItem | null>(null);
+  const [renameLoading, setRenameLoading] = createSignal(false);
+
+  const [moveToDialogOpen, setMoveToDialogOpen] = createSignal(false);
+  const [moveToDialogItem, setMoveToDialogItem] = createSignal<FileItem | null>(null);
+  const [moveToLoading, setMoveToLoading] = createSignal(false);
+
+  const [copyToDialogOpen, setCopyToDialogOpen] = createSignal(false);
+  const [copyToDialogItem, setCopyToDialogItem] = createSignal<FileItem | null>(null);
+  const [copyToLoading, setCopyToLoading] = createSignal(false);
+
+  const [duplicateLoading, setDuplicateLoading] = createSignal(false);
+
+  // -- FAB position (px from container top-left) --
+  // null = use default CSS position (bottom-right)
+  const [fabLeft, setFabLeft] = createSignal<number | null>(null);
+  const [fabTop, setFabTop] = createSignal<number | null>(null);
+  const [isDragging, setIsDragging] = createSignal(false);
+  const [isSnapping, setIsSnapping] = createSignal(false);
+  let dragStart: { px: number; py: number; fabLeft: number; fabTop: number } | null = null;
+
+  // -- dir loading plumbing --
+  let cache = new Map<string, FileItem[]>();
+  let dirReqSeq = 0;
+  let lastLoadedPath = '/';
+
+  const initialPath = createMemo(() => toVirtualWorkingDirPath(props.workingDir, props.homePath));
+
   createEffect(() => {
-    const wd = props.workingDir;
-    if (wd) {
-      dirCache = new Map();
-      setCurrentDir(wd);
-      void loadDir(wd);
-    }
+    const wd = initialPath();
+    const enabled = props.enabled ?? true;
+    if (!enabled || !wd) return;
+    cache = new Map();
+    setFiles([]);
+    setCurrentBrowserPath(wd);
+    setResetSeq((n) => n + 1);
+    void loadPathChain(wd);
   });
 
-  // 加载目录内容
-  async function loadDir(dirPath: string) {
-    const seq = ++loadSeq;
-    const cached = dirCache.get(dirPath);
-    if (cached) {
-      setItems(cached);
-      setLoadError(null);
+  async function loadDirOnce(path: string, seq: number): Promise<'ok' | 'error'> {
+    if (seq !== dirReqSeq) return 'ok';
+    const p = normalizePath(path);
+
+    if (cache.has(p)) {
+      if (seq === dirReqSeq) setFiles((prev) => withChildren(prev, p, cache.get(p)!));
+      return 'ok';
+    }
+
+    if (!protocol.client()) return 'error';
+
+    try {
+      const resp = await rpc.fs.list({ path: p, showHidden: false });
+      if (seq !== dirReqSeq) return 'ok';
+      const entries = resp?.entries ?? [];
+      const items = sortFileItems(entries.map(toFileItem));
+      if (seq !== dirReqSeq) return 'ok';
+      cache.set(p, items);
+      if (seq === dirReqSeq) setFiles((prev) => withChildren(prev, p, items));
+      return 'ok';
+    } catch {
+      return 'error';
+    }
+  }
+
+  async function loadPathChain(path: string) {
+    if (!protocol.client()) return;
+    const seq = ++dirReqSeq;
+    const p = normalizePath(path);
+    const parts = p.split('/').filter(Boolean);
+    const chain: string[] = ['/'];
+    let reachedTarget = p === '/';
+    for (let i = 0; i < parts.length; i += 1) {
+      chain.push(`/${parts.slice(0, i + 1).join('/')}`);
+    }
+    setLoading(true);
+    try {
+      for (const dir of chain) {
+        const res = await loadDirOnce(dir, seq);
+        if (res === 'error') {
+          reachedTarget = false;
+          break;
+        }
+        if (dir === p) reachedTarget = true;
+      }
+      if (seq === dirReqSeq) lastLoadedPath = reachedTarget ? p : '/';
+    } finally {
+      if (seq === dirReqSeq) setLoading(false);
+    }
+  }
+
+  const applyLocalRelocate = (item: FileItem, finalDestPath: string) => {
+    const from = normalizePath(item.path);
+    const to = normalizePath(finalDestPath);
+    const nextName = fileNameFromPath(to) || item.name;
+    const movedItem = {
+      ...rewriteSubtreePaths(item, from, to),
+      id: to,
+      path: to,
+      name: nextName,
+      extension: item.type === 'file' ? extNoDot(nextName) : undefined,
+    } satisfies FileItem;
+
+    const srcDir = getParentDir(from);
+    const destDir = getParentDir(to);
+
+    setFiles((prev) => {
+      const removed = removeItemsFromTree(prev, new Set([from]));
+      return insertItemToTree(removed, destDir, movedItem);
+    });
+
+    const srcCached = cache.get(srcDir);
+    if (srcCached) {
+      cache.set(srcDir, srcCached.filter((cachedItem) => normalizePath(cachedItem.path) !== from));
+    }
+
+    const destCached = cache.get(destDir);
+    if (destCached) {
+      const merged = destCached.filter((cachedItem) => normalizePath(cachedItem.path) !== to);
+      cache.set(destDir, sortFileItems([...merged, movedItem]));
+    }
+
+    if (item.type === 'folder') {
+      rewriteCachePathPrefix(cache, from, to);
+    }
+  };
+
+  const applyLocalCopy = (item: FileItem, finalDestPath: string) => {
+    const from = normalizePath(item.path);
+    const to = normalizePath(finalDestPath);
+    const destDir = getParentDir(to);
+    const nextName = fileNameFromPath(to) || item.name;
+    const copiedItem = {
+      ...rewriteSubtreePaths(item, from, to),
+      id: to,
+      path: to,
+      name: nextName,
+      extension: item.type === 'file' ? extNoDot(nextName) : undefined,
+    } satisfies FileItem;
+
+    setFiles((prev) => insertItemToTree(prev, destDir, copiedItem));
+
+    const destCached = cache.get(destDir);
+    if (destCached && !destCached.some((cachedItem) => normalizePath(cachedItem.path) === to)) {
+      cache.set(destDir, sortFileItems([...destCached, copiedItem]));
+    }
+  };
+
+  const handleDelete = async (items: FileItem[]) => {
+    const client = protocol.client();
+    if (!client) {
+      notification.error('Delete failed', 'Connection is not ready.');
+      return;
+    }
+    if (items.length <= 0) return;
+
+    setDeleteLoading(true);
+    setDeleteDialogOpen(false);
+
+    try {
+      for (const item of items) {
+        await rpc.fs.delete({ path: item.path, recursive: item.type === 'folder' });
+      }
+
+      const pathsToRemove = new Set(items.map((item) => normalizePath(item.path)));
+      const removedRoots = Array.from(pathsToRemove);
+      const shouldRemovePath = (path: string) => {
+        const normalizedPath = normalizePath(path);
+        return removedRoots.some((root) => normalizedPath === root || normalizedPath.startsWith(`${root}/`));
+      };
+
+      setFiles((prev) => removeItemsFromTree(prev, pathsToRemove));
+
+      for (const key of Array.from(cache.keys())) {
+        if (shouldRemovePath(key)) {
+          cache.delete(key);
+          continue;
+        }
+        const cached = cache.get(key);
+        if (!cached) continue;
+        const nextCached = cached.filter((cachedItem) => !shouldRemovePath(cachedItem.path));
+        if (nextCached.length !== cached.length) {
+          cache.set(key, nextCached);
+        }
+      }
+
+      notification.success(
+        items.length === 1 ? 'Deleted' : 'Delete completed',
+        items.length === 1 ? `"${items[0]!.name}" deleted.` : `${items.length} items deleted.`,
+      );
+    } catch (e) {
+      notification.error('Delete failed', e instanceof Error ? e.message : String(e));
+    } finally {
+      setDeleteLoading(false);
+    }
+  };
+
+  const handleRename = async (item: FileItem, newName: string) => {
+    const client = protocol.client();
+    const trimmedName = newName.trim();
+    if (!client) {
+      notification.error('Rename failed', 'Connection is not ready.');
+      return;
+    }
+    if (!trimmedName) return;
+
+    if (trimmedName === item.name) {
+      setRenameDialogOpen(false);
       return;
     }
 
-    setLoading(true);
-    setLoadError(null);
+    const parentDir = getParentDir(item.path);
+    const newPath = parentDir === '/' ? `/${trimmedName}` : `${parentDir}/${trimmedName}`;
+
+    setRenameLoading(true);
+    setRenameDialogOpen(false);
+
     try {
-      const resp = await rpc.fs.list({ path: dirPath, showHidden: false });
-      if (seq !== loadSeq) return;
-      const entries = resp?.entries ?? [];
-      const fileItems = entries
-        .map(toChatFileItem)
-        .sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'folder' ? -1 : 1));
-      dirCache.set(dirPath, fileItems);
-      setItems(fileItems);
+      await rpc.fs.rename({ oldPath: item.path, newPath });
+      applyLocalRelocate(item, newPath);
+      notification.success('Renamed', `"${item.name}" renamed to "${trimmedName}".`);
     } catch (e) {
-      if (seq !== loadSeq) return;
-      const msg = e instanceof Error ? e.message : String(e);
-      setLoadError(msg);
-      setItems([]);
+      notification.error('Rename failed', e instanceof Error ? e.message : String(e));
     } finally {
-      if (seq === loadSeq) setLoading(false);
+      setRenameLoading(false);
     }
-  }
+  };
 
-  // 导航到目录
-  function navigateTo(dirPath: string) {
-    setCurrentDir(dirPath);
-    void loadDir(dirPath);
-  }
+  const duplicateOne = async (
+    item: FileItem,
+  ): Promise<{ ok: true; newName: string } | { ok: false }> => {
+    const client = protocol.client();
+    if (!client) return { ok: false };
 
-  // 打开文件预览
+    const parentDir = getParentDir(item.path);
+    const baseName = item.name;
+    const ext = baseName.includes('.') ? baseName.slice(baseName.lastIndexOf('.')) : '';
+    const nameWithoutExt = ext ? baseName.slice(0, baseName.lastIndexOf('.')) : baseName;
+    const newName = `${nameWithoutExt} (copy)${ext}`;
+    const destPath = parentDir === '/' ? `/${newName}` : `${parentDir}/${newName}`;
+
+    try {
+      await rpc.fs.copy({ sourcePath: item.path, destPath });
+      applyLocalCopy(item, destPath);
+      return { ok: true, newName };
+    } catch (e) {
+      notification.error('Duplicate failed', e instanceof Error ? e.message : String(e));
+      return { ok: false };
+    }
+  };
+
+  const handleMoveTo = async (item: FileItem, destDirPath: string) => {
+    const client = protocol.client();
+    if (!client) {
+      notification.error('Move failed', 'Connection is not ready.');
+      return;
+    }
+    if (!destDirPath.trim()) return;
+
+    const destDir = normalizePath(destDirPath);
+    const finalDestPath = destDir === '/' ? `/${item.name}` : `${destDir}/${item.name}`;
+    if (finalDestPath === normalizePath(item.path)) {
+      setMoveToDialogOpen(false);
+      return;
+    }
+
+    setMoveToLoading(true);
+    setMoveToDialogOpen(false);
+
+    try {
+      await rpc.fs.rename({ oldPath: item.path, newPath: finalDestPath });
+      applyLocalRelocate(item, finalDestPath);
+      notification.success('Moved', `"${item.name}" moved to "${finalDestPath}".`);
+    } catch (e) {
+      notification.error('Move failed', e instanceof Error ? e.message : String(e));
+    } finally {
+      setMoveToLoading(false);
+    }
+  };
+
+  const handleCopyTo = async (item: FileItem, destDirPath: string, destFileName: string) => {
+    const client = protocol.client();
+    const trimmedDestName = destFileName.trim();
+    if (!client) {
+      notification.error('Copy failed', 'Connection is not ready.');
+      return;
+    }
+    if (!destDirPath.trim() || !trimmedDestName) return;
+
+    const destDir = normalizePath(destDirPath);
+    const finalDestPath = destDir === '/' ? `/${trimmedDestName}` : `${destDir}/${trimmedDestName}`;
+    if (finalDestPath === normalizePath(item.path)) {
+      setCopyToDialogOpen(false);
+      return;
+    }
+
+    setCopyToLoading(true);
+    setCopyToDialogOpen(false);
+
+    try {
+      await rpc.fs.copy({ sourcePath: item.path, destPath: finalDestPath });
+      applyLocalCopy(item, finalDestPath);
+      notification.success('Copied', `"${item.name}" copied to "${finalDestPath}".`);
+    } catch (e) {
+      notification.error('Copy failed', e instanceof Error ? e.message : String(e));
+    } finally {
+      setCopyToLoading(false);
+    }
+  };
+
+  const ctxMenu: ContextMenuCallbacks = {
+    onDelete: (items) => {
+      setDeleteDialogItems(items);
+      setDeleteDialogOpen(true);
+    },
+    onRename: (item) => {
+      setRenameDialogItem(item);
+      setRenameDialogOpen(true);
+    },
+    onDuplicate: (items) => {
+      void (async () => {
+        if (duplicateLoading()) return;
+        if (!protocol.client()) {
+          notification.error('Duplicate failed', 'Connection is not ready.');
+          return;
+        }
+        setDuplicateLoading(true);
+        try {
+          let okCount = 0;
+          let lastNewName: string | null = null;
+          for (const item of items) {
+            const ret = await duplicateOne(item);
+            if (ret.ok) {
+              okCount += 1;
+              lastNewName = ret.newName;
+            }
+          }
+
+          if (okCount <= 0) return;
+          if (okCount === 1) {
+            notification.success('Duplicated', lastNewName ? `Created "${lastNewName}".` : 'Duplicate completed.');
+            return;
+          }
+          notification.success('Duplicate completed', `${okCount} items duplicated.`);
+        } finally {
+          setDuplicateLoading(false);
+        }
+      })();
+    },
+    onMoveTo: (items) => {
+      if (items.length > 0) {
+        setMoveToDialogItem(items[0]);
+        setMoveToDialogOpen(true);
+      }
+    },
+    onCopyTo: (items) => {
+      if (items.length > 0) {
+        setCopyToDialogItem(items[0]);
+        setCopyToDialogOpen(true);
+      }
+    },
+  };
+
+  // -- preview --
   let previewReqSeq = 0;
-  async function openPreview(item: ChatFileItem) {
+
+  function cleanupPreview() {
+    const url = previewObjectUrl();
+    if (url) {
+      URL.revokeObjectURL(url);
+      setPreviewObjectUrl(null);
+    }
+    setPreviewText(null);
+    setPreviewError(null);
+  }
+
+  async function openPreview(item: FileItem) {
     const seq = ++previewReqSeq;
     cleanupPreview();
-    setPreviewPath(item.path);
-    setPreviewName(item.name);
+    setPreviewItem(item);
     setPreviewLoading(true);
     setPreviewError(null);
-    setPreviewContent(null);
-    setPreviewImageUrl(null);
     setPreviewOpen(true);
 
     const mode = previewModeByName(item.name);
@@ -167,7 +481,6 @@ export function ChatFileBrowserFAB(props: ChatFileBrowserFABProps) {
     } else if (mode === 'text') {
       setPreviewMode('text');
     } else {
-      // 对 binary / pdf / docx / xlsx 等尝试嗅探是否为文本
       setPreviewMode('unsupported');
     }
 
@@ -185,101 +498,199 @@ export function ChatFileBrowserFAB(props: ChatFileBrowserFABProps) {
         const ext = getExtDot(item.name);
         const mime = mimeFromExtDot(ext) || 'application/octet-stream';
         const blob = new Blob([bytes], { type: mime });
-        const url = URL.createObjectURL(blob);
-        setPreviewImageUrl(url);
+        setPreviewObjectUrl(URL.createObjectURL(blob));
       } else if (mode === 'text') {
         const { bytes } = await readFileBytesOnce({ client, path: item.path, maxBytes: MAX_PREVIEW_BYTES });
         if (seq !== previewReqSeq) return;
-        const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
-        setPreviewContent(text);
+        setPreviewText(new TextDecoder('utf-8', { fatal: false }).decode(bytes));
       } else {
-        // 嗅探判断是否为文本
         const { bytes } = await readFileBytesOnce({ client, path: item.path, maxBytes: SNIFF_BYTES });
         if (seq !== previewReqSeq) return;
         if (isLikelyTextContent(bytes)) {
           setPreviewMode('text');
-          // 如果嗅探量就足够，则直接显示
           if (bytes.length < SNIFF_BYTES) {
-            const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
-            setPreviewContent(text);
+            setPreviewText(new TextDecoder('utf-8', { fatal: false }).decode(bytes));
           } else {
-            // 需要读取更多
-            const { bytes: fullBytes } = await readFileBytesOnce({ client, path: item.path, maxBytes: MAX_PREVIEW_BYTES });
+            const { bytes: full } = await readFileBytesOnce({ client, path: item.path, maxBytes: MAX_PREVIEW_BYTES });
             if (seq !== previewReqSeq) return;
-            const text = new TextDecoder('utf-8', { fatal: false }).decode(fullBytes);
-            setPreviewContent(text);
+            setPreviewText(new TextDecoder('utf-8', { fatal: false }).decode(full));
           }
+        } else {
+          setPreviewMode('binary');
         }
-        // 如果不是文本则保持 unsupported
       }
     } catch (e) {
       if (seq !== previewReqSeq) return;
-      const msg = e instanceof Error ? e.message : String(e);
-      setPreviewError(msg);
+      setPreviewError(e instanceof Error ? e.message : String(e));
     } finally {
       if (seq === previewReqSeq) setPreviewLoading(false);
     }
   }
 
-  // 清理预览资源
-  function cleanupPreview() {
-    const url = previewImageUrl();
-    if (url) {
-      URL.revokeObjectURL(url);
-      setPreviewImageUrl(null);
-    }
-    setPreviewContent(null);
-    setPreviewError(null);
-  }
+  onCleanup(() => cleanupPreview());
 
-  onCleanup(() => {
-    cleanupPreview();
-  });
-
-  // 文件双击计时
-  let lastClickPath = '';
-  let lastClickTime = 0;
-  function handleItemClick(item: ChatFileItem) {
-    if (item.type === 'folder') {
-      navigateTo(item.path);
+  // -- Snap to nearest edge of the container --
+  function snapToEdge(left: number, top: number) {
+    const ct = props.containerRef;
+    if (!ct) {
+      // no container, just keep position
+      setFabLeft(left);
+      setFabTop(top);
       return;
     }
-    // 文件双击检测
-    const now = Date.now();
-    if (lastClickPath === item.path && now - lastClickTime < 400) {
-      // 双击
-      void openPreview(item);
-      lastClickPath = '';
-      lastClickTime = 0;
+    const cw = ct.clientWidth;
+    const ch = ct.clientHeight;
+
+    // clamp inside container
+    const clampedLeft = Math.max(EDGE_MARGIN, Math.min(left, cw - FAB_SIZE - EDGE_MARGIN));
+    const clampedTop = Math.max(EDGE_MARGIN, Math.min(top, ch - FAB_SIZE - EDGE_MARGIN));
+
+    // distance to each edge
+    const dLeft = clampedLeft;
+    const dRight = cw - FAB_SIZE - clampedLeft;
+    const dTop = clampedTop;
+    const dBottom = ch - FAB_SIZE - clampedTop;
+
+    const minDist = Math.min(dLeft, dRight, dTop, dBottom);
+
+    let snapLeft = clampedLeft;
+    let snapTop = clampedTop;
+
+    // snap to nearest horizontal edge (left/right preference)
+    if (minDist === dLeft) {
+      snapLeft = EDGE_MARGIN;
+    } else if (minDist === dRight) {
+      snapLeft = cw - FAB_SIZE - EDGE_MARGIN;
+    } else if (minDist === dTop) {
+      snapTop = EDGE_MARGIN;
     } else {
-      lastClickPath = item.path;
-      lastClickTime = now;
+      snapTop = ch - FAB_SIZE - EDGE_MARGIN;
+    }
+
+    setIsSnapping(true);
+    setFabLeft(snapLeft);
+    setFabTop(snapTop);
+    // remove snapping transition flag after animation
+    requestAnimationFrame(() => {
+      setTimeout(() => setIsSnapping(false), 250);
+    });
+  }
+
+  // -- FAB drag handlers --
+
+  function onFabPointerDown(e: PointerEvent) {
+    if (e.button !== 0) return;
+    const btn = e.currentTarget as HTMLElement;
+    btn.setPointerCapture(e.pointerId);
+
+    // if first interaction, compute initial position from the element's offset
+    let currentLeft = fabLeft();
+    let currentTop = fabTop();
+    if (currentLeft == null || currentTop == null) {
+      const ct = props.containerRef;
+      if (ct) {
+        const cw = ct.clientWidth;
+        const ch = ct.clientHeight;
+        currentLeft = cw - FAB_SIZE - EDGE_MARGIN;
+        currentTop = ch - FAB_SIZE - EDGE_MARGIN;
+      } else {
+        currentLeft = 0;
+        currentTop = 0;
+      }
+      setFabLeft(currentLeft);
+      setFabTop(currentTop);
+    }
+
+    dragStart = {
+      px: e.clientX,
+      py: e.clientY,
+      fabLeft: currentLeft,
+      fabTop: currentTop,
+    };
+  }
+
+  function onFabPointerMove(e: PointerEvent) {
+    if (!dragStart) return;
+    const dx = e.clientX - dragStart.px;
+    const dy = e.clientY - dragStart.py;
+    // dead zone to distinguish click from drag
+    if (!isDragging() && Math.abs(dx) < 4 && Math.abs(dy) < 4) return;
+    setIsDragging(true);
+
+    let newLeft = dragStart.fabLeft + dx;
+    let newTop = dragStart.fabTop + dy;
+
+    // clamp to container during drag
+    const ct = props.containerRef;
+    if (ct) {
+      const cw = ct.clientWidth;
+      const ch = ct.clientHeight;
+      newLeft = Math.max(0, Math.min(newLeft, cw - FAB_SIZE));
+      newTop = Math.max(0, Math.min(newTop, ch - FAB_SIZE));
+    }
+
+    setFabLeft(newLeft);
+    setFabTop(newTop);
+  }
+
+  function onFabPointerUp(_e: PointerEvent) {
+    if (!dragStart) return;
+    const wasDrag = isDragging();
+    dragStart = null;
+    setIsDragging(false);
+
+    if (wasDrag) {
+      // snap to nearest edge
+      snapToEdge(fabLeft()!, fabTop()!);
+    } else {
+      // it was a click — open file browser
+      const wd = untrack(initialPath);
+      if (!wd) return;
+      if (!cache.has(wd) || lastLoadedPath !== wd) {
+        void loadPathChain(wd);
+      }
+      setBrowserOpen(true);
     }
   }
 
   const showFab = () => (props.enabled ?? true) && !browserOpen();
-  const breadcrumbs = () => splitBreadcrumb(currentDir(), props.homePath);
+
+  const fabStyle = () => {
+    const left = fabLeft();
+    const top = fabTop();
+    if (left == null || top == null) {
+      // default position: bottom-right via CSS
+      return {};
+    }
+    return {
+      left: `${left}px`,
+      top: `${top}px`,
+      // clear CSS defaults when using explicit position
+      right: 'auto',
+      bottom: 'auto',
+      transition: isSnapping() ? 'left 0.25s ease-out, top 0.25s ease-out' : 'none',
+    };
+  };
 
   return (
     <>
-      {/* FAB 悬浮按钮 */}
+      {/* FAB draggable button */}
       <Show when={showFab()}>
-        <div class="redeven-fab-file-browser">
+        <div
+          class="redeven-fab-file-browser"
+          style={fabStyle()}
+        >
           <Motion.div
-            initial={{ opacity: 0, scale: 0.6, y: 12 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
+            initial={{ opacity: 0, scale: 0.6 }}
+            animate={{ opacity: 1, scale: 1 }}
             transition={{ duration: 0.3, easing: 'ease-out' }}
           >
             <button
               class="redeven-fab-file-browser-btn"
               title="Browse files"
-              onClick={() => {
-                if (!currentDir()) {
-                  setCurrentDir(props.workingDir);
-                  void loadDir(props.workingDir);
-                }
-                setBrowserOpen(true);
-              }}
+              onPointerDown={onFabPointerDown}
+              onPointerMove={onFabPointerMove}
+              onPointerUp={onFabPointerUp}
             >
               <Folder class="w-5 h-5" />
             </button>
@@ -287,73 +698,46 @@ export function ChatFileBrowserFAB(props: ChatFileBrowserFABProps) {
         </div>
       </Show>
 
-      {/* 文件浏览 FloatingWindow */}
+      {/* File browser floating window */}
       <FloatingWindow
         open={browserOpen()}
         onOpenChange={(open) => {
           setBrowserOpen(open);
         }}
         title="File Browser"
-        defaultSize={{ width: 480, height: 520 }}
-        minSize={{ width: 360, height: 300 }}
-        zIndex={100}
+        defaultSize={{ width: 560, height: 520 }}
+        minSize={{ width: 380, height: 340 }}
+        zIndex={FILE_BROWSER_WINDOW_Z_INDEX}
       >
-        <div class="flex flex-col h-full">
-          {/* 面包屑 */}
-          <div class="chat-fb-breadcrumb">
-            <For each={breadcrumbs()}>
-              {(seg, i) => (
-                <>
-                  <Show when={i() > 0}>
-                    <span class="chat-fb-breadcrumb-sep">/</span>
-                  </Show>
-                  <span
-                    class="chat-fb-breadcrumb-segment"
-                    onClick={() => navigateTo(seg.path)}
-                  >
-                    {seg.label}
-                  </span>
-                </>
-              )}
-            </For>
-          </div>
-
-          {/* 文件列表 */}
-          <div class="chat-fb-list">
-            <Show when={loading()}>
-              <div class="chat-fb-empty">
-                <SnakeLoader />
-              </div>
-            </Show>
-            <Show when={!loading() && loadError()}>
-              <div class="chat-fb-preview-error">{loadError()}</div>
-            </Show>
-            <Show when={!loading() && !loadError() && items().length === 0}>
-              <div class="chat-fb-empty">Empty directory</div>
-            </Show>
-            <Show when={!loading() && !loadError() && items().length > 0}>
-              <For each={items()}>
-                {(item) => (
-                  <div
-                    class={`chat-fb-item ${item.type === 'folder' ? 'chat-fb-item-folder' : ''}`}
-                    onClick={() => handleItemClick(item)}
-                  >
-                    <span class="chat-fb-item-icon">
-                      {item.type === 'folder' ? <Folder class="w-full h-full" /> : <FileText class="w-full h-full" />}
-                    </span>
-                    <span class="chat-fb-item-name" title={item.name}>{item.name}</span>
-                    <Show when={item.type === 'file' && item.size != null}>
-                      <span class="chat-fb-item-size">{formatSize(item.size)}</span>
-                    </Show>
-                  </div>
-                )}
-              </For>
-            </Show>
-          </div>
+        <div class="h-full relative">
+          <Show when={resetSeq() + 1} keyed>
+            {(_seq) => (
+              <FileBrowser
+                files={files()}
+                initialPath={initialPath()}
+                initialViewMode="list"
+                homeLabel="Home"
+                sidebarWidth={200}
+                persistenceKey="chat-fab-files"
+                instanceId="chat-fab-files"
+                onNavigate={(path) => {
+                  const target = normalizePath(path);
+                  setCurrentBrowserPath(target);
+                  void (async () => {
+                    await loadPathChain(target);
+                  })();
+                }}
+                onOpen={(item) => void openPreview(item)}
+                contextMenuCallbacks={ctxMenu}
+                class="h-full border-0 rounded-none shadow-none"
+              />
+            )}
+          </Show>
+          <LoadingOverlay visible={loading()} message="Loading files..." />
         </div>
       </FloatingWindow>
 
-      {/* 文件预览 FloatingWindow */}
+      {/* File preview floating window */}
       <FloatingWindow
         open={previewOpen()}
         onOpenChange={(open) => {
@@ -361,58 +745,135 @@ export function ChatFileBrowserFAB(props: ChatFileBrowserFABProps) {
           if (!open) {
             previewReqSeq += 1;
             cleanupPreview();
+            setPreviewItem(null);
           }
         }}
-        title={previewName() || 'File Preview'}
+        title={previewItem()?.name ?? 'File Preview'}
         defaultSize={{ width: 720, height: 520 }}
         minSize={{ width: 400, height: 300 }}
-        zIndex={110}
+        zIndex={FILE_PREVIEW_WINDOW_Z_INDEX}
       >
-        <div class="flex flex-col h-full relative">
-          {/* 路径显示 */}
-          <div class="chat-fb-preview-path" title={previewPath()}>
-            {previewPath()}
+        <div class="h-full flex flex-col min-h-0">
+          <div class="px-3 py-2 border-b border-border text-[11px] text-muted-foreground font-mono truncate">
+            {previewItem()?.path}
           </div>
 
-          {/* 加载遮罩 */}
-          <Show when={previewLoading()}>
-            <div class="chat-fb-preview-loading">
-              <SnakeLoader />
-            </div>
-          </Show>
+          <div class="flex-1 min-h-0 overflow-auto relative bg-background">
+            <Show when={previewMode() === 'text' && !previewError()}>
+              <pre class="p-3 text-xs leading-relaxed font-mono whitespace-pre-wrap break-words select-text">
+                {previewText()}
+              </pre>
+            </Show>
 
-          {/* 错误状态 */}
-          <Show when={previewError()}>
-            <div class="chat-fb-preview-error">{previewError()}</div>
-          </Show>
+            <Show when={previewMode() === 'image' && !previewError()}>
+              <div class="p-3 h-full flex items-center justify-center">
+                <img
+                  src={previewObjectUrl()!}
+                  alt={previewItem()?.name ?? 'Preview'}
+                  class="max-w-full max-h-full object-contain"
+                />
+              </div>
+            </Show>
 
-          {/* 文本预览 */}
-          <Show when={!previewError() && previewMode() === 'text' && previewContent() != null}>
-            <pre
-              class="flex-1 overflow-auto p-3 text-xs font-mono whitespace-pre-wrap break-words"
-              style={{ margin: 0 }}
-            >
-              {previewContent()}
-            </pre>
-          </Show>
+            <Show when={(previewMode() === 'binary' || previewMode() === 'unsupported') && !previewError() && !previewLoading()}>
+              <div class="p-4 text-sm text-muted-foreground">
+                <div class="font-medium text-foreground mb-1">
+                  {previewMode() === 'binary' ? 'Binary file' : 'Preview not available'}
+                </div>
+                <div class="text-xs">Preview is not available for this file type.</div>
+              </div>
+            </Show>
 
-          {/* 图片预览 */}
-          <Show when={!previewError() && previewMode() === 'image' && previewImageUrl()}>
-            <div class="flex-1 overflow-auto flex items-center justify-center p-3">
-              <img
-                src={previewImageUrl()!}
-                alt={previewName()}
-                style={{ 'max-width': '100%', 'max-height': '100%', 'object-fit': 'contain' }}
-              />
-            </div>
-          </Show>
+            <Show when={previewError()}>
+              <div class="p-4 text-sm text-error">
+                <div class="font-medium mb-1">Failed to load file</div>
+                <div class="text-xs text-muted-foreground">{previewError()}</div>
+              </div>
+            </Show>
 
-          {/* 不支持预览 */}
-          <Show when={!previewError() && !previewLoading() && previewMode() === 'unsupported'}>
-            <div class="chat-fb-preview-unsupported">Preview not available for this file type</div>
-          </Show>
+            <LoadingOverlay visible={previewLoading()} message="Loading file..." />
+          </div>
         </div>
       </FloatingWindow>
+
+      <ConfirmDialog
+        open={deleteDialogOpen()}
+        onOpenChange={(open) => {
+          if (!open) setDeleteDialogOpen(false);
+        }}
+        title="Delete"
+        confirmText="Delete"
+        variant="destructive"
+        loading={deleteLoading()}
+        onConfirm={() => void handleDelete(deleteDialogItems())}
+      >
+        <div class="text-sm text-foreground">
+          <Show
+            when={deleteDialogItems().length === 1}
+            fallback={(
+              <>
+                Are you sure you want to delete <span class="font-semibold">{deleteDialogItems().length} items</span>?
+              </>
+            )}
+          >
+            Are you sure you want to delete <span class="font-semibold">"{deleteDialogItems()[0]?.name}"</span>?
+          </Show>
+        </div>
+      </ConfirmDialog>
+
+      <InputDialog
+        open={renameDialogOpen()}
+        title="Rename"
+        label="New name"
+        value={renameDialogItem()?.name ?? ''}
+        loading={renameLoading()}
+        onConfirm={(newName) => {
+          const item = renameDialogItem();
+          if (item) void handleRename(item, newName);
+        }}
+        onCancel={() => setRenameDialogOpen(false)}
+      />
+
+      <DirectoryPicker
+        open={moveToDialogOpen()}
+        onOpenChange={(open) => {
+          if (!open) setMoveToDialogOpen(false);
+        }}
+        files={files()}
+        initialPath={currentBrowserPath()}
+        homeLabel="Home"
+        title="Move To"
+        confirmText="Move"
+        onSelect={(dirPath) => {
+          const item = moveToDialogItem();
+          if (item) void handleMoveTo(item, dirPath);
+        }}
+      />
+
+      <FileSavePicker
+        open={copyToDialogOpen()}
+        onOpenChange={(open) => {
+          if (!open) setCopyToDialogOpen(false);
+        }}
+        files={files()}
+        initialPath={currentBrowserPath()}
+        homeLabel="Home"
+        initialFileName={copyToDialogItem()?.name ?? ''}
+        title="Copy To"
+        confirmText="Copy"
+        onSave={(dirPath, fileName) => {
+          const item = copyToDialogItem();
+          if (item) void handleCopyTo(item, dirPath, fileName);
+        }}
+      />
+
+      <Show when={duplicateLoading() || moveToLoading() || copyToLoading()}>
+        <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/30 pointer-events-none">
+          <div class="bg-background border border-border rounded-lg shadow-lg px-4 py-3 text-sm">
+            {duplicateLoading() ? 'Duplicating...' : moveToLoading() ? 'Moving...' : 'Copying...'}
+          </div>
+        </div>
+      </Show>
     </>
   );
 }
