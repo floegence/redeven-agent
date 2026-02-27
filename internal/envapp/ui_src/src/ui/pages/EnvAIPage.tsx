@@ -1891,6 +1891,7 @@ export function EnvAIPage() {
   const [chatReady, setChatReady] = createSignal(false);
   const [chatInputApi, setChatInputApi] = createSignal<AIChatInputApi | null>(null);
   let queuedAskFlowerIntents: AskFlowerIntent[] = [];
+  let messageAreaRef: HTMLDivElement | undefined;
 
   // Working dir (draft-only; locked after thread creation)
   const [homePath, setHomePath] = createSignal<string | undefined>(undefined);
@@ -3639,7 +3640,7 @@ export function EnvAIPage() {
               }
             >
               {/* Chat area — sidebar is managed by Shell */}
-          <div class="flex-1 min-w-0 flex flex-col h-full relative">
+          <div class="flex-1 min-w-0 flex flex-col h-full">
             {/* Header */}
             <div class="chat-header border-b border-border/80 bg-background/95 backdrop-blur-md max-sm:flex-col max-sm:items-stretch max-sm:gap-2">
               <div class="chat-header-title flex items-center gap-2 min-w-0 w-full sm:w-auto">
@@ -3757,14 +3758,22 @@ export function EnvAIPage() {
               </div>
             </Show>
 
-            {/* Message list with empty state */}
-            <MessageListWithEmptyState
-              hasMessages={hasMessages()}
-              loading={messagesLoading()}
-              onSuggestionClick={handleSuggestionClick}
-              disabled={!canInteract()}
-              class="flex-1 min-h-0"
-            />
+            {/* Message list with empty state + file browser FAB */}
+            <div ref={messageAreaRef} class="flex-1 min-h-0 relative">
+              <MessageListWithEmptyState
+                hasMessages={hasMessages()}
+                loading={messagesLoading()}
+                onSuggestionClick={handleSuggestionClick}
+                disabled={!canInteract()}
+                class="h-full"
+              />
+              <ChatFileBrowserFAB
+                workingDir={activeWorkingDir()}
+                homePath={homePath()}
+                enabled={canInteract() && protocol.status() === 'connected'}
+                containerRef={messageAreaRef}
+              />
+            </div>
 
             {/* Keep indicator mounted and toggle visibility via display to avoid mount/unmount jitter. */}
             <div style={{ display: showWorkingIndicator() ? '' : 'none' }}>
@@ -3893,11 +3902,6 @@ export function EnvAIPage() {
               onPickWorkingDir={() => setWorkingDirPickerOpen(true)}
               onEditWorkingDir={() => openWorkingDirEditor()}
               onApiReady={setChatInputApi}
-            />
-            <ChatFileBrowserFAB
-              workingDir={activeWorkingDir()}
-              homePath={homePath()}
-              enabled={canInteract() && protocol.status() === 'connected'}
             />
           </div>
         </Show>

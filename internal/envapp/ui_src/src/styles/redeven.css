@@ -1270,8 +1270,8 @@ a.chat-sources-cell-url:focus-visible {
 
 .redeven-fab-file-browser {
   position: absolute;
-  right: 1rem;
-  bottom: 5.5rem;
+  right: 12px;
+  bottom: 12px;
   z-index: 40;
   touch-action: none;
 }
@@ -1290,9 +1290,9 @@ a.chat-sources-cell-url:focus-visible {
   box-shadow:
     0 2px 8px hsl(var(--primary) / 0.3),
     0 1px 3px rgba(0, 0, 0, 0.1);
-  transition:
-    box-shadow 0.15s ease;
+  transition: box-shadow 0.15s ease;
   touch-action: none;
+  user-select: none;
 }
 
 .redeven-fab-file-browser-btn:hover {
