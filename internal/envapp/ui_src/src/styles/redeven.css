@@ -1283,13 +1283,14 @@ a.chat-sources-cell-url:focus-visible {
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 1.5px solid hsl(var(--border));
   cursor: grab;
   background: color-mix(in srgb, hsl(var(--background)) 85%, transparent);
   color: hsl(var(--primary));
+  /* Ring: inner halo (background) → border ring → drop shadow */
   box-shadow:
-    0 0 0 3px hsl(var(--background)),
-    0 2px 8px rgb(0 0 0 / 0.1);
+    0 0 0 1.5px hsl(var(--border)),
+    0 0 0 4px hsl(var(--background)),
+    0 2px 8px rgb(0 0 0 / 0.12);
   transition: box-shadow 0.15s ease, background 0.15s ease;
   touch-action: none;
   user-select: none;
@@ -1299,8 +1300,9 @@ a.chat-sources-cell-url:focus-visible {
 .redeven-fab-file-browser-btn:hover {
   background: hsl(var(--accent));
   box-shadow:
-    0 0 0 3px hsl(var(--background)),
-    0 4px 12px rgb(0 0 0 / 0.15);
+    0 0 0 1.5px hsl(var(--border)),
+    0 0 0 4px hsl(var(--background)),
+    0 4px 12px rgb(0 0 0 / 0.18);
 }
 
 .redeven-fab-file-browser-btn:active {
