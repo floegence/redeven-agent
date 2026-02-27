@@ -1,4 +1,5 @@
-// Floating file browser FAB for the chat page
+// Floating file browser FAB for the chat page.
+// The FAB lives inside the message area and can be dragged to any edge.
 import { Show, createEffect, createMemo, createSignal, onCleanup, untrack } from 'solid-js';
 import { Motion } from 'solid-motionone';
 import { Folder } from '@floegence/floe-webapp-core/icons';
@@ -14,6 +15,8 @@ export interface ChatFileBrowserFABProps {
   workingDir: string;
   homePath?: string;
   enabled?: boolean;
+  /** Ref to the container element that bounds the FAB drag area. */
+  containerRef?: HTMLElement;
 }
 
 // ---- helpers ----
@@ -82,6 +85,8 @@ function withChildren(tree: FileItem[], folderPath: string, children: FileItem[]
 
 const MAX_PREVIEW_BYTES = 5 * 1024 * 1024;
 const SNIFF_BYTES = 64 * 1024;
+const FAB_SIZE = 44;
+const EDGE_MARGIN = 12;
 
 // ---- component ----
 
@@ -104,23 +109,25 @@ export function ChatFileBrowserFAB(props: ChatFileBrowserFABProps) {
   const [previewError, setPreviewError] = createSignal<string | null>(null);
   const [previewMode, setPreviewMode] = createSignal<'text' | 'image' | 'binary' | 'unsupported'>('unsupported');
 
-  // -- FAB drag state --
-  const [fabPos, setFabPos] = createSignal<{ x: number; y: number } | null>(null);
-  let dragState: { startX: number; startY: number; origX: number; origY: number } | null = null;
+  // -- FAB position (px from container top-left) --
+  // null = use default CSS position (bottom-right)
+  const [fabLeft, setFabLeft] = createSignal<number | null>(null);
+  const [fabTop, setFabTop] = createSignal<number | null>(null);
+  const [isDragging, setIsDragging] = createSignal(false);
+  const [isSnapping, setIsSnapping] = createSignal(false);
+  let dragStart: { px: number; py: number; fabLeft: number; fabTop: number } | null = null;
 
   // -- dir loading plumbing --
   let cache = new Map<string, FileItem[]>();
   let dirReqSeq = 0;
   let lastLoadedPath = '/';
 
-  // when workingDir or enabled changes, reset and navigate
   const initialPath = createMemo(() => normalizePath(props.workingDir));
 
   createEffect(() => {
     const wd = initialPath();
     const enabled = props.enabled ?? true;
     if (!enabled || !wd || wd === '/') return;
-    // reset cache for new working dir
     cache = new Map();
     setFiles([]);
     setResetSeq((n) => n + 1);
@@ -223,7 +230,6 @@ export function ChatFileBrowserFAB(props: ChatFileBrowserFABProps) {
         if (seq !== previewReqSeq) return;
         setPreviewText(new TextDecoder('utf-8', { fatal: false }).decode(bytes));
       } else {
-        // sniff unknown format
         const { bytes } = await readFileBytesOnce({ client, path: item.path, maxBytes: SNIFF_BYTES });
         if (seq !== previewReqSeq) return;
         if (isLikelyTextContent(bytes)) {
@@ -249,38 +255,121 @@ export function ChatFileBrowserFAB(props: ChatFileBrowserFABProps) {
 
   onCleanup(() => cleanupPreview());
 
+  // -- Snap to nearest edge of the container --
+  function snapToEdge(left: number, top: number) {
+    const ct = props.containerRef;
+    if (!ct) {
+      // no container, just keep position
+      setFabLeft(left);
+      setFabTop(top);
+      return;
+    }
+    const cw = ct.clientWidth;
+    const ch = ct.clientHeight;
+
+    // clamp inside container
+    const clampedLeft = Math.max(EDGE_MARGIN, Math.min(left, cw - FAB_SIZE - EDGE_MARGIN));
+    const clampedTop = Math.max(EDGE_MARGIN, Math.min(top, ch - FAB_SIZE - EDGE_MARGIN));
+
+    // distance to each edge
+    const dLeft = clampedLeft;
+    const dRight = cw - FAB_SIZE - clampedLeft;
+    const dTop = clampedTop;
+    const dBottom = ch - FAB_SIZE - clampedTop;
+
+    const minDist = Math.min(dLeft, dRight, dTop, dBottom);
+
+    let snapLeft = clampedLeft;
+    let snapTop = clampedTop;
+
+    // snap to nearest horizontal edge (left/right preference)
+    if (minDist === dLeft) {
+      snapLeft = EDGE_MARGIN;
+    } else if (minDist === dRight) {
+      snapLeft = cw - FAB_SIZE - EDGE_MARGIN;
+    } else if (minDist === dTop) {
+      snapTop = EDGE_MARGIN;
+    } else {
+      snapTop = ch - FAB_SIZE - EDGE_MARGIN;
+    }
+
+    setIsSnapping(true);
+    setFabLeft(snapLeft);
+    setFabTop(snapTop);
+    // remove snapping transition flag after animation
+    requestAnimationFrame(() => {
+      setTimeout(() => setIsSnapping(false), 250);
+    });
+  }
+
   // -- FAB drag handlers --
 
   function onFabPointerDown(e: PointerEvent) {
     if (e.button !== 0) return;
     const btn = e.currentTarget as HTMLElement;
     btn.setPointerCapture(e.pointerId);
-    const pos = fabPos();
-    dragState = {
-      startX: e.clientX,
-      startY: e.clientY,
-      origX: pos?.x ?? 0,
-      origY: pos?.y ?? 0,
+
+    // if first interaction, compute initial position from the element's offset
+    let currentLeft = fabLeft();
+    let currentTop = fabTop();
+    if (currentLeft == null || currentTop == null) {
+      const ct = props.containerRef;
+      if (ct) {
+        const cw = ct.clientWidth;
+        const ch = ct.clientHeight;
+        currentLeft = cw - FAB_SIZE - EDGE_MARGIN;
+        currentTop = ch - FAB_SIZE - EDGE_MARGIN;
+      } else {
+        currentLeft = 0;
+        currentTop = 0;
+      }
+      setFabLeft(currentLeft);
+      setFabTop(currentTop);
+    }
+
+    dragStart = {
+      px: e.clientX,
+      py: e.clientY,
+      fabLeft: currentLeft,
+      fabTop: currentTop,
     };
   }
 
   function onFabPointerMove(e: PointerEvent) {
-    if (!dragState) return;
-    const dx = e.clientX - dragState.startX;
-    const dy = e.clientY - dragState.startY;
-    // only start actual movement after 4px to distinguish click vs drag
-    if (Math.abs(dx) < 4 && Math.abs(dy) < 4) return;
-    setFabPos({ x: dragState.origX + dx, y: dragState.origY + dy });
+    if (!dragStart) return;
+    const dx = e.clientX - dragStart.px;
+    const dy = e.clientY - dragStart.py;
+    // dead zone to distinguish click from drag
+    if (!isDragging() && Math.abs(dx) < 4 && Math.abs(dy) < 4) return;
+    setIsDragging(true);
+
+    let newLeft = dragStart.fabLeft + dx;
+    let newTop = dragStart.fabTop + dy;
+
+    // clamp to container during drag
+    const ct = props.containerRef;
+    if (ct) {
+      const cw = ct.clientWidth;
+      const ch = ct.clientHeight;
+      newLeft = Math.max(0, Math.min(newLeft, cw - FAB_SIZE));
+      newTop = Math.max(0, Math.min(newTop, ch - FAB_SIZE));
+    }
+
+    setFabLeft(newLeft);
+    setFabTop(newTop);
   }
 
-  function onFabPointerUp(e: PointerEvent) {
-    if (!dragState) return;
-    const dx = e.clientX - dragState.startX;
-    const dy = e.clientY - dragState.startY;
-    const wasDrag = Math.abs(dx) >= 4 || Math.abs(dy) >= 4;
-    dragState = null;
-    if (!wasDrag) {
-      // it was a click
+  function onFabPointerUp(_e: PointerEvent) {
+    if (!dragStart) return;
+    const wasDrag = isDragging();
+    dragStart = null;
+    setIsDragging(false);
+
+    if (wasDrag) {
+      // snap to nearest edge
+      snapToEdge(fabLeft()!, fabTop()!);
+    } else {
+      // it was a click — open file browser
       if (!untrack(initialPath) || untrack(initialPath) === '/') return;
       const wd = untrack(initialPath);
       if (!untrack(() => files().length)) {
@@ -293,19 +382,33 @@ export function ChatFileBrowserFAB(props: ChatFileBrowserFABProps) {
   const showFab = () => (props.enabled ?? true) && !browserOpen();
 
   const fabStyle = () => {
-    const pos = fabPos();
-    if (!pos) return {};
-    return { transform: `translate(${pos.x}px, ${pos.y}px)` };
+    const left = fabLeft();
+    const top = fabTop();
+    if (left == null || top == null) {
+      // default position: bottom-right via CSS
+      return {};
+    }
+    return {
+      left: `${left}px`,
+      top: `${top}px`,
+      // clear CSS defaults when using explicit position
+      right: 'auto',
+      bottom: 'auto',
+      transition: isSnapping() ? 'left 0.25s ease-out, top 0.25s ease-out' : 'none',
+    };
   };
 
   return (
     <>
       {/* FAB draggable button */}
       <Show when={showFab()}>
-        <div class="redeven-fab-file-browser" style={fabStyle()}>
+        <div
+          class="redeven-fab-file-browser"
+          style={fabStyle()}
+        >
           <Motion.div
-            initial={{ opacity: 0, scale: 0.6, y: 12 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
+            initial={{ opacity: 0, scale: 0.6 }}
+            animate={{ opacity: 1, scale: 1 }}
             transition={{ duration: 0.3, easing: 'ease-out' }}
           >
             <button
@@ -346,7 +449,7 @@ export function ChatFileBrowserFAB(props: ChatFileBrowserFABProps) {
                 onNavigate={(path) => {
                   const target = normalizePath(path);
                   void (async () => {
-                    const result = await loadPathChain(target);
+                    await loadPathChain(target);
                   })();
                 }}
                 onOpen={(item) => void openPreview(item)}
