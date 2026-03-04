@@ -231,6 +231,67 @@ func TestSnapshotAssistantMessageJSON_UsesAskUserQuestionWhenMarkdownEmpty(t *te
 	}
 }
 
+func TestSnapshotWaitingPrompt_ExtractsStructuredChoices(t *testing.T) {
+	t.Parallel()
+
+	r := &run{
+		messageID: "msg_waiting_prompt_structured",
+		assistantBlocks: []any{
+			ToolCallBlock{
+				Type:     "tool-call",
+				ToolName: "ask_user",
+				ToolID:   "tool_waiting_prompt_structured",
+				Status:   ToolCallStatusSuccess,
+				Result: map[string]any{
+					"question":     "Need your confirmation",
+					"waiting_user": true,
+					"choices": []any{
+						map[string]any{
+							"choice_id": "switch_to_act",
+							"label":     "Switch to Act mode",
+							"actions": []any{
+								map[string]any{
+									"type": "set_mode",
+									"mode": "act",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	prompt := r.snapshotWaitingPrompt()
+	if prompt == nil {
+		t.Fatalf("snapshotWaitingPrompt returned nil")
+	}
+	if got := strings.TrimSpace(prompt.PromptID); got == "" {
+		t.Fatalf("PromptID should not be empty")
+	}
+	if got := strings.TrimSpace(prompt.ToolID); got != "tool_waiting_prompt_structured" {
+		t.Fatalf("ToolID=%q, want %q", got, "tool_waiting_prompt_structured")
+	}
+	if len(prompt.Choices) != 1 {
+		t.Fatalf("choices len=%d, want 1", len(prompt.Choices))
+	}
+	if got := strings.TrimSpace(prompt.Choices[0].ChoiceID); got != "switch_to_act" {
+		t.Fatalf("choice_id=%q, want %q", got, "switch_to_act")
+	}
+	if got := strings.TrimSpace(prompt.Choices[0].Label); got != "Switch to Act mode" {
+		t.Fatalf("label=%q, want %q", got, "Switch to Act mode")
+	}
+	if len(prompt.Choices[0].Actions) != 1 {
+		t.Fatalf("actions len=%d, want 1", len(prompt.Choices[0].Actions))
+	}
+	if got := strings.TrimSpace(prompt.Choices[0].Actions[0].Type); got != waitingPromptActionSetMode {
+		t.Fatalf("action type=%q, want %q", got, waitingPromptActionSetMode)
+	}
+	if got := strings.TrimSpace(prompt.Choices[0].Actions[0].Mode); got != "act" {
+		t.Fatalf("action mode=%q, want %q", got, "act")
+	}
+}
+
 func TestSnapshotAssistantMessageJSON_PrefersMarkdownOverAskUserQuestion(t *testing.T) {
 	t.Parallel()
 
@@ -265,5 +326,31 @@ func TestSnapshotAssistantMessageJSON_PrefersMarkdownOverAskUserQuestion(t *test
 	role, _ := parsed["role"].(string)
 	if strings.TrimSpace(role) != "assistant" {
 		t.Fatalf("role=%v, want assistant", parsed["role"])
+	}
+}
+
+func TestSnapshotAssistantMessageJSONWithStatus_Streaming(t *testing.T) {
+	t.Parallel()
+
+	r := &run{
+		messageID:                "msg_streaming_snapshot",
+		assistantCreatedAtUnixMs: 1700000000002,
+		assistantBlocks: []any{
+			&persistedMarkdownBlock{Type: "markdown", Content: "streaming now"},
+		},
+	}
+
+	rawJSON, _, _, err := r.snapshotAssistantMessageJSONWithStatus("streaming")
+	if err != nil {
+		t.Fatalf("snapshotAssistantMessageJSONWithStatus: %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(rawJSON), &parsed); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	gotStatus, _ := parsed["status"].(string)
+	if strings.TrimSpace(gotStatus) != "streaming" {
+		t.Fatalf("status=%q, want streaming", gotStatus)
 	}
 }

@@ -321,16 +321,19 @@ func (a *threadActor) handleSendUserTurn(ctx context.Context, meta *session.Meta
 		return SendUserTurnResponse{}, errors.New("invalid request")
 	}
 	expected := strings.TrimSpace(req.ExpectedRunID)
-	replyToWaitingPromptID := strings.TrimSpace(req.ReplyToWaitingPromptID)
-	activeRunID, activeRun := a.lookupActiveRun(endpointID, threadID)
+	waitingResponse := normalizeWaitingPromptResponse(req.WaitingResponse)
+	activeRunID, _ := a.lookupActiveRun(endpointID, threadID)
 	if activeRunID != "" && expected != "" && expected != activeRunID {
 		return SendUserTurnResponse{}, ErrRunChanged
 	}
 
 	consumedWaitingPromptID := ""
+	appliedExecutionMode := ""
+	appliedWaitingChoiceID := ""
 	a.mgr.svc.mu.Lock()
 	db := a.mgr.svc.threadsDB
 	persistTO := a.mgr.svc.persistOpTO
+	cfg := a.mgr.svc.cfg
 	a.mgr.svc.mu.Unlock()
 	if db == nil {
 		return SendUserTurnResponse{}, errors.New("threads store not ready")
@@ -358,49 +361,50 @@ func (a *threadActor) handleSendUserTurn(ctx context.Context, meta *session.Meta
 		}
 		req.Model = lockedModelID
 	}
+	modeFallback := "act"
+	if cfg != nil {
+		modeFallback = cfg.EffectiveMode()
+	}
+	resolvedExecutionMode := normalizeRunMode(strings.TrimSpace(th.ExecutionMode), modeFallback)
 	openWaitingPrompt := waitingPromptFromThreadRecord(th, th.RunStatus)
 	if openWaitingPrompt != nil {
-		if replyToWaitingPromptID == "" || strings.TrimSpace(openWaitingPrompt.PromptID) != replyToWaitingPromptID {
+		if waitingResponse == nil || strings.TrimSpace(openWaitingPrompt.PromptID) != strings.TrimSpace(waitingResponse.PromptID) {
 			return SendUserTurnResponse{}, ErrWaitingPromptChanged
 		}
 		consumedWaitingPromptID = strings.TrimSpace(openWaitingPrompt.PromptID)
-	} else if replyToWaitingPromptID != "" {
+		if strings.TrimSpace(waitingResponse.ChoiceID) != "" {
+			selectedChoice, ok := waitingPromptChoiceByID(openWaitingPrompt.Choices, waitingResponse.ChoiceID)
+			if !ok || selectedChoice == nil {
+				return SendUserTurnResponse{}, ErrWaitingPromptChanged
+			}
+			appliedWaitingChoiceID = strings.TrimSpace(selectedChoice.ChoiceID)
+			nextExecutionMode := resolvedExecutionMode
+			for _, action := range selectedChoice.Actions {
+				normalizedAction, ok := normalizeWaitingPromptAction(action)
+				if !ok {
+					continue
+				}
+				if normalizedAction.Type == waitingPromptActionSetMode {
+					nextExecutionMode = normalizeRunMode(normalizedAction.Mode, resolvedExecutionMode)
+				}
+			}
+			if nextExecutionMode != resolvedExecutionMode {
+				uctx, ucancel := context.WithTimeout(ctx, persistTO)
+				if err := db.UpdateThreadExecutionMode(uctx, endpointID, threadID, nextExecutionMode); err != nil {
+					ucancel()
+					return SendUserTurnResponse{}, err
+				}
+				ucancel()
+				resolvedExecutionMode = nextExecutionMode
+				th.ExecutionMode = nextExecutionMode
+				a.mgr.svc.broadcastThreadSummary(endpointID, threadID)
+			}
+		}
+	} else if waitingResponse != nil {
 		return SendUserTurnResponse{}, ErrWaitingPromptChanged
 	}
-
-	shouldAutoRewind := activeRunID != "" && consumedWaitingPromptID == "" && replyToWaitingPromptID == ""
-	if shouldAutoRewind {
-		// Avoid a destructive rewind on invalid/empty input.
-		hasText := strings.TrimSpace(req.Input.Text) != ""
-		hasAttachment := false
-		for _, a := range req.Input.Attachments {
-			if strings.TrimSpace(a.URL) != "" {
-				hasAttachment = true
-				break
-			}
-		}
-		if !hasText && !hasAttachment {
-			return SendUserTurnResponse{}, errors.New("empty input")
-		}
-
-		_ = a.mgr.svc.CancelRun(meta, activeRunID)
-		if activeRun != nil && activeRun.doneCh != nil {
-			timer := time.NewTimer(3 * time.Second)
-			defer timer.Stop()
-			select {
-			case <-activeRun.doneCh:
-			case <-timer.C:
-			case <-ctx.Done():
-			}
-		}
-
-		cpID := checkpointIDForRun(activeRunID)
-		if strings.TrimSpace(cpID) != "" {
-			if _, err := a.mgr.svc.rewindThreadCheckpoint(ctx, meta, endpointID, threadID, cpID, "update_user_turn"); err != nil && !errors.Is(err, ErrNoCheckpoint) {
-				return SendUserTurnResponse{}, err
-			}
-		}
-	}
+	req.Options.Mode = resolvedExecutionMode
+	appliedExecutionMode = resolvedExecutionMode
 
 	runID, err := NewRunID()
 	if err != nil {
@@ -428,10 +432,8 @@ func (a *threadActor) handleSendUserTurn(ctx context.Context, meta *session.Meta
 	a.mgr.svc.broadcastTranscriptMessage(endpointID, threadID, "", persisted.RowID, persisted.MessageJSON, persisted.CreatedAtUnixMs)
 	a.mgr.svc.broadcastThreadSummary(endpointID, threadID)
 
-	if !shouldAutoRewind {
-		activeRunID, _ = a.lookupActiveRun(endpointID, threadID)
-	}
-	if activeRunID != "" && !shouldAutoRewind {
+	activeRunID, _ = a.lookupActiveRun(endpointID, threadID)
+	if activeRunID != "" {
 		if err := a.mgr.svc.CancelRun(meta, activeRunID); err != nil {
 			return SendUserTurnResponse{}, err
 		}
@@ -446,7 +448,13 @@ func (a *threadActor) handleSendUserTurn(ctx context.Context, meta *session.Meta
 	if err := a.mgr.svc.StartRunDetachedWithPersisted(meta, runID, startReq, persisted); err != nil {
 		return SendUserTurnResponse{}, err
 	}
-	return SendUserTurnResponse{RunID: runID, Kind: "start", ConsumedWaitingPromptID: consumedWaitingPromptID}, nil
+	return SendUserTurnResponse{
+		RunID:                   runID,
+		Kind:                    "start",
+		ConsumedWaitingPromptID: consumedWaitingPromptID,
+		AppliedExecutionMode:    appliedExecutionMode,
+		AppliedWaitingChoiceID:  appliedWaitingChoiceID,
+	}, nil
 }
 
 func (a *threadActor) handleRewindThread(ctx context.Context, meta *session.Meta, req RewindThreadRequest) (RewindThreadResponse, error) {
