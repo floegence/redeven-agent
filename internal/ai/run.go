@@ -1471,11 +1471,10 @@ func (r *run) handleToolCall(ctx context.Context, toolID string, toolName string
 	dangerous := isDangerousInvocation(toolName, args)
 
 	requireUserApproval := r.cfg.EffectiveRequireUserApproval()
-	enforcePlanModeGuard := r.cfg.EffectiveEnforcePlanModeGuard()
 	blockDangerousCommands := r.cfg.EffectiveBlockDangerousCommands()
 	isPlanMode := strings.TrimSpace(strings.ToLower(r.runMode)) == config.AIModePlan
 	denyDangerous := blockDangerousCommands && dangerous
-	denyPlanMutating := enforcePlanModeGuard && isPlanMode && mutating
+	denyPlanMutating := isPlanMode && mutating
 	commandRisk, normalizedCommand := aitools.InvocationRiskInfo(toolName, args)
 	commandRisk = strings.TrimSpace(commandRisk)
 	normalizedCommand = strings.TrimSpace(normalizedCommand)
@@ -1496,7 +1495,7 @@ func (r *run) handleToolCall(ctx context.Context, toolID string, toolName string
 		policyReason = "dangerous_command_blocked"
 	} else if denyPlanMutating {
 		policyDecision = "deny"
-		policyReason = "plan_mode_guard_blocked"
+		policyReason = "plan_mode_readonly_blocked"
 	} else if requireApprovalForInvocation {
 		policyDecision = "ask"
 		policyReason = "user_approval_required"
@@ -1520,7 +1519,7 @@ func (r *run) handleToolCall(ctx context.Context, toolID string, toolName string
 			"policy_force_readonly_exec":      r.forceReadonlyExec,
 			"policy_require_user_approval":    requireUserApproval,
 			"policy_no_user_interaction":      r.noUserInteraction,
-			"policy_enforce_plan_mode_guard":  enforcePlanModeGuard,
+			"policy_plan_mode_readonly":       isPlanMode,
 			"policy_block_dangerous_commands": blockDangerousCommands,
 		})
 	}
@@ -1551,7 +1550,7 @@ func (r *run) handleToolCall(ctx context.Context, toolID string, toolName string
 		"dangerous", dangerous,
 		"policy_require_user_approval", requireUserApproval,
 		"policy_no_user_interaction", r.noUserInteraction,
-		"policy_enforce_plan_mode_guard", enforcePlanModeGuard,
+		"policy_plan_mode_readonly", isPlanMode,
 		"policy_block_dangerous_commands", blockDangerousCommands,
 		"command_risk", commandRisk,
 		"normalized_command", normalizedCommand,
@@ -1699,11 +1698,11 @@ func (r *run) handleToolCall(ctx context.Context, toolID string, toolName string
 	if denyPlanMutating {
 		toolErr := &aitools.ToolError{
 			Code:      aitools.ErrorCodePermissionDenied,
-			Message:   "Mutating tool call blocked by plan-mode guard policy",
+			Message:   "Mutating tool call blocked by plan-mode readonly policy",
 			Retryable: false,
 			SuggestedFixes: []string{
 				"Switch AI mode to act to enable mutating tools.",
-				"Disable enforce_plan_mode_guard in Settings > AI > Execution policy if you need plan-mode execution.",
+				"If edits are required, call ask_user to request switching to act mode.",
 			},
 		}
 		setToolError(toolErr, "")
@@ -1945,7 +1944,20 @@ func (r *run) emitPersistedToolBlockSet(idx int, block ToolCallBlock) {
 	r.sendStreamEvent(streamEventBlockSet{Type: "block-set", MessageID: r.messageID, BlockIndex: idx, Block: block})
 }
 
-func (r *run) snapshotAssistantMessageJSON() (string, string, int64, error) {
+func normalizeSnapshotMessageStatus(status string) string {
+	switch strings.TrimSpace(strings.ToLower(status)) {
+	case "sending":
+		return "sending"
+	case "streaming":
+		return "streaming"
+	case "error":
+		return "error"
+	default:
+		return "complete"
+	}
+}
+
+func (r *run) snapshotAssistantMessageJSONWithStatus(status string) (string, string, int64, error) {
 	if r == nil {
 		return "", "", 0, errors.New("nil run")
 	}
@@ -1979,7 +1991,7 @@ func (r *run) snapshotAssistantMessageJSON() (string, string, int64, error) {
 		ID:        r.messageID,
 		Role:      "assistant",
 		Blocks:    blocks,
-		Status:    "complete",
+		Status:    normalizeSnapshotMessageStatus(status),
 		Timestamp: assistantAt,
 	}
 	b, err := json.Marshal(msg)
@@ -2014,6 +2026,10 @@ func (r *run) snapshotAssistantMessageJSON() (string, string, int64, error) {
 		assistantText = askUserQuestion
 	}
 	return string(b), assistantText, assistantAt, nil
+}
+
+func (r *run) snapshotAssistantMessageJSON() (string, string, int64, error) {
+	return r.snapshotAssistantMessageJSONWithStatus("complete")
 }
 
 func extractAskUserQuestionFromBlock(block any) string {
@@ -2052,31 +2068,82 @@ func extractAskUserQuestionFromBlock(block any) string {
 	}
 }
 
-func extractAskUserToolIdentity(block any) (toolID string, askUser bool, waitingUser bool) {
+func extractStringListFromAny(value any) []string {
+	switch v := value.(type) {
+	case []string:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			text := strings.TrimSpace(item)
+			if text == "" {
+				continue
+			}
+			out = append(out, text)
+		}
+		return out
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			text, ok := item.(string)
+			if !ok {
+				continue
+			}
+			text = strings.TrimSpace(text)
+			if text == "" {
+				continue
+			}
+			out = append(out, text)
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func extractAskUserChoices(args any, result any) []WaitingPromptChoice {
+	if m, ok := result.(map[string]any); ok && m != nil {
+		if choices := parseWaitingPromptChoicesAny(m["choices"]); len(choices) > 0 {
+			return choices
+		}
+		if options := extractStringListFromAny(m["options"]); len(options) > 0 {
+			return waitingPromptChoicesFromOptions(options)
+		}
+	}
+	if m, ok := args.(map[string]any); ok && m != nil {
+		if choices := parseWaitingPromptChoicesAny(m["choices"]); len(choices) > 0 {
+			return choices
+		}
+		if options := extractStringListFromAny(m["options"]); len(options) > 0 {
+			return waitingPromptChoicesFromOptions(options)
+		}
+	}
+	return nil
+}
+
+func extractAskUserToolIdentity(block any) (toolID string, askUser bool, waitingUser bool, choices []WaitingPromptChoice) {
 	switch v := block.(type) {
 	case ToolCallBlock:
 		if strings.TrimSpace(v.ToolName) != "ask_user" {
-			return "", false, false
+			return "", false, false, nil
 		}
-		return strings.TrimSpace(v.ToolID), true, extractAskUserWaitingFlag(v.Result)
+		return strings.TrimSpace(v.ToolID), true, extractAskUserWaitingFlag(v.Result), extractAskUserChoices(v.Args, v.Result)
 	case *ToolCallBlock:
 		if v == nil || strings.TrimSpace(v.ToolName) != "ask_user" {
-			return "", false, false
+			return "", false, false, nil
 		}
-		return strings.TrimSpace(v.ToolID), true, extractAskUserWaitingFlag(v.Result)
+		return strings.TrimSpace(v.ToolID), true, extractAskUserWaitingFlag(v.Result), extractAskUserChoices(v.Args, v.Result)
 	case map[string]any:
 		typ, _ := v["type"].(string)
 		if strings.TrimSpace(typ) != "tool-call" {
-			return "", false, false
+			return "", false, false, nil
 		}
 		toolName, _ := v["toolName"].(string)
 		if strings.TrimSpace(toolName) != "ask_user" {
-			return "", false, false
+			return "", false, false, nil
 		}
 		toolID, _ := v["toolId"].(string)
-		return strings.TrimSpace(toolID), true, extractAskUserWaitingFlag(v["result"])
+		return strings.TrimSpace(toolID), true, extractAskUserWaitingFlag(v["result"]), extractAskUserChoices(v["args"], v["result"])
 	default:
-		return "", false, false
+		return "", false, false, nil
 	}
 }
 
@@ -2115,22 +2182,24 @@ func (r *run) snapshotWaitingPrompt() *WaitingPrompt {
 		return nil
 	}
 	fallbackToolID := ""
+	fallbackChoices := []WaitingPromptChoice(nil)
 	for i := len(r.assistantBlocks) - 1; i >= 0; i-- {
-		toolID, askUser, waitingUser := extractAskUserToolIdentity(r.assistantBlocks[i])
+		toolID, askUser, waitingUser, choices := extractAskUserToolIdentity(r.assistantBlocks[i])
 		if !askUser || toolID == "" {
 			continue
 		}
 		if waitingUser {
-			return normalizeWaitingPrompt("", messageID, toolID)
+			return normalizeWaitingPrompt("", messageID, toolID, choices)
 		}
 		if fallbackToolID == "" {
 			fallbackToolID = toolID
+			fallbackChoices = choices
 		}
 	}
 	if fallbackToolID == "" {
 		return nil
 	}
-	return normalizeWaitingPrompt("", messageID, fallbackToolID)
+	return normalizeWaitingPrompt("", messageID, fallbackToolID, fallbackChoices)
 }
 
 func extractQuestionFromAny(value any) string {
