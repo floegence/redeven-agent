@@ -24,7 +24,9 @@ type SendUserTurnRequest struct {
 
 type SendUserTurnResponse struct {
 	RunID                   string `json:"run_id"`
-	Kind                    string `json:"kind"` // "start"
+	Kind                    string `json:"kind"` // "start" | "queued"
+	QueueID                 string `json:"queue_id,omitempty"`
+	QueuePosition           int    `json:"queue_position,omitempty"`
 	ConsumedWaitingPromptID string `json:"consumed_waiting_prompt_id,omitempty"`
 	AppliedExecutionMode    string `json:"applied_execution_mode,omitempty"`
 	AppliedWaitingChoiceID  string `json:"applied_waiting_choice_id,omitempty"`

@@ -1838,6 +1838,92 @@ func (g *Gateway) handleAPI(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, apiResp{OK: true, Data: map[string]any{"todos": out}})
 			return
 
+		case action == "queued_turns" && r.Method == http.MethodGet && len(parts) == 2:
+			meta, ok := g.requirePermission(w, r, requiredPermissionFull)
+			if !ok {
+				return
+			}
+			if g.ai == nil {
+				writeJSON(w, http.StatusServiceUnavailable, apiResp{OK: false, Error: "ai service not ready"})
+				return
+			}
+			out, err := g.ai.ListQueuedTurns(r.Context(), meta, threadID, 100)
+			if err != nil {
+				status := http.StatusBadRequest
+				if errors.Is(err, sql.ErrNoRows) {
+					status = http.StatusNotFound
+				}
+				writeJSON(w, status, apiResp{OK: false, Error: err.Error()})
+				return
+			}
+			writeJSON(w, http.StatusOK, apiResp{OK: true, Data: out})
+			return
+
+		case action == "queued_turns" && r.Method == http.MethodPatch && len(parts) == 3:
+			meta, ok := g.requirePermission(w, r, requiredPermissionFull)
+			if !ok {
+				return
+			}
+			if g.ai == nil {
+				writeJSON(w, http.StatusServiceUnavailable, apiResp{OK: false, Error: "ai service not ready"})
+				return
+			}
+			queueID := strings.TrimSpace(parts[2])
+			if queueID == "" {
+				writeJSON(w, http.StatusNotFound, apiResp{OK: false, Error: "not found"})
+				return
+			}
+			dec := json.NewDecoder(r.Body)
+			dec.DisallowUnknownFields()
+			var body ai.PatchQueuedTurnRequest
+			if err := dec.Decode(&body); err != nil {
+				writeJSON(w, http.StatusBadRequest, apiResp{OK: false, Error: "invalid json"})
+				return
+			}
+			if err := dec.Decode(&struct{}{}); err != io.EOF {
+				writeJSON(w, http.StatusBadRequest, apiResp{OK: false, Error: "invalid json"})
+				return
+			}
+			if body.Text == nil {
+				writeJSON(w, http.StatusBadRequest, apiResp{OK: false, Error: "missing fields"})
+				return
+			}
+			if err := g.ai.UpdateQueuedTurn(r.Context(), meta, threadID, queueID, body); err != nil {
+				status := http.StatusBadRequest
+				if errors.Is(err, sql.ErrNoRows) {
+					status = http.StatusNotFound
+				}
+				writeJSON(w, status, apiResp{OK: false, Error: err.Error()})
+				return
+			}
+			writeJSON(w, http.StatusOK, apiResp{OK: true})
+			return
+
+		case action == "queued_turns" && r.Method == http.MethodDelete && len(parts) == 3:
+			meta, ok := g.requirePermission(w, r, requiredPermissionFull)
+			if !ok {
+				return
+			}
+			if g.ai == nil {
+				writeJSON(w, http.StatusServiceUnavailable, apiResp{OK: false, Error: "ai service not ready"})
+				return
+			}
+			queueID := strings.TrimSpace(parts[2])
+			if queueID == "" {
+				writeJSON(w, http.StatusNotFound, apiResp{OK: false, Error: "not found"})
+				return
+			}
+			if err := g.ai.DeleteQueuedTurn(r.Context(), meta, threadID, queueID); err != nil {
+				status := http.StatusBadRequest
+				if errors.Is(err, sql.ErrNoRows) {
+					status = http.StatusNotFound
+				}
+				writeJSON(w, status, apiResp{OK: false, Error: err.Error()})
+				return
+			}
+			writeJSON(w, http.StatusOK, apiResp{OK: true})
+			return
+
 		case action == "messages" && r.Method == http.MethodGet:
 			meta, ok := g.requirePermission(w, r, requiredPermissionFull)
 			if !ok {
