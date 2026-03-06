@@ -140,6 +140,8 @@ export function fromWireAISendUserTurnResponse(resp: wire_ai_send_user_turn_resp
   return {
     runId: String(resp?.run_id ?? '').trim(),
     kind: String(resp?.kind ?? '').trim(),
+    queueId: String(resp?.queue_id ?? '').trim() || undefined,
+    queuePosition: typeof resp?.queue_position === 'number' ? resp.queue_position : undefined,
     consumedWaitingPromptId:
       String(resp?.consumed_waiting_prompt_id ?? '').trim() || undefined,
     appliedExecutionMode: normalizeExecutionMode(resp?.applied_execution_mode),
@@ -302,6 +304,7 @@ export function fromWireAIEventNotify(payload: wire_ai_event_notify): AIRealtime
     lastMessageAtUnixMs: typeof payload?.last_message_at_unix_ms === 'number' ? payload.last_message_at_unix_ms : undefined,
     activeRunId: typeof payload?.active_run_id === 'string' ? payload.active_run_id : undefined,
     executionMode: normalizeExecutionMode(payload?.execution_mode),
+    queuedTurnCount: typeof payload?.queued_turn_count === 'number' ? payload.queued_turn_count : undefined,
 
     resetReason: typeof payload?.reset_reason === 'string' ? payload.reset_reason : undefined,
     resetCheckpointId: typeof payload?.reset_checkpoint_id === 'string' ? payload.reset_checkpoint_id : undefined,

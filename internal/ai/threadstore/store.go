@@ -109,6 +109,26 @@ type Message struct {
 	MessageJSON string `json:"message_json"`
 }
 
+type QueuedTurn struct {
+	QueueID string `json:"queue_id"`
+
+	ThreadID   string `json:"thread_id"`
+	EndpointID string `json:"endpoint_id"`
+	ChannelID  string `json:"channel_id"`
+
+	MessageID string `json:"message_id"`
+	ModelID   string `json:"model_id"`
+
+	TextContent     string `json:"text_content"`
+	AttachmentsJSON string `json:"attachments_json"`
+	OptionsJSON     string `json:"options_json"`
+
+	CreatedByUserPublicID string `json:"created_by_user_public_id"`
+	CreatedByUserEmail    string `json:"created_by_user_email"`
+
+	CreatedAtUnixMs int64 `json:"created_at_unix_ms"`
+}
+
 type ThreadsCursor struct {
 	UpdatedAtUnixMs int64
 	ThreadID        string
@@ -153,6 +173,20 @@ func parseInt64(raw string) (int64, error) {
 		return 0, errors.New("empty")
 	}
 	return strconv.ParseInt(raw, 10, 64)
+}
+
+func isUniqueConstraintError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(strings.TrimSpace(err.Error()))
+	if msg == "" {
+		return false
+	}
+	if strings.Contains(msg, "unique constraint failed") {
+		return true
+	}
+	return strings.Contains(msg, "constraint failed") && strings.Contains(msg, "unique")
 }
 
 func (s *Store) ListThreads(ctx context.Context, endpointID string, limit int, cursor ThreadsCursor) ([]Thread, string, error) {
@@ -682,6 +716,9 @@ func (s *Store) DeleteThread(ctx context.Context, endpointID string, threadID st
 	if _, err := tx.ExecContext(ctx, `DELETE FROM ai_thread_todos WHERE endpoint_id = ? AND thread_id = ?`, endpointID, threadID); err != nil {
 		return err
 	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM ai_queued_turns WHERE endpoint_id = ? AND thread_id = ?`, endpointID, threadID); err != nil {
+		return err
+	}
 	res, err := tx.ExecContext(ctx, `DELETE FROM ai_threads WHERE endpoint_id = ? AND thread_id = ?`, endpointID, threadID)
 	if err != nil {
 		return err
@@ -691,6 +728,427 @@ func (s *Store) DeleteThread(ctx context.Context, endpointID string, threadID st
 		return sql.ErrNoRows
 	}
 	return tx.Commit()
+}
+
+func (s *Store) GetQueuedTurn(ctx context.Context, endpointID string, threadID string, queueID string) (*QueuedTurn, error) {
+	if s == nil || s.db == nil {
+		return nil, errors.New("store not initialized")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	endpointID = strings.TrimSpace(endpointID)
+	threadID = strings.TrimSpace(threadID)
+	queueID = strings.TrimSpace(queueID)
+	if endpointID == "" || threadID == "" || queueID == "" {
+		return nil, errors.New("invalid request")
+	}
+
+	row := s.db.QueryRowContext(ctx, `
+SELECT queue_id, endpoint_id, thread_id, channel_id, message_id, model_id, text_content, attachments_json, options_json,
+       created_by_user_public_id, created_by_user_email, created_at_unix_ms
+FROM ai_queued_turns
+WHERE endpoint_id = ? AND thread_id = ? AND queue_id = ?
+`, endpointID, threadID, queueID)
+	out, err := scanQueuedTurn(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, sql.ErrNoRows
+		}
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (s *Store) EnqueueQueuedTurn(ctx context.Context, rec QueuedTurn) (QueuedTurn, int, error) {
+	if s == nil || s.db == nil {
+		return QueuedTurn{}, 0, errors.New("store not initialized")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	rec.QueueID = strings.TrimSpace(rec.QueueID)
+	rec.EndpointID = strings.TrimSpace(rec.EndpointID)
+	rec.ThreadID = strings.TrimSpace(rec.ThreadID)
+	rec.ChannelID = strings.TrimSpace(rec.ChannelID)
+	rec.MessageID = strings.TrimSpace(rec.MessageID)
+	rec.ModelID = strings.TrimSpace(rec.ModelID)
+	rec.TextContent = strings.TrimSpace(rec.TextContent)
+	rec.AttachmentsJSON = strings.TrimSpace(rec.AttachmentsJSON)
+	rec.OptionsJSON = strings.TrimSpace(rec.OptionsJSON)
+	rec.CreatedByUserPublicID = strings.TrimSpace(rec.CreatedByUserPublicID)
+	rec.CreatedByUserEmail = strings.TrimSpace(rec.CreatedByUserEmail)
+	if rec.QueueID == "" || rec.EndpointID == "" || rec.ThreadID == "" || rec.ChannelID == "" || rec.MessageID == "" {
+		return QueuedTurn{}, 0, errors.New("invalid request")
+	}
+	if rec.AttachmentsJSON == "" {
+		rec.AttachmentsJSON = "[]"
+	}
+	if rec.OptionsJSON == "" {
+		rec.OptionsJSON = "{}"
+	}
+	if rec.CreatedAtUnixMs <= 0 {
+		rec.CreatedAtUnixMs = time.Now().UnixMilli()
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return QueuedTurn{}, 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var exists int
+	if err := tx.QueryRowContext(ctx, `
+SELECT COUNT(1)
+FROM ai_threads
+WHERE endpoint_id = ? AND thread_id = ?
+`, rec.EndpointID, rec.ThreadID).Scan(&exists); err != nil {
+		return QueuedTurn{}, 0, err
+	}
+	if exists == 0 {
+		return QueuedTurn{}, 0, sql.ErrNoRows
+	}
+
+	_, err = tx.ExecContext(ctx, `
+INSERT INTO ai_queued_turns(
+	  queue_id, endpoint_id, thread_id, channel_id, message_id, model_id, text_content, attachments_json, options_json,
+	  created_by_user_public_id, created_by_user_email, created_at_unix_ms
+)
+VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`, rec.QueueID, rec.EndpointID, rec.ThreadID, rec.ChannelID, rec.MessageID, rec.ModelID, rec.TextContent, rec.AttachmentsJSON, rec.OptionsJSON,
+		rec.CreatedByUserPublicID, rec.CreatedByUserEmail, rec.CreatedAtUnixMs)
+	if err != nil {
+		if !isUniqueConstraintError(err) {
+			return QueuedTurn{}, 0, err
+		}
+		existing, getErr := getQueuedTurnByMessageIDTx(ctx, tx, rec.EndpointID, rec.ThreadID, rec.MessageID)
+		if getErr != nil {
+			return QueuedTurn{}, 0, err
+		}
+		position, posErr := queuedTurnPositionTx(ctx, tx, rec.EndpointID, rec.ThreadID, existing.QueueID, existing.CreatedAtUnixMs)
+		if posErr != nil {
+			return QueuedTurn{}, 0, posErr
+		}
+		if commitErr := tx.Commit(); commitErr != nil {
+			return QueuedTurn{}, 0, commitErr
+		}
+		return existing, position, nil
+	}
+
+	position, err := queuedTurnPositionTx(ctx, tx, rec.EndpointID, rec.ThreadID, rec.QueueID, rec.CreatedAtUnixMs)
+	if err != nil {
+		return QueuedTurn{}, 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return QueuedTurn{}, 0, err
+	}
+	return rec, position, nil
+}
+
+func (s *Store) CountQueuedTurns(ctx context.Context, endpointID string, threadID string) (int, error) {
+	if s == nil || s.db == nil {
+		return 0, errors.New("store not initialized")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	endpointID = strings.TrimSpace(endpointID)
+	threadID = strings.TrimSpace(threadID)
+	if endpointID == "" || threadID == "" {
+		return 0, errors.New("invalid request")
+	}
+	var count int
+	err := s.db.QueryRowContext(ctx, `
+SELECT COUNT(1)
+FROM ai_queued_turns
+WHERE endpoint_id = ? AND thread_id = ?
+`, endpointID, threadID).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+func (s *Store) CountQueuedTurnsByThread(ctx context.Context, endpointID string, threadIDs []string) (map[string]int, error) {
+	if s == nil || s.db == nil {
+		return nil, errors.New("store not initialized")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	endpointID = strings.TrimSpace(endpointID)
+	if endpointID == "" {
+		return nil, errors.New("invalid request")
+	}
+	out := make(map[string]int, len(threadIDs))
+	cleanIDs := make([]string, 0, len(threadIDs))
+	seen := make(map[string]struct{}, len(threadIDs))
+	for _, raw := range threadIDs {
+		id := strings.TrimSpace(raw)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		cleanIDs = append(cleanIDs, id)
+		out[id] = 0
+	}
+	if len(cleanIDs) == 0 {
+		return out, nil
+	}
+
+	placeholders := strings.TrimRight(strings.Repeat("?,", len(cleanIDs)), ",")
+	args := make([]any, 0, len(cleanIDs)+1)
+	args = append(args, endpointID)
+	for _, id := range cleanIDs {
+		args = append(args, id)
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+SELECT thread_id, COUNT(1)
+FROM ai_queued_turns
+WHERE endpoint_id = ? AND thread_id IN (`+placeholders+`)
+GROUP BY thread_id
+`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var threadID string
+		var count int
+		if err := rows.Scan(&threadID, &count); err != nil {
+			return nil, err
+		}
+		out[strings.TrimSpace(threadID)] = count
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (s *Store) ListQueuedTurns(ctx context.Context, endpointID string, threadID string, limit int) ([]QueuedTurn, error) {
+	if s == nil || s.db == nil {
+		return nil, errors.New("store not initialized")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	endpointID = strings.TrimSpace(endpointID)
+	threadID = strings.TrimSpace(threadID)
+	if endpointID == "" || threadID == "" {
+		return nil, errors.New("invalid request")
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+SELECT queue_id, endpoint_id, thread_id, channel_id, message_id, model_id, text_content, attachments_json, options_json,
+       created_by_user_public_id, created_by_user_email, created_at_unix_ms
+FROM ai_queued_turns
+WHERE endpoint_id = ? AND thread_id = ?
+ORDER BY created_at_unix_ms ASC, queue_id ASC
+LIMIT ?
+`, endpointID, threadID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]QueuedTurn, 0)
+	for rows.Next() {
+		rec, err := scanQueuedTurn(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, rec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (s *Store) UpdateQueuedTurn(ctx context.Context, endpointID string, threadID string, queueID string, textContent string) error {
+	if s == nil || s.db == nil {
+		return errors.New("store not initialized")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	endpointID = strings.TrimSpace(endpointID)
+	threadID = strings.TrimSpace(threadID)
+	queueID = strings.TrimSpace(queueID)
+	textContent = strings.TrimSpace(textContent)
+	if endpointID == "" || threadID == "" || queueID == "" || textContent == "" {
+		return errors.New("invalid request")
+	}
+	res, err := s.db.ExecContext(ctx, `
+UPDATE ai_queued_turns
+SET text_content = ?
+WHERE endpoint_id = ? AND thread_id = ? AND queue_id = ?
+`, textContent, endpointID, threadID, queueID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *Store) DeleteQueuedTurn(ctx context.Context, endpointID string, threadID string, queueID string) error {
+	if s == nil || s.db == nil {
+		return errors.New("store not initialized")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	endpointID = strings.TrimSpace(endpointID)
+	threadID = strings.TrimSpace(threadID)
+	queueID = strings.TrimSpace(queueID)
+	if endpointID == "" || threadID == "" || queueID == "" {
+		return errors.New("invalid request")
+	}
+	res, err := s.db.ExecContext(ctx, `
+DELETE FROM ai_queued_turns
+WHERE endpoint_id = ? AND thread_id = ? AND queue_id = ?
+`, endpointID, threadID, queueID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *Store) DeleteQueuedTurns(ctx context.Context, endpointID string, threadID string) error {
+	if s == nil || s.db == nil {
+		return errors.New("store not initialized")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	endpointID = strings.TrimSpace(endpointID)
+	threadID = strings.TrimSpace(threadID)
+	if endpointID == "" || threadID == "" {
+		return errors.New("invalid request")
+	}
+	_, err := s.db.ExecContext(ctx, `
+DELETE FROM ai_queued_turns
+WHERE endpoint_id = ? AND thread_id = ?
+`, endpointID, threadID)
+	return err
+}
+
+func (s *Store) PopNextQueuedTurn(ctx context.Context, endpointID string, threadID string) (*QueuedTurn, error) {
+	if s == nil || s.db == nil {
+		return nil, errors.New("store not initialized")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	endpointID = strings.TrimSpace(endpointID)
+	threadID = strings.TrimSpace(threadID)
+	if endpointID == "" || threadID == "" {
+		return nil, errors.New("invalid request")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	rec, err := getNextQueuedTurnTx(ctx, tx, endpointID, threadID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+DELETE FROM ai_queued_turns
+WHERE endpoint_id = ? AND thread_id = ? AND queue_id = ?
+`, endpointID, threadID, rec.QueueID); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return rec, nil
+}
+
+func scanQueuedTurn(scanner interface{ Scan(...any) error }) (QueuedTurn, error) {
+	var rec QueuedTurn
+	err := scanner.Scan(
+		&rec.QueueID,
+		&rec.EndpointID,
+		&rec.ThreadID,
+		&rec.ChannelID,
+		&rec.MessageID,
+		&rec.ModelID,
+		&rec.TextContent,
+		&rec.AttachmentsJSON,
+		&rec.OptionsJSON,
+		&rec.CreatedByUserPublicID,
+		&rec.CreatedByUserEmail,
+		&rec.CreatedAtUnixMs,
+	)
+	if err != nil {
+		return QueuedTurn{}, err
+	}
+	return rec, nil
+}
+
+func getQueuedTurnByMessageIDTx(ctx context.Context, tx *sql.Tx, endpointID string, threadID string, messageID string) (QueuedTurn, error) {
+	row := tx.QueryRowContext(ctx, `
+SELECT queue_id, endpoint_id, thread_id, channel_id, message_id, model_id, text_content, attachments_json, options_json,
+       created_by_user_public_id, created_by_user_email, created_at_unix_ms
+FROM ai_queued_turns
+WHERE endpoint_id = ? AND thread_id = ? AND message_id = ?
+`, endpointID, threadID, messageID)
+	return scanQueuedTurn(row)
+}
+
+func queuedTurnPositionTx(ctx context.Context, tx *sql.Tx, endpointID string, threadID string, queueID string, createdAtUnixMs int64) (int, error) {
+	var count int
+	err := tx.QueryRowContext(ctx, `
+SELECT COUNT(1)
+FROM ai_queued_turns
+WHERE endpoint_id = ? AND thread_id = ?
+  AND (created_at_unix_ms < ? OR (created_at_unix_ms = ? AND queue_id <= ?))
+`, endpointID, threadID, createdAtUnixMs, createdAtUnixMs, queueID).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+func getNextQueuedTurnTx(ctx context.Context, tx *sql.Tx, endpointID string, threadID string) (*QueuedTurn, error) {
+	row := tx.QueryRowContext(ctx, `
+SELECT queue_id, endpoint_id, thread_id, channel_id, message_id, model_id, text_content, attachments_json, options_json,
+       created_by_user_public_id, created_by_user_email, created_at_unix_ms
+FROM ai_queued_turns
+WHERE endpoint_id = ? AND thread_id = ?
+ORDER BY created_at_unix_ms ASC, queue_id ASC
+LIMIT 1
+`, endpointID, threadID)
+	rec, err := scanQueuedTurn(row)
+	if err != nil {
+		return nil, err
+	}
+	return &rec, nil
 }
 
 // AppendMessage inserts a message into the thread and updates thread metadata in the same transaction.
@@ -1638,7 +2096,7 @@ func migrateSchema(db *sql.DB) error {
 	if db == nil {
 		return errors.New("nil db")
 	}
-	const targetVersion = 13
+	const targetVersion = 15
 
 	var v int
 	if err := db.QueryRow(`PRAGMA user_version;`).Scan(&v); err != nil {
@@ -1790,6 +2248,34 @@ WHERE type = 'table' AND name = 'ai_messages'
 `).Scan(&msgExists); err != nil {
 		return err
 	}
+	if _, err := tx.Exec(`
+CREATE TABLE IF NOT EXISTS ai_queued_turns (
+  queue_id TEXT PRIMARY KEY,
+  endpoint_id TEXT NOT NULL,
+  thread_id TEXT NOT NULL,
+  channel_id TEXT NOT NULL DEFAULT '',
+  message_id TEXT NOT NULL DEFAULT '',
+  model_id TEXT NOT NULL DEFAULT '',
+  text_content TEXT NOT NULL DEFAULT '',
+  attachments_json TEXT NOT NULL DEFAULT '[]',
+  options_json TEXT NOT NULL DEFAULT '{}',
+  created_by_user_public_id TEXT NOT NULL DEFAULT '',
+  created_by_user_email TEXT NOT NULL DEFAULT '',
+  created_at_unix_ms INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ai_queued_turns_thread_created ON ai_queued_turns(endpoint_id, thread_id, created_at_unix_ms ASC, queue_id ASC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_queued_turns_message_id ON ai_queued_turns(endpoint_id, thread_id, message_id);
+`); err != nil {
+		return err
+	}
+	if has, err := columnExists(tx, "ai_queued_turns", "channel_id"); err != nil {
+		return err
+	} else if !has {
+		if _, err := tx.Exec(`ALTER TABLE ai_queued_turns ADD COLUMN channel_id TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
+
 	if msgExists == 0 {
 		if _, err := tx.Exec(`
 CREATE TABLE IF NOT EXISTS ai_messages (
@@ -1881,6 +2367,23 @@ CREATE TABLE IF NOT EXISTS ai_thread_todos (
   PRIMARY KEY(endpoint_id, thread_id)
 );
 CREATE INDEX IF NOT EXISTS idx_ai_thread_todos_updated ON ai_thread_todos(endpoint_id, thread_id, updated_at_unix_ms DESC);
+
+CREATE TABLE IF NOT EXISTS ai_queued_turns (
+  queue_id TEXT PRIMARY KEY,
+  endpoint_id TEXT NOT NULL,
+  thread_id TEXT NOT NULL,
+  channel_id TEXT NOT NULL DEFAULT '',
+  message_id TEXT NOT NULL DEFAULT '',
+  model_id TEXT NOT NULL DEFAULT '',
+  text_content TEXT NOT NULL DEFAULT '',
+  attachments_json TEXT NOT NULL DEFAULT '[]',
+  options_json TEXT NOT NULL DEFAULT '{}',
+  created_by_user_public_id TEXT NOT NULL DEFAULT '',
+  created_by_user_email TEXT NOT NULL DEFAULT '',
+  created_at_unix_ms INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ai_queued_turns_thread_created ON ai_queued_turns(endpoint_id, thread_id, created_at_unix_ms ASC, queue_id ASC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_queued_turns_message_id ON ai_queued_turns(endpoint_id, thread_id, message_id);
 
 CREATE TABLE IF NOT EXISTS ai_thread_checkpoints (
   checkpoint_id TEXT PRIMARY KEY,

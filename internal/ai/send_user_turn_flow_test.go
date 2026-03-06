@@ -388,7 +388,7 @@ func TestExecutePreparedRun_WithPersistedUserMessage_ReusesPersistedMessageID(t 
 	}
 }
 
-func TestSendUserTurn_ActiveRun_InterruptsAndStartsNewRun(t *testing.T) {
+func TestSendUserTurn_ActiveRun_QueuesFollowUpWithoutCanceling(t *testing.T) {
 	t.Parallel()
 
 	svc := newSendTurnTestService(t)
@@ -401,7 +401,7 @@ func TestSendUserTurn_ActiveRun_InterruptsAndStartsNewRun(t *testing.T) {
 	}
 
 	baseline, _, err := svc.persistUserMessage(ctx, meta, meta.EndpointID, th.ThreadID, RunInput{
-		Text: "baseline before interrupt",
+		Text: "baseline before queue",
 	})
 	if err != nil {
 		t.Fatalf("persistUserMessage baseline: %v", err)
@@ -429,51 +429,156 @@ func TestSendUserTurn_ActiveRun_InterruptsAndStartsNewRun(t *testing.T) {
 		ThreadID: th.ThreadID,
 		Model:    "openai/gpt-5-mini",
 		Input: RunInput{
-			Text: "interrupt this run",
+			MessageID: "m_client_follow_up_1",
+			Text:      "queue this follow-up",
 		},
 		Options: RunOptions{MaxSteps: 1},
 	})
 	if err != nil {
 		t.Fatalf("SendUserTurn: %v", err)
 	}
-	if resp.Kind != "start" {
-		t.Fatalf("SendUserTurn kind=%q, want start", resp.Kind)
+	if resp.Kind != "queued" {
+		t.Fatalf("SendUserTurn kind=%q, want queued", resp.Kind)
 	}
-	if resp.RunID == "" {
-		t.Fatalf("SendUserTurn run_id is empty")
+	if resp.RunID != "" {
+		t.Fatalf("SendUserTurn run_id=%q, want empty", resp.RunID)
 	}
-	if resp.RunID == activeRunID {
-		t.Fatalf("SendUserTurn run_id=%q, want a new run id", resp.RunID)
+	if strings.TrimSpace(resp.QueueID) == "" {
+		t.Fatalf("SendUserTurn queue_id is empty")
 	}
-	if !oldRun.isDetached() {
-		t.Fatalf("active run should be detached after interruption")
+	if resp.QueuePosition != 1 {
+		t.Fatalf("SendUserTurn queue_position=%d, want 1", resp.QueuePosition)
+	}
+	if oldRun.isDetached() {
+		t.Fatalf("active run should not be detached when follow-up is queued")
 	}
 
 	msgs, _, _, err := svc.threadsDB.ListMessages(ctx, meta.EndpointID, th.ThreadID, 200, 0)
 	if err != nil {
 		t.Fatalf("ListMessages: %v", err)
 	}
-	if len(msgs) == 0 {
-		t.Fatalf("expected persisted user message after interruption")
+	userMsgCount := 0
+	for _, m := range msgs {
+		if m.Role == "user" {
+			userMsgCount++
+		}
+	}
+	if userMsgCount != 1 {
+		t.Fatalf("expected only baseline transcript user message before dequeue, got %d", userMsgCount)
+	}
+	if msgs[0].MessageID != baseline.MessageID {
+		t.Fatalf("baseline message_id=%q, want %q", msgs[0].MessageID, baseline.MessageID)
 	}
 
-	userMsgCount := 0
-	seenBaseline := false
-	for _, m := range msgs {
-		if m.Role != "user" {
-			continue
+	queued, err := svc.threadsDB.ListQueuedTurns(ctx, meta.EndpointID, th.ThreadID, 10)
+	if err != nil {
+		t.Fatalf("ListQueuedTurns: %v", err)
+	}
+	if len(queued) != 1 {
+		t.Fatalf("len(queued)=%d, want 1", len(queued))
+	}
+	if queued[0].MessageID != "m_client_follow_up_1" {
+		t.Fatalf("queued message_id=%q, want m_client_follow_up_1", queued[0].MessageID)
+	}
+	if queued[0].ChannelID != meta.ChannelID {
+		t.Fatalf("queued channel_id=%q, want %q", queued[0].ChannelID, meta.ChannelID)
+	}
+
+	threadView, err := svc.GetThread(ctx, meta, th.ThreadID)
+	if err != nil {
+		t.Fatalf("GetThread: %v", err)
+	}
+	if threadView == nil || threadView.QueuedTurnCount != 1 {
+		t.Fatalf("QueuedTurnCount=%v, want 1", threadView)
+	}
+
+	threads, err := svc.ListThreads(ctx, meta, 20, "")
+	if err != nil {
+		t.Fatalf("ListThreads: %v", err)
+	}
+	if len(threads.Threads) != 1 || threads.Threads[0].QueuedTurnCount != 1 {
+		t.Fatalf("ListThreads queued_turn_count mismatch: %+v", threads.Threads)
+	}
+}
+
+func TestThreadActor_MaybeStartQueuedTurn_StartsQueuedMessageWithOriginalMessageID(t *testing.T) {
+	t.Parallel()
+
+	svc := newSendTurnTestService(t)
+	meta := testSendTurnMeta()
+	ctx := context.Background()
+
+	th, err := svc.CreateThread(ctx, meta, "queued-drain", "", "", "")
+	if err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+
+	activeRunID := "run_active_queue_drain"
+	thKey := runThreadKey(meta.EndpointID, th.ThreadID)
+	if thKey == "" {
+		t.Fatalf("invalid thread key")
+	}
+	svc.mu.Lock()
+	svc.activeRunByTh[thKey] = activeRunID
+	svc.runs[activeRunID] = &run{
+		id:         activeRunID,
+		channelID:  meta.ChannelID,
+		endpointID: meta.EndpointID,
+		threadID:   th.ThreadID,
+		doneCh:     make(chan struct{}),
+	}
+	svc.mu.Unlock()
+
+	resp, err := svc.SendUserTurn(ctx, meta, SendUserTurnRequest{
+		ThreadID: th.ThreadID,
+		Model:    "openai/gpt-5-mini",
+		Input: RunInput{
+			MessageID: "m_client_follow_up_2",
+			Text:      "queued follow-up to auto start",
+		},
+		Options: RunOptions{MaxSteps: 1},
+	})
+	if err != nil {
+		t.Fatalf("SendUserTurn: %v", err)
+	}
+	if resp.Kind != "queued" {
+		t.Fatalf("resp.Kind=%q, want queued", resp.Kind)
+	}
+
+	svc.mu.Lock()
+	delete(svc.activeRunByTh, thKey)
+	delete(svc.runs, activeRunID)
+	svc.mu.Unlock()
+
+	actor := svc.threadMgr.Get(meta.EndpointID, th.ThreadID)
+	if actor == nil {
+		t.Fatalf("thread actor missing")
+	}
+	if err := actor.handleMaybeStartQueuedTurn(ctx); err != nil {
+		t.Fatalf("handleMaybeStartQueuedTurn: %v", err)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		msgs, _, _, listErr := svc.threadsDB.ListMessages(ctx, meta.EndpointID, th.ThreadID, 200, 0)
+		if listErr != nil {
+			t.Fatalf("ListMessages: %v", listErr)
 		}
-		userMsgCount++
-		if m.MessageID == baseline.MessageID {
-			seenBaseline = true
+		for _, m := range msgs {
+			if m.Role == "user" && m.MessageID == "m_client_follow_up_2" {
+				queued, queuedErr := svc.threadsDB.ListQueuedTurns(ctx, meta.EndpointID, th.ThreadID, 10)
+				if queuedErr != nil {
+					t.Fatalf("ListQueuedTurns after drain: %v", queuedErr)
+				}
+				if len(queued) != 0 {
+					t.Fatalf("expected queued turns to be drained, got %d", len(queued))
+				}
+				return
+			}
 		}
+		time.Sleep(25 * time.Millisecond)
 	}
-	if !seenBaseline {
-		t.Fatalf("baseline user message %q should be preserved after interruption", baseline.MessageID)
-	}
-	if userMsgCount != 2 {
-		t.Fatalf("expected two user messages after interruption resend, got %d", userMsgCount)
-	}
+	t.Fatalf("queued follow-up message was not persisted with original message id")
 }
 
 func TestSendUserTurn_ModelLockConflict_DoesNotPersistMessage(t *testing.T) {

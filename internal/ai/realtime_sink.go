@@ -492,8 +492,13 @@ func (s *Service) broadcastThreadSummary(endpointID string, threadID string) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), persistTO)
 	th, err := db.GetThread(ctx, endpointID, threadID)
-	cancel()
 	if err != nil || th == nil {
+		cancel()
+		return
+	}
+	queuedTurnCount, countErr := db.CountQueuedTurns(ctx, endpointID, threadID)
+	cancel()
+	if countErr != nil {
 		return
 	}
 
@@ -521,6 +526,7 @@ func (s *Service) broadcastThreadSummary(endpointID string, threadID string) {
 		LastMessageAtUnixMs: th.LastMessageAtUnixMs,
 		ActiveRunID:         activeRunID,
 		ExecutionMode:       executionMode,
+		QueuedTurnCount:     queuedTurnCount,
 		WaitingPrompt:       waitingPromptFromThreadRecord(th, runStatus),
 	}
 	s.broadcastRealtimeEvent(ev)
