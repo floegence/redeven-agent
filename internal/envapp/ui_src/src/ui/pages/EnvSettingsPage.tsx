@@ -273,6 +273,7 @@ const AI_PROVIDER_PRESET_CATALOG: Record<AIProviderType, AIProviderPreset> = {
     default_base_url: 'https://api.openai.com/v1',
     models: [
       { model_name: 'gpt-5.2', context_window: 400000, max_output_tokens: 128000, note: 'Latest flagship model' },
+      { model_name: 'gpt-5.4', context_window: 400000, max_output_tokens: 128000, note: 'Additional GPT-5.4 preset' },
       { model_name: 'gpt-5.2-mini', context_window: 400000, max_output_tokens: 128000, note: 'Cost-effective flagship variant' },
       { model_name: 'gpt-5', context_window: 400000, max_output_tokens: 128000, note: 'Stable flagship' },
       { model_name: 'gpt-5-mini', context_window: 400000, max_output_tokens: 128000, note: 'Stable lightweight option' },
