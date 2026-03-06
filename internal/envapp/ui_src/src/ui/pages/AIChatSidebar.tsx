@@ -907,8 +907,13 @@ function ThreadCard(props: {
       {/* Content area */}
       <div class="flex flex-col gap-0.5 min-w-0 flex-1">
         {/* Title row */}
-        <div class="flex items-center gap-1">
+        <div class="flex items-center gap-1 min-w-0">
           <span class="text-xs font-medium truncate flex-1">{title()}</span>
+          <Show when={Number(props.thread.queued_turn_count ?? 0) > 0}>
+            <span class="inline-flex items-center rounded-full border border-primary/20 bg-primary/8 px-1.5 py-0.5 text-[10px] font-semibold text-primary shrink-0">
+              {props.thread.queued_turn_count}
+            </span>
+          </Show>
           {/* Timestamp / switches to delete button on hover (opacity avoids layout jump). */}
           <div class="shrink-0 w-5 h-5 flex items-center justify-center relative">
             <Show

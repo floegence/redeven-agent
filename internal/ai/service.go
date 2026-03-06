@@ -1077,6 +1077,9 @@ func (s *Service) executePreparedRun(ctx context.Context, prepared *preparedRun)
 		}
 		s.broadcastThreadState(endpointID, threadID, runID, runStatus, runStatusErr)
 		s.broadcastThreadSummary(endpointID, threadID)
+		if s.threadMgr != nil {
+			s.threadMgr.Wake(endpointID, threadID)
+		}
 	}()
 
 	pctx, cancelPersist := context.WithTimeout(context.Background(), persistTO)
@@ -1715,6 +1718,9 @@ func (s *Service) CancelRun(meta *session.Meta, runID string) error {
 		cancel()
 		s.broadcastThreadState(endpointID, threadID, runID, "canceled", "")
 		s.broadcastThreadSummary(endpointID, threadID)
+		if s.threadMgr != nil {
+			s.threadMgr.Wake(endpointID, threadID)
+		}
 	}
 	return nil
 }

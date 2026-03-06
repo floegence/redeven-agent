@@ -205,6 +205,37 @@ type RunContextEventsResponse = {
   has_more?: boolean;
 };
 
+type QueuedTurnAttachmentItem = {
+  name: string;
+  mime_type?: string;
+};
+
+type QueuedTurnItem = {
+  queue_id: string;
+  message_id: string;
+  text: string;
+  model_id?: string;
+  execution_mode?: ExecutionMode;
+  position: number;
+  created_at_unix_ms: number;
+  attachments?: QueuedTurnAttachmentItem[];
+};
+
+type ListQueuedTurnsResponse = {
+  queued_turns?: QueuedTurnItem[];
+};
+
+const queuedTurnTimeFormatter = new Intl.DateTimeFormat('en-US', {
+  hour: 'numeric',
+  minute: '2-digit',
+});
+
+function formatQueuedTurnTime(unixMs: number | null | undefined): string {
+  const value = Number(unixMs ?? 0);
+  if (!Number.isFinite(value) || value <= 0) return '';
+  return queuedTurnTimeFormatter.format(new Date(value));
+}
+
 const ChatCapture: Component<{ onReady: (ctx: ChatContextValue) => void }> = (props) => {
   const ctx = useChatContext();
   createEffect(() => props.onReady(ctx));
@@ -1892,6 +1923,15 @@ export function EnvAIPage() {
   const [sendPending, setSendPending] = createSignal(false);
   const [draftExecutionMode, setDraftExecutionMode] = createSignal<ExecutionMode>(readPersistedExecutionMode());
   const [threadExecutionModeOverrideById, setThreadExecutionModeOverrideById] = createSignal<Record<string, ExecutionMode>>({});
+  const [queuedTurns, setQueuedTurns] = createSignal<QueuedTurnItem[]>([]);
+  const [queuedTurnsLoading, setQueuedTurnsLoading] = createSignal(false);
+  const [queuedTurnsError, setQueuedTurnsError] = createSignal('');
+  const [queuedTurnEditOpen, setQueuedTurnEditOpen] = createSignal(false);
+  const [queuedTurnEditQueueId, setQueuedTurnEditQueueId] = createSignal('');
+  const [queuedTurnEditText, setQueuedTurnEditText] = createSignal('');
+  const [queuedTurnEditSaving, setQueuedTurnEditSaving] = createSignal(false);
+  const [queuedTurnDeletingId, setQueuedTurnDeletingId] = createSignal<string | null>(null);
+  let lastQueuedTurnsReq = 0;
 
   let chat: ChatContextValue | null = null;
   const [chatReady, setChatReady] = createSignal(false);
@@ -2469,6 +2509,18 @@ export function EnvAIPage() {
     const status = String(ai.activeThread()?.run_status ?? '').trim().toLowerCase();
     return status === 'waiting_user';
   });
+  const activeQueuedTurnCount = createMemo(() => {
+    const serverCount = Number(ai.activeThread()?.queued_turn_count ?? 0);
+    if (queuedTurnsLoading()) {
+      return Number.isFinite(serverCount) && serverCount > 0 ? serverCount : queuedTurns().length;
+    }
+    return queuedTurns().length;
+  });
+  const queuedTurnHint = createMemo(() =>
+    activeThreadWaitingUser()
+      ? 'Waiting for your reply before queued follow-ups can continue.'
+      : 'Flower will send these automatically after the current run finishes.',
+  );
   const executionMode = createMemo<ExecutionMode>(() => {
     const tid = String(ai.activeThreadId() ?? '').trim();
     if (!tid) {
@@ -2972,6 +3024,103 @@ export function EnvAIPage() {
     }
   };
 
+  const loadQueuedTurns = async (
+    threadId: string,
+    opts?: {
+      silent?: boolean;
+    },
+  ): Promise<void> => {
+    const tid = String(threadId ?? '').trim();
+    if (!tid) {
+      setQueuedTurns([]);
+      setQueuedTurnsError('');
+      setQueuedTurnsLoading(false);
+      return;
+    }
+
+    const reqNo = ++lastQueuedTurnsReq;
+    const silent = !!opts?.silent;
+    if (!silent) {
+      setQueuedTurnsLoading(true);
+      setQueuedTurnsError('');
+    }
+
+    try {
+      const resp = await fetchGatewayJSON<ListQueuedTurnsResponse>(
+        `/_redeven_proxy/api/ai/threads/${encodeURIComponent(tid)}/queued_turns`,
+        { method: 'GET' },
+      );
+      if (reqNo !== lastQueuedTurnsReq) return;
+      if (tid !== String(ai.activeThreadId() ?? '').trim()) return;
+      setQueuedTurns(Array.isArray(resp?.queued_turns) ? resp.queued_turns : []);
+      setQueuedTurnsError('');
+    } catch (e) {
+      if (reqNo !== lastQueuedTurnsReq) return;
+      if (tid !== String(ai.activeThreadId() ?? '').trim()) return;
+      const msg = e instanceof Error ? e.message : String(e);
+      setQueuedTurns([]);
+      setQueuedTurnsError(msg || 'Request failed.');
+    } finally {
+      if (reqNo === lastQueuedTurnsReq && !silent) {
+        setQueuedTurnsLoading(false);
+      }
+    }
+  };
+
+  const openQueuedTurnEditor = (item: QueuedTurnItem) => {
+    setQueuedTurnEditQueueId(String(item.queue_id ?? '').trim());
+    setQueuedTurnEditText(String(item.text ?? ''));
+    setQueuedTurnEditOpen(true);
+  };
+
+  const saveQueuedTurnEdit = async () => {
+    const tid = String(ai.activeThreadId() ?? '').trim();
+    const queueID = String(queuedTurnEditQueueId() ?? '').trim();
+    if (!tid || !queueID) return;
+    if (!ensureRWX()) return;
+
+    setQueuedTurnEditSaving(true);
+    try {
+      await fetchGatewayJSON<{ ok: boolean }>(
+        `/_redeven_proxy/api/ai/threads/${encodeURIComponent(tid)}/queued_turns/${encodeURIComponent(queueID)}`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({ text: queuedTurnEditText() }),
+        },
+      );
+      setQueuedTurnEditOpen(false);
+      await loadQueuedTurns(tid, { silent: true });
+      ai.bumpThreadsSeq();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      notify.error('Failed to update queued follow-up', msg || 'Request failed.');
+    } finally {
+      setQueuedTurnEditSaving(false);
+    }
+  };
+
+  const deleteQueuedTurn = async (queueID: string) => {
+    const tid = String(ai.activeThreadId() ?? '').trim();
+    const qid = String(queueID ?? '').trim();
+    if (!tid || !qid) return;
+    if (!ensureRWX()) return;
+
+    setQueuedTurnDeletingId(qid);
+    try {
+      await fetchGatewayJSON<{ ok: boolean }>(
+        `/_redeven_proxy/api/ai/threads/${encodeURIComponent(tid)}/queued_turns/${encodeURIComponent(qid)}`,
+        { method: 'DELETE' },
+      );
+      await loadQueuedTurns(tid, { silent: true });
+      ai.bumpThreadsSeq();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      notify.error('Failed to remove queued follow-up', msg || 'Request failed.');
+    } finally {
+      setQueuedTurnDeletingId((current) => (current === qid ? null : current));
+    }
+  };
+
   const cancelRunForThread = async (threadId: string, opts?: { notifyOnError?: boolean }): Promise<boolean> => {
     const tid = String(threadId ?? '').trim();
     if (!tid) return false;
@@ -3013,6 +3162,9 @@ export function EnvAIPage() {
       setHasMessages(false);
       setRunPhaseLabel('Working');
       setThreadTodos(null);
+      setQueuedTurns([]);
+      setQueuedTurnsError('');
+      setQueuedTurnsLoading(false);
       resetThreadSubagents();
       resetContextTelemetryState();
       setTodosError('');
@@ -3059,6 +3211,7 @@ export function EnvAIPage() {
       void loadActiveRunSnapshot(tidStr);
     });
     void loadThreadTodos(tid, { silent: false, notifyError: false });
+    void loadQueuedTurns(tidStr);
   });
 
   createEffect(() => {
@@ -3067,6 +3220,14 @@ export function EnvAIPage() {
     const unsub = ai.onRealtimeEvent((event) => {
       const tid = String(event.threadId ?? '').trim();
       if (!tid) return;
+
+      if (event.eventType === 'thread_summary') {
+        const isActiveTid = tid === String(ai.activeThreadId() ?? '').trim();
+        if (isActiveTid) {
+          void loadQueuedTurns(tid, { silent: true });
+        }
+        return;
+      }
 
       if (event.eventType === 'transcript_reset') {
         const isActiveTid = tid === String(ai.activeThreadId() ?? '').trim();
@@ -3480,6 +3641,7 @@ export function EnvAIPage() {
       }
 
       const rid = String(resp.runId ?? '').trim();
+      const responseKind = String(resp.kind ?? '').trim().toLowerCase();
       const consumedWaitingPromptId = String(resp.consumedWaitingPromptId ?? '').trim();
       if (consumedWaitingPromptId) {
         ai.consumeWaitingPrompt(tid, consumedWaitingPromptId);
@@ -3491,13 +3653,22 @@ export function EnvAIPage() {
         persistExecutionMode(appliedExecutionMode);
         setThreadExecutionModeOverrideById((prev) => ({ ...prev, [tid]: appliedExecutionMode }));
       }
+      if (responseKind === 'queued') {
+        ai.clearThreadPendingRun(tid);
+        if (msgID) {
+          chat?.deleteMessage(msgID);
+          setHasMessages((chat?.messages() ?? []).length > 0);
+        }
+        setRunPhaseLabel('Working');
+        void loadQueuedTurns(tid, { silent: true });
+      }
       if (rid) {
         ai.confirmThreadRun(tid, rid);
         ensureContextRun(rid, { reset: true });
         void loadContextRunEvents(rid, { reset: true });
       }
       ai.bumpThreadsSeq();
-      if (String(resp.kind ?? '').trim().toLowerCase() === 'steer') {
+      if (responseKind === 'steer' || responseKind === 'queued') {
         setRunPhaseLabel('Working');
       }
     } catch (e) {
@@ -3994,6 +4165,142 @@ export function EnvAIPage() {
                 </div>
               </div>
             </Dialog>
+
+            <Dialog
+              open={queuedTurnEditOpen()}
+              onOpenChange={(open) => {
+                if (!open) {
+                  setQueuedTurnEditOpen(false);
+                  setQueuedTurnEditQueueId('');
+                  setQueuedTurnEditText('');
+                  return;
+                }
+                setQueuedTurnEditOpen(true);
+              }}
+              title="Edit Queued Follow-up"
+              footer={
+                <div class="flex justify-end gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setQueuedTurnEditOpen(false)}
+                    disabled={queuedTurnEditSaving()}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="default"
+                    onClick={() => void saveQueuedTurnEdit()}
+                    disabled={queuedTurnEditSaving() || !String(queuedTurnEditText() ?? '').trim()}
+                  >
+                    <Show when={queuedTurnEditSaving()}>
+                      <span class="mr-1">
+                        <InlineButtonSnakeLoading />
+                      </span>
+                    </Show>
+                    Save
+                  </Button>
+                </div>
+              }
+            >
+              <div class="space-y-3">
+                <div>
+                  <label class="block text-xs font-medium mb-1.5">Message</label>
+                  <textarea
+                    value={queuedTurnEditText()}
+                    onInput={(e) => setQueuedTurnEditText(e.currentTarget.value)}
+                    rows={6}
+                    class="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none transition-colors focus:border-primary/60 focus:ring-2 focus:ring-primary/15"
+                    placeholder="Edit queued follow-up"
+                  />
+                  <p class="text-[11px] text-muted-foreground mt-1.5">
+                    This updates the queued message before Flower sends it.
+                  </p>
+                </div>
+              </div>
+            </Dialog>
+
+            <Show when={activeQueuedTurnCount() > 0 || queuedTurnsLoading() || !!queuedTurnsError()}>
+              <div class="flower-queued-turns-panel">
+                <div class="flower-queued-turns-header">
+                  <div class="flower-queued-turns-header-main">
+                    <span class="flower-queued-turns-title">Queued follow-ups</span>
+                    <span class="flower-queued-turns-count">{activeQueuedTurnCount()}</span>
+                  </div>
+                  <div class="flower-queued-turns-hint">{queuedTurnHint()}</div>
+                </div>
+                <div class="flower-queued-turns-list">
+                  <Show when={queuedTurnsError() && queuedTurns().length === 0}>
+                    <div class="flower-queued-turns-empty">{queuedTurnsError()}</div>
+                  </Show>
+                  <Show when={queuedTurnsLoading() && queuedTurns().length === 0 && !queuedTurnsError()}>
+                    <div class="flower-queued-turns-empty">Loading queued follow-ups...</div>
+                  </Show>
+                  <For each={queuedTurns()}>
+                    {(item) => {
+                      const attachments = () => Array.isArray(item.attachments) ? item.attachments : [];
+                      const attachmentCount = () => attachments().length;
+                      const attachmentLabel = () => attachmentCount() === 1 ? '1 attachment' : `${attachmentCount()} attachments`;
+                      const createdAtLabel = () => formatQueuedTurnTime(item.created_at_unix_ms);
+                      const executionModeLabel = () => {
+                        const mode = String(item.execution_mode ?? '').trim().toLowerCase();
+                        return mode === 'plan' ? 'Plan' : mode === 'act' ? 'Act' : '';
+                      };
+                      const queueID = () => String(item.queue_id ?? '').trim();
+                      const messageText = () => String(item.text ?? '').trim() || 'Attachment-only follow-up';
+                      const deleting = () => queuedTurnDeletingId() === queueID();
+                      return (
+                        <div class="flower-queued-turn-item">
+                          <div class="flower-queued-turn-item-main">
+                            <div class="flower-queued-turn-position">{item.position}</div>
+                            <div class="min-w-0 flex-1">
+                              <div class="flower-queued-turn-item-meta">
+                                <Show when={createdAtLabel()}>
+                                  <span class="flower-queued-turn-chip">{createdAtLabel()}</span>
+                                </Show>
+                                <Show when={executionModeLabel()}>
+                                  <span class="flower-queued-turn-chip">{executionModeLabel()}</span>
+                                </Show>
+                                <Show when={String(item.model_id ?? '').trim()}>
+                                  <span class="flower-queued-turn-chip truncate max-w-[14rem]" title={String(item.model_id ?? '').trim()}>
+                                    {String(item.model_id ?? '').trim()}
+                                  </span>
+                                </Show>
+                                <Show when={attachmentCount() > 0}>
+                                  <span class="flower-queued-turn-chip">{attachmentLabel()}</span>
+                                </Show>
+                              </div>
+                              <p class="flower-queued-turn-text" title={messageText()}>{messageText()}</p>
+                            </div>
+                          </div>
+                          <div class="flower-queued-turn-actions">
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              title="Edit queued follow-up"
+                              onClick={() => openQueuedTurnEditor(item)}
+                              disabled={!canInteract() || deleting()}
+                            >
+                              <Pencil class="w-3.5 h-3.5" />
+                            </Button>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              title="Remove queued follow-up"
+                              onClick={() => void deleteQueuedTurn(queueID())}
+                              disabled={!canInteract() || deleting()}
+                            >
+                              <Trash class="w-3.5 h-3.5" />
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    }}
+                  </For>
+                </div>
+              </div>
+            </Show>
 
             <AIChatInput
               disabled={!canInteract()}

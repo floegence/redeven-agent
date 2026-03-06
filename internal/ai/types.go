@@ -58,6 +58,7 @@ type ThreadView struct {
 	ModelLocked         bool           `json:"model_locked"`
 	ExecutionMode       string         `json:"execution_mode"`
 	WorkingDir          string         `json:"working_dir"`
+	QueuedTurnCount     int            `json:"queued_turn_count"`
 	RunStatus           string         `json:"run_status"`
 	RunUpdatedAtUnixMs  int64          `json:"run_updated_at_unix_ms"`
 	RunError            string         `json:"run_error,omitempty"`
@@ -101,6 +102,30 @@ type AppendThreadMessageRequest struct {
 	Role   string `json:"role"`
 	Text   string `json:"text"`
 	Format string `json:"format,omitempty"` // markdown|text (defaults to markdown for now)
+}
+
+type QueuedTurnAttachmentView struct {
+	Name     string `json:"name"`
+	MimeType string `json:"mime_type"`
+}
+
+type QueuedTurnView struct {
+	QueueID         string                     `json:"queue_id"`
+	MessageID       string                     `json:"message_id"`
+	Text            string                     `json:"text"`
+	ModelID         string                     `json:"model_id,omitempty"`
+	ExecutionMode   string                     `json:"execution_mode,omitempty"`
+	Position        int                        `json:"position"`
+	CreatedAtUnixMs int64                      `json:"created_at_unix_ms"`
+	Attachments     []QueuedTurnAttachmentView `json:"attachments,omitempty"`
+}
+
+type ListQueuedTurnsResponse struct {
+	QueuedTurns []QueuedTurnView `json:"queued_turns"`
+}
+
+type PatchQueuedTurnRequest struct {
+	Text *string `json:"text,omitempty"`
 }
 
 // RunStartRequest is the HTTP request body for starting an AI run.
@@ -405,6 +430,7 @@ type RealtimeEvent struct {
 	LastMessageAtUnixMs int64  `json:"last_message_at_unix_ms,omitempty"`
 	ActiveRunID         string `json:"active_run_id,omitempty"`
 	ExecutionMode       string `json:"execution_mode,omitempty"`
+	QueuedTurnCount     int    `json:"queued_turn_count,omitempty"`
 
 	// Transcript reset events (EventType=transcript_reset).
 	ResetReason       string `json:"reset_reason,omitempty"`

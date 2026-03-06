@@ -40,6 +40,8 @@ type aiSendUserTurnReq struct {
 type aiSendUserTurnResp struct {
 	RunID                   string `json:"run_id"`
 	Kind                    string `json:"kind"`
+	QueueID                 string `json:"queue_id,omitempty"`
+	QueuePosition           int    `json:"queue_position,omitempty"`
 	ConsumedWaitingPromptID string `json:"consumed_waiting_prompt_id,omitempty"`
 	AppliedExecutionMode    string `json:"applied_execution_mode,omitempty"`
 	AppliedWaitingChoiceID  string `json:"applied_waiting_choice_id,omitempty"`
@@ -156,6 +158,8 @@ func (s *Service) RegisterRPC(r *rpc.Router, meta *session.Meta, streamServer *r
 		return &aiSendUserTurnResp{
 			RunID:                   strings.TrimSpace(resp.RunID),
 			Kind:                    strings.TrimSpace(resp.Kind),
+			QueueID:                 strings.TrimSpace(resp.QueueID),
+			QueuePosition:           resp.QueuePosition,
 			ConsumedWaitingPromptID: strings.TrimSpace(resp.ConsumedWaitingPromptID),
 			AppliedExecutionMode:    strings.TrimSpace(resp.AppliedExecutionMode),
 			AppliedWaitingChoiceID:  strings.TrimSpace(resp.AppliedWaitingChoiceID),
