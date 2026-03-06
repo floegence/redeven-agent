@@ -55,6 +55,8 @@ export type AISendUserTurnRequest = {
 export type AISendUserTurnResponse = {
   runId: string;
   kind: string;
+  queueId?: string;
+  queuePosition?: number;
   consumedWaitingPromptId?: string;
   appliedExecutionMode?: 'act' | 'plan';
   appliedWaitingChoiceId?: string;
@@ -165,6 +167,7 @@ export type AIRealtimeEvent = {
   lastMessageAtUnixMs?: number;
   activeRunId?: string;
   executionMode?: 'act' | 'plan';
+  queuedTurnCount?: number;
 
   // transcript_reset only
   resetReason?: string;

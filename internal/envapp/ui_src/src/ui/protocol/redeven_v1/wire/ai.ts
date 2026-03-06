@@ -46,6 +46,8 @@ export type wire_ai_send_user_turn_req = {
 export type wire_ai_send_user_turn_resp = {
   run_id: string;
   kind: string;
+  queue_id?: string;
+  queue_position?: number;
   consumed_waiting_prompt_id?: string;
   applied_execution_mode?: string;
   applied_waiting_choice_id?: string;
@@ -113,6 +115,7 @@ export type wire_ai_event_notify = {
   last_message_at_unix_ms?: number;
   active_run_id?: string;
   execution_mode?: string;
+  queued_turn_count?: number;
 
   // transcript_reset only
   reset_reason?: string;

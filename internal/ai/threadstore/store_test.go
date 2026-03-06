@@ -265,8 +265,8 @@ WHERE type = 'table' AND name = ?
 	if err := s.db.QueryRowContext(ctx, `PRAGMA user_version;`).Scan(&version); err != nil {
 		t.Fatalf("read user_version: %v", err)
 	}
-	if version != 13 {
-		t.Fatalf("user_version=%d, want 13", version)
+	if version != 15 {
+		t.Fatalf("user_version=%d, want 15", version)
 	}
 }
 
@@ -353,8 +353,8 @@ WHERE run_id = 'run_legacy'
 	if err := s.db.QueryRowContext(ctx, `PRAGMA user_version;`).Scan(&version); err != nil {
 		t.Fatalf("read user_version: %v", err)
 	}
-	if version != 13 {
-		t.Fatalf("user_version=%d, want 13", version)
+	if version != 15 {
+		t.Fatalf("user_version=%d, want 15", version)
 	}
 }
 
@@ -953,4 +953,143 @@ func anyToString(v any) string {
 		return s
 	}
 	return ""
+}
+
+func TestStore_QueuedTurnsCRUDAndOrdering(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "threads.sqlite")
+	s, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = s.Close() }()
+
+	ctx := context.Background()
+	if err := s.CreateThread(ctx, Thread{ThreadID: "th_queue", EndpointID: "env_queue", Title: "queue"}); err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+
+	first, firstPos, err := s.EnqueueQueuedTurn(ctx, QueuedTurn{
+		QueueID:               "qt_1",
+		EndpointID:            "env_queue",
+		ThreadID:              "th_queue",
+		ChannelID:             "ch_queue",
+		MessageID:             "m_queue_1",
+		ModelID:               "openai/gpt-5-mini",
+		TextContent:           "first queued turn",
+		AttachmentsJSON:       `[{"name":"spec.md","mime_type":"text/markdown","url":"file:///tmp/spec.md"}]`,
+		OptionsJSON:           `{"max_steps":4,"mode":"plan"}`,
+		CreatedByUserPublicID: "u_queue",
+		CreatedByUserEmail:    "u_queue@example.com",
+		CreatedAtUnixMs:       1000,
+	})
+	if err != nil {
+		t.Fatalf("EnqueueQueuedTurn first: %v", err)
+	}
+	if firstPos != 1 {
+		t.Fatalf("firstPos=%d, want 1", firstPos)
+	}
+	if first.ChannelID != "ch_queue" {
+		t.Fatalf("first.ChannelID=%q, want ch_queue", first.ChannelID)
+	}
+
+	_, secondPos, err := s.EnqueueQueuedTurn(ctx, QueuedTurn{
+		QueueID:               "qt_2",
+		EndpointID:            "env_queue",
+		ThreadID:              "th_queue",
+		ChannelID:             "ch_queue",
+		MessageID:             "m_queue_2",
+		ModelID:               "openai/gpt-5-mini",
+		TextContent:           "second queued turn",
+		OptionsJSON:           `{"max_steps":2,"mode":"act"}`,
+		CreatedByUserPublicID: "u_queue",
+		CreatedByUserEmail:    "u_queue@example.com",
+		CreatedAtUnixMs:       2000,
+	})
+	if err != nil {
+		t.Fatalf("EnqueueQueuedTurn second: %v", err)
+	}
+	if secondPos != 2 {
+		t.Fatalf("secondPos=%d, want 2", secondPos)
+	}
+
+	count, err := s.CountQueuedTurns(ctx, "env_queue", "th_queue")
+	if err != nil {
+		t.Fatalf("CountQueuedTurns: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("count=%d, want 2", count)
+	}
+
+	counts, err := s.CountQueuedTurnsByThread(ctx, "env_queue", []string{"th_queue", "th_other"})
+	if err != nil {
+		t.Fatalf("CountQueuedTurnsByThread: %v", err)
+	}
+	if counts["th_queue"] != 2 {
+		t.Fatalf("counts[th_queue]=%d, want 2", counts["th_queue"])
+	}
+	if counts["th_other"] != 0 {
+		t.Fatalf("counts[th_other]=%d, want 0", counts["th_other"])
+	}
+
+	listed, err := s.ListQueuedTurns(ctx, "env_queue", "th_queue", 10)
+	if err != nil {
+		t.Fatalf("ListQueuedTurns: %v", err)
+	}
+	if len(listed) != 2 {
+		t.Fatalf("len(listed)=%d, want 2", len(listed))
+	}
+	if listed[0].QueueID != "qt_1" || listed[1].QueueID != "qt_2" {
+		t.Fatalf("unexpected queue order: %+v", listed)
+	}
+	if listed[0].ChannelID != "ch_queue" {
+		t.Fatalf("listed[0].ChannelID=%q, want ch_queue", listed[0].ChannelID)
+	}
+
+	got, err := s.GetQueuedTurn(ctx, "env_queue", "th_queue", "qt_1")
+	if err != nil {
+		t.Fatalf("GetQueuedTurn: %v", err)
+	}
+	if got == nil || got.MessageID != "m_queue_1" {
+		t.Fatalf("unexpected queued turn: %+v", got)
+	}
+
+	if err := s.UpdateQueuedTurn(ctx, "env_queue", "th_queue", "qt_2", "updated second queued turn"); err != nil {
+		t.Fatalf("UpdateQueuedTurn: %v", err)
+	}
+	updated, err := s.GetQueuedTurn(ctx, "env_queue", "th_queue", "qt_2")
+	if err != nil {
+		t.Fatalf("GetQueuedTurn updated: %v", err)
+	}
+	if updated == nil || updated.TextContent != "updated second queued turn" {
+		t.Fatalf("updated.TextContent=%q, want updated second queued turn", updated.TextContent)
+	}
+
+	popped, err := s.PopNextQueuedTurn(ctx, "env_queue", "th_queue")
+	if err != nil {
+		t.Fatalf("PopNextQueuedTurn: %v", err)
+	}
+	if popped == nil || popped.QueueID != "qt_1" {
+		t.Fatalf("popped queue_id=%v, want qt_1", popped)
+	}
+
+	remaining, err := s.ListQueuedTurns(ctx, "env_queue", "th_queue", 10)
+	if err != nil {
+		t.Fatalf("ListQueuedTurns remaining: %v", err)
+	}
+	if len(remaining) != 1 || remaining[0].QueueID != "qt_2" {
+		t.Fatalf("remaining=%+v, want only qt_2", remaining)
+	}
+
+	if err := s.DeleteQueuedTurn(ctx, "env_queue", "th_queue", "qt_2"); err != nil {
+		t.Fatalf("DeleteQueuedTurn: %v", err)
+	}
+	finalCount, err := s.CountQueuedTurns(ctx, "env_queue", "th_queue")
+	if err != nil {
+		t.Fatalf("CountQueuedTurns final: %v", err)
+	}
+	if finalCount != 0 {
+		t.Fatalf("finalCount=%d, want 0", finalCount)
+	}
 }

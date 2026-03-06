@@ -54,6 +54,7 @@ export type ThreadView = Readonly<{
   model_id?: string;
   execution_mode?: ExecutionMode;
   working_dir?: string;
+  queued_turn_count?: number;
   run_status?: ThreadRunStatus;
   run_updated_at_unix_ms?: number;
   run_error?: string;

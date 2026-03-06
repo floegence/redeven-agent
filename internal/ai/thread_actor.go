@@ -2,6 +2,7 @@ package ai
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"strings"
 	"sync"
@@ -55,6 +56,17 @@ func (m *threadManager) Get(endpointID string, threadID string) *threadActor {
 	m.actors[key] = a
 	a.start()
 	return a
+}
+
+func (m *threadManager) Wake(endpointID string, threadID string) {
+	if m == nil {
+		return
+	}
+	actor := m.Get(endpointID, threadID)
+	if actor == nil {
+		return
+	}
+	actor.wakeMaybeStartQueuedTurn()
 }
 
 func (m *threadManager) remove(key string, actor *threadActor) {
@@ -117,6 +129,8 @@ type rewindThreadResult struct {
 	err  error
 }
 
+type cmdMaybeStartQueuedTurn struct{}
+
 type threadActor struct {
 	mgr *threadManager
 	key string
@@ -170,6 +184,26 @@ func (a *threadActor) stop() {
 		close(a.stopCh)
 	})
 	<-a.doneCh
+}
+
+func (a *threadActor) wakeMaybeStartQueuedTurn() {
+	if a == nil {
+		return
+	}
+	cmd := cmdMaybeStartQueuedTurn{}
+	select {
+	case <-a.stopCh:
+		return
+	case a.inbox <- cmd:
+		return
+	default:
+	}
+	go func() {
+		select {
+		case <-a.stopCh:
+		case a.inbox <- cmd:
+		}
+	}()
 }
 
 func (a *threadActor) SendUserTurn(ctx context.Context, meta *session.Meta, req SendUserTurnRequest) (SendUserTurnResponse, error) {
@@ -272,6 +306,8 @@ func (a *threadActor) loop() {
 			case cmdRewindThread:
 				resp, err := a.handleRewindThread(cmd.ctx, cmd.meta, cmd.req)
 				cmd.resp <- rewindThreadResult{resp: resp, err: err}
+			case cmdMaybeStartQueuedTurn:
+				_ = a.handleMaybeStartQueuedTurn(context.Background())
 			}
 		}
 	}
@@ -296,6 +332,76 @@ func (a *threadActor) lookupActiveRun(endpointID string, threadID string) (strin
 		return "", nil
 	}
 	return activeRunID, r
+}
+
+func (a *threadActor) handleMaybeStartQueuedTurn(ctx context.Context) error {
+	if a == nil || a.mgr == nil || a.mgr.svc == nil {
+		return errors.New("service not ready")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	endpointID := strings.TrimSpace(a.endpointID)
+	threadID := strings.TrimSpace(a.threadID)
+	if endpointID == "" || threadID == "" {
+		return errors.New("invalid request")
+	}
+	if activeRunID, _ := a.lookupActiveRun(endpointID, threadID); activeRunID != "" {
+		return nil
+	}
+
+	a.mgr.svc.mu.Lock()
+	db := a.mgr.svc.threadsDB
+	persistTO := a.mgr.svc.persistOpTO
+	a.mgr.svc.mu.Unlock()
+	if db == nil {
+		return errors.New("threads store not ready")
+	}
+	if persistTO <= 0 {
+		persistTO = defaultPersistOpTimeout
+	}
+
+	tctx, cancel := context.WithTimeout(ctx, persistTO)
+	th, err := db.GetThread(tctx, endpointID, threadID)
+	cancel()
+	if err != nil {
+		return err
+	}
+	if th == nil {
+		return nil
+	}
+	runStatus, _ := normalizeThreadRunState(th.RunStatus, th.RunError)
+	if NormalizeRunState(runStatus) == RunStateWaitingUser || waitingPromptFromThreadRecord(th, runStatus) != nil {
+		return nil
+	}
+
+	tctx, cancel = context.WithTimeout(ctx, persistTO)
+	queued, err := db.ListQueuedTurns(tctx, endpointID, threadID, 1)
+	cancel()
+	if err != nil {
+		return err
+	}
+	if len(queued) == 0 {
+		return nil
+	}
+	rec := queued[0]
+	runID, err := NewRunID()
+	if err != nil {
+		return err
+	}
+	meta := queuedTurnRecordToSessionMeta(rec, th.NamespacePublicID)
+	startReq := queuedTurnRecordToRunStartRequest(rec, th.ExecutionMode)
+	if err := a.mgr.svc.StartRunDetached(meta, runID, startReq); err != nil {
+		return err
+	}
+	dctx, dcancel := context.WithTimeout(ctx, persistTO)
+	delErr := db.DeleteQueuedTurn(dctx, endpointID, threadID, rec.QueueID)
+	dcancel()
+	if delErr != nil && !errors.Is(delErr, sql.ErrNoRows) {
+		return delErr
+	}
+	a.mgr.svc.broadcastThreadSummary(endpointID, threadID)
+	return nil
 }
 
 func (a *threadActor) handleSendUserTurn(ctx context.Context, meta *session.Meta, req SendUserTurnRequest) (SendUserTurnResponse, error) {
@@ -406,6 +512,21 @@ func (a *threadActor) handleSendUserTurn(ctx context.Context, meta *session.Meta
 	req.Options.Mode = resolvedExecutionMode
 	appliedExecutionMode = resolvedExecutionMode
 
+	if activeRunID != "" {
+		queued, position, err := a.mgr.svc.enqueueQueuedTurn(ctx, meta, req)
+		if err != nil {
+			return SendUserTurnResponse{}, err
+		}
+		return SendUserTurnResponse{
+			Kind:                    "queued",
+			QueueID:                 strings.TrimSpace(queued.QueueID),
+			QueuePosition:           position,
+			ConsumedWaitingPromptID: consumedWaitingPromptID,
+			AppliedExecutionMode:    appliedExecutionMode,
+			AppliedWaitingChoiceID:  appliedWaitingChoiceID,
+		}, nil
+	}
+
 	runID, err := NewRunID()
 	if err != nil {
 		return SendUserTurnResponse{}, err
@@ -431,13 +552,6 @@ func (a *threadActor) handleSendUserTurn(ctx context.Context, meta *session.Meta
 	// Transcript events are thread-scoped; they never go to summary subscribers.
 	a.mgr.svc.broadcastTranscriptMessage(endpointID, threadID, "", persisted.RowID, persisted.MessageJSON, persisted.CreatedAtUnixMs)
 	a.mgr.svc.broadcastThreadSummary(endpointID, threadID)
-
-	activeRunID, _ = a.lookupActiveRun(endpointID, threadID)
-	if activeRunID != "" {
-		if err := a.mgr.svc.CancelRun(meta, activeRunID); err != nil {
-			return SendUserTurnResponse{}, err
-		}
-	}
 
 	startReq := RunStartRequest{
 		ThreadID: threadID,

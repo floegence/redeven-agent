@@ -108,12 +108,17 @@ func (s *Service) GetThread(ctx context.Context, meta *session.Meta, threadID st
 		return nil, errors.New("missing thread_id")
 	}
 
-	th, err := db.GetThread(ctx, strings.TrimSpace(meta.EndpointID), threadID)
+	endpointID := strings.TrimSpace(meta.EndpointID)
+	th, err := db.GetThread(ctx, endpointID, threadID)
 	if err != nil {
 		return nil, err
 	}
 	if th == nil {
 		return nil, nil
+	}
+	queuedTurnCount, err := db.CountQueuedTurns(ctx, endpointID, threadID)
+	if err != nil {
+		return nil, err
 	}
 
 	runStatus, runError := normalizeThreadRunState(th.RunStatus, th.RunError)
@@ -133,6 +138,7 @@ func (s *Service) GetThread(ctx context.Context, meta *session.Meta, threadID st
 		ModelLocked:         th.ModelLocked,
 		ExecutionMode:       normalizeRunMode(strings.TrimSpace(th.ExecutionMode), modeFallback),
 		WorkingDir:          workingDir,
+		QueuedTurnCount:     queuedTurnCount,
 		RunStatus:           runStatus,
 		RunUpdatedAtUnixMs:  th.RunUpdatedAtUnixMs,
 		RunError:            runError,
@@ -168,11 +174,20 @@ func (s *Service) ListThreads(ctx context.Context, meta *session.Meta, limit int
 		return nil, errors.New("invalid cursor")
 	}
 
-	list, next, err := db.ListThreads(ctx, meta.EndpointID, limit, c)
+	endpointID := strings.TrimSpace(meta.EndpointID)
+	list, next, err := db.ListThreads(ctx, endpointID, limit, c)
 	if err != nil {
 		return nil, err
 	}
-	activeThreads := s.activeThreadRunSet(strings.TrimSpace(meta.EndpointID))
+	threadIDs := make([]string, 0, len(list))
+	for _, t := range list {
+		threadIDs = append(threadIDs, strings.TrimSpace(t.ThreadID))
+	}
+	queuedTurnCounts, err := db.CountQueuedTurnsByThread(ctx, endpointID, threadIDs)
+	if err != nil {
+		return nil, err
+	}
+	activeThreads := s.activeThreadRunSet(endpointID)
 	out := &ListThreadsResponse{Threads: make([]ThreadView, 0, len(list)), NextCursor: strings.TrimSpace(next)}
 	for _, t := range list {
 		runStatus, runError := normalizeThreadRunState(t.RunStatus, t.RunError)
@@ -190,6 +205,7 @@ func (s *Service) ListThreads(ctx context.Context, meta *session.Meta, limit int
 			ModelLocked:         t.ModelLocked,
 			ExecutionMode:       normalizeRunMode(strings.TrimSpace(t.ExecutionMode), modeFallback),
 			WorkingDir:          workingDir,
+			QueuedTurnCount:     queuedTurnCounts[strings.TrimSpace(t.ThreadID)],
 			RunStatus:           runStatus,
 			RunUpdatedAtUnixMs:  t.RunUpdatedAtUnixMs,
 			RunError:            runError,
@@ -285,6 +301,7 @@ func (s *Service) CreateThread(ctx context.Context, meta *session.Meta, title st
 		ModelLocked:         false,
 		ExecutionMode:       executionMode,
 		WorkingDir:          workingDirClean,
+		QueuedTurnCount:     0,
 		RunStatus:           "idle",
 		RunUpdatedAtUnixMs:  0,
 		RunError:            "",
