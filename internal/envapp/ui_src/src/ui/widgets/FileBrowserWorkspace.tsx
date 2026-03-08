@@ -33,6 +33,7 @@ export interface FileBrowserWorkspaceProps {
   resizable?: boolean;
   onResize?: (delta: number) => void;
   onClose?: () => void;
+  mobileSidebarToggleMode?: 'internal' | 'external';
   showSidebarToggle?: boolean;
   onOpenSidebar?: () => void;
   onNavigate?: (path: string) => void;
@@ -167,6 +168,7 @@ function FileBrowserWorkspaceInner(props: Omit<FileBrowserWorkspaceProps, 'files
       onResize={props.onResize}
       onClose={props.onClose}
       onOpenSidebar={props.onOpenSidebar}
+      mobileSidebarToggleMode={props.mobileSidebarToggleMode}
       showSidebarToggle={props.showSidebarToggle}
       sidebarToggleLabel="Files sidebar"
       sidebarToggleIcon={FilesIcon}
@@ -233,6 +235,7 @@ export function FileBrowserWorkspace(props: FileBrowserWorkspaceProps) {
         resizable={props.resizable}
         onResize={props.onResize}
         onClose={props.onClose}
+        mobileSidebarToggleMode={props.mobileSidebarToggleMode}
         showSidebarToggle={props.showSidebarToggle}
         onOpenSidebar={props.onOpenSidebar}
         onDragMove={props.onDragMove}

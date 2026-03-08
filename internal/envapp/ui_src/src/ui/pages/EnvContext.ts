@@ -28,6 +28,9 @@ export type EnvContextValue = {
   connectError: () => string | null;
 
   goTab: (tab: EnvNavTab) => void;
+  filesSidebarOpen: () => boolean;
+  setFilesSidebarOpen: (open: boolean) => void;
+  toggleFilesSidebar: () => void;
 
   settingsSeq: () => number;
   bumpSettingsSeq: () => void;
