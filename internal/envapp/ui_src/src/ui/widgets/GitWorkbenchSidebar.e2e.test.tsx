@@ -27,11 +27,9 @@ afterEach(() => {
 });
 
 describe('GitWorkbenchSidebar interactions', () => {
-  it('keeps mode and view switching in the sidebar while using the list as the primary selector', () => {
+  it('acts as selector-only content and closes after picking a workspace item', () => {
     let selectedPath = '';
     let closeCount = 0;
-    let nextMode = '';
-    let nextSubview = '';
     const host = document.createElement('div');
     document.body.appendChild(host);
 
@@ -39,14 +37,7 @@ describe('GitWorkbenchSidebar interactions', () => {
       <LayoutProvider>
         <div class="relative h-[520px]">
           <GitWorkbenchSidebar
-            mode="git"
-            onModeChange={(mode) => {
-              nextMode = mode;
-            }}
             subview="changes"
-            onSubviewChange={(view) => {
-              nextSubview = view;
-            }}
             repoAvailable
             repoSummary={{
               repoRootPath: '/workspace/repo',
@@ -87,20 +78,12 @@ describe('GitWorkbenchSidebar interactions', () => {
     ), host);
 
     try {
-      const filesModeButton = Array.from(host.querySelectorAll('button')).find((node) => node.textContent?.trim() === 'Files');
-      expect(filesModeButton).toBeTruthy();
-      filesModeButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-
-      const historyButton = Array.from(host.querySelectorAll('button')).find((node) => node.textContent?.includes('History'));
-      expect(historyButton).toBeTruthy();
-      historyButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-
+      expect(Array.from(host.querySelectorAll('button')).some((node) => node.textContent?.trim() === 'Files')).toBe(false);
       const itemButton = Array.from(host.querySelectorAll('button')).find((node) => node.textContent?.includes('src/app.ts'));
       expect(itemButton).toBeTruthy();
       itemButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
-      expect(nextMode).toBe('files');
-      expect(nextSubview).toBe('history');
+      expect(host.textContent).toContain('Workspace Files');
       expect(selectedPath).toBe('src/app.ts');
       expect(closeCount).toBe(1);
     } finally {
