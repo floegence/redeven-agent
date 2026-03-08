@@ -60,9 +60,7 @@ describe('GitWorkbenchSidebar interactions', () => {
             branches={{
               repoRootPath: '/workspace/repo',
               currentRef: 'main',
-              local: [
-                { name: 'main', fullName: 'refs/heads/main', kind: 'local', current: true },
-              ],
+              local: [{ name: 'main', fullName: 'refs/heads/main', kind: 'local', current: true }],
               remote: [],
             }}
             selectedWorkspaceKey="staged:modified:src/app.ts::"
@@ -83,9 +81,58 @@ describe('GitWorkbenchSidebar interactions', () => {
       expect(itemButton).toBeTruthy();
       itemButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
-      expect(host.textContent).toContain('Workspace Files');
+      expect(host.textContent).toContain('Workspace Summary');
+      expect(host.textContent).not.toContain('Workspace Files');
       expect(selectedPath).toBe('src/app.ts');
       expect(closeCount).toBe(1);
+    } finally {
+      dispose();
+    }
+  });
+
+  it('renders compact overview metrics with the unified git language', () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+
+    const dispose = render(() => (
+      <LayoutProvider>
+        <div class="relative h-[520px]">
+          <GitWorkbenchSidebar
+            subview="overview"
+            repoAvailable
+            repoSummary={{
+              repoRootPath: '/workspace/repo',
+              headRef: 'main',
+              headCommit: 'abc1234',
+              stashCount: 2,
+              aheadCount: 0,
+              behindCount: 0,
+              workspaceSummary: { stagedCount: 1, unstagedCount: 2, untrackedCount: 0, conflictedCount: 0 },
+            }}
+            branches={{
+              repoRootPath: '/workspace/repo',
+              currentRef: 'main',
+              local: [{ name: 'main', fullName: 'refs/heads/main', kind: 'local', current: true }],
+              remote: [{ name: 'origin/main', fullName: 'refs/remotes/origin/main', kind: 'remote', current: false }],
+            }}
+            commits={[
+              { hash: '1111111111111111', shortHash: '11111111', parents: ['0000000000000000'], subject: 'First commit', authorName: 'Alice', authorEmail: 'alice@example.com', authorTimeMs: Date.now() - 120000 },
+              { hash: '2222222222222222', shortHash: '22222222', parents: ['1111111111111111'], subject: 'Second commit', authorName: 'Bob', authorEmail: 'bob@example.com', authorTimeMs: Date.now() - 240000 },
+            ]}
+          />
+        </div>
+      </LayoutProvider>
+    ), host);
+
+    try {
+      expect(host.textContent).toContain('Overview Summary');
+      expect(host.textContent).toContain('Quick counts and repository context.');
+      expect(host.textContent).toContain('Workspace Summary');
+      expect(host.textContent).toContain('Branch Scope');
+      expect(host.textContent).toContain('Commit History');
+      expect(host.textContent).toContain('Stashes');
+      expect(host.textContent).not.toContain('Workspace Files');
+      expect(host.textContent).not.toContain('History loaded');
     } finally {
       dispose();
     }
