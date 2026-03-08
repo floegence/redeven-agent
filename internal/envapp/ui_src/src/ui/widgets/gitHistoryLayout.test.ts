@@ -63,6 +63,12 @@ describe('browser workspace layout wiring', () => {
     expect(navSrc).toContain('role="tablist"');
     expect(navSrc).toContain('aria-label="Git views"');
     expect(navSrc).toContain('rounded-lg border px-2.5 py-2');
+    expect(navSrc).toContain('border-border bg-background text-foreground shadow-sm');
+    expect(navSrc).toContain('border-transparent bg-transparent text-muted-foreground hover:border-transparent hover:bg-muted/50 hover:text-muted-foreground');
+    expect(navSrc).toContain('border-border bg-muted/70 text-foreground');
+    expect(navSrc).not.toContain('gitSubviewTone');
+    expect(navSrc).not.toContain('gitToneBadgeClass');
+    expect(navSrc).not.toContain('gitToneSelectableCardClass');
   });
 
   it('uses floating diff dialogs instead of inline patch sections', () => {
