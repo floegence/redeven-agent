@@ -29,9 +29,8 @@ describe('GitWorkbench interactions', () => {
     document.body.innerHTML = '';
   });
 
-  it('keeps the global header lightweight while exposing refresh and mobile sidebar actions', () => {
+  it('keeps the global header lightweight while exposing refresh only in the content surface', () => {
     let refreshCount = 0;
-    let openSidebarCount = 0;
     const host = document.createElement('div');
     document.body.appendChild(host);
 
@@ -41,50 +40,46 @@ describe('GitWorkbench interactions', () => {
           <ProtocolProvider contract={redevenV1Contract}>
             <div class="h-[640px]">
               <GitWorkbench
-              currentPath="/workspace/repo/src"
-              subview="branches"
-              repoSummary={{
-                repoRootPath: '/workspace/repo',
-                headRef: 'main',
-                headCommit: 'abc1234',
-                aheadCount: 2,
-                behindCount: 1,
-                workspaceSummary: { stagedCount: 1, unstagedCount: 2, untrackedCount: 0, conflictedCount: 0 },
-              }}
-              workspace={{
-                repoRootPath: '/workspace/repo',
-                summary: { stagedCount: 1, unstagedCount: 2, untrackedCount: 0, conflictedCount: 0 },
-                staged: [],
-                unstaged: [],
-                untracked: [],
-                conflicted: [],
-              }}
-              branches={{
-                repoRootPath: '/workspace/repo',
-                currentRef: 'main',
-                local: [
-                  { name: 'main', fullName: 'refs/heads/main', kind: 'local', current: true },
-                  { name: 'feature/demo', fullName: 'refs/heads/feature/demo', kind: 'local', authorTimeMs: Date.now() },
-                ],
-                remote: [],
-              }}
-              selectedBranch={{ name: 'feature/demo', fullName: 'refs/heads/feature/demo', kind: 'local', authorTimeMs: Date.now() }}
-              compare={{
-                repoRootPath: '/workspace/repo',
-                baseRef: 'main',
-                targetRef: 'feature/demo',
-                targetAheadCount: 1,
-                targetBehindCount: 0,
-                commits: [],
-                files: [],
-              }}
-              showSidebarToggle
-              onOpenSidebar={() => {
-                openSidebarCount += 1;
-              }}
-              onRefresh={() => {
-                refreshCount += 1;
-              }}
+                currentPath="/workspace/repo/src"
+                subview="branches"
+                repoSummary={{
+                  repoRootPath: '/workspace/repo',
+                  headRef: 'main',
+                  headCommit: 'abc1234',
+                  aheadCount: 2,
+                  behindCount: 1,
+                  workspaceSummary: { stagedCount: 1, unstagedCount: 2, untrackedCount: 0, conflictedCount: 0 },
+                }}
+                workspace={{
+                  repoRootPath: '/workspace/repo',
+                  summary: { stagedCount: 1, unstagedCount: 2, untrackedCount: 0, conflictedCount: 0 },
+                  staged: [],
+                  unstaged: [],
+                  untracked: [],
+                  conflicted: [],
+                }}
+                branches={{
+                  repoRootPath: '/workspace/repo',
+                  currentRef: 'main',
+                  local: [
+                    { name: 'main', fullName: 'refs/heads/main', kind: 'local', current: true },
+                    { name: 'feature/demo', fullName: 'refs/heads/feature/demo', kind: 'local', authorTimeMs: Date.now() },
+                  ],
+                  remote: [],
+                }}
+                selectedBranch={{ name: 'feature/demo', fullName: 'refs/heads/feature/demo', kind: 'local', authorTimeMs: Date.now() }}
+                compare={{
+                  repoRootPath: '/workspace/repo',
+                  baseRef: 'main',
+                  targetRef: 'feature/demo',
+                  targetAheadCount: 1,
+                  targetBehindCount: 0,
+                  commits: [],
+                  files: [],
+                }}
+                onRefresh={() => {
+                  refreshCount += 1;
+                }}
               />
             </div>
           </ProtocolProvider>
@@ -97,12 +92,8 @@ describe('GitWorkbench interactions', () => {
       expect(refreshButton).toBeTruthy();
       refreshButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
-      const openSidebarButton = host.querySelector('button[aria-label="Open browser sidebar"]');
-      expect(openSidebarButton).toBeTruthy();
-      openSidebarButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-
+      expect(host.querySelector('button[aria-label="Open browser sidebar"]')).toBeNull();
       expect(refreshCount).toBe(1);
-      expect(openSidebarCount).toBe(1);
       expect(host.textContent).toContain('Branches');
     } finally {
       dispose();

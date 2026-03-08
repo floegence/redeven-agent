@@ -1,6 +1,6 @@
 import { Show, onCleanup, onMount } from 'solid-js';
 import { cn, useFileBrowserDrag } from '@floegence/floe-webapp-core';
-import { Menu, Search, ArrowUp } from '@floegence/floe-webapp-core/icons';
+import { Files as FilesIcon, Search, ArrowUp } from '@floegence/floe-webapp-core/icons';
 import {
   Breadcrumb,
   DirectoryTree,
@@ -44,7 +44,7 @@ export interface FileBrowserWorkspaceProps {
   class?: string;
 }
 
-function FileWorkspaceHeader(props: { showSidebarToggle?: boolean; onOpenSidebar?: () => void }) {
+function FileWorkspaceHeader() {
   const browser = useFileBrowser();
   const canNavigateUp = () => {
     const path = browser.currentPath();
@@ -52,20 +52,8 @@ function FileWorkspaceHeader(props: { showSidebarToggle?: boolean; onOpenSidebar
   };
 
   return (
-    <div class={cn('shrink-0 border-b border-border/70 bg-background/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/85', props.showSidebarToggle && 'pl-14')}>
-      <Show when={props.showSidebarToggle}>
-        <Button
-          size="xs"
-          variant="outline"
-          icon={Menu}
-          class="absolute left-3 top-3 z-10 h-7 w-7 bg-background/95 px-0 shadow-sm backdrop-blur-sm"
-          aria-label="Open browser sidebar"
-          title="Open browser sidebar"
-          onClick={props.onOpenSidebar}
-        />
-      </Show>
-
-      <div class="space-y-3">
+    <div class="shrink-0 border-b border-border/70 bg-background/95 px-3 py-2.5 backdrop-blur supports-[backdrop-filter]:bg-background/90">
+      <div class="space-y-2.5">
         <div class="flex flex-wrap items-center gap-2">
           <Button size="xs" variant="outline" icon={ArrowUp} onClick={browser.navigateUp} disabled={!canNavigateUp()}>
             Up
@@ -122,7 +110,7 @@ function FileWorkspaceStatusBar() {
   const browser = useFileBrowser();
 
   return (
-    <div class="flex flex-wrap items-center justify-between gap-2 border-t border-border/70 px-3 py-2 text-[10px] text-muted-foreground">
+    <div class="flex flex-wrap items-center justify-between gap-2 border-t border-border/70 px-3 py-1.5 text-[10px] text-muted-foreground">
       <div class="flex flex-wrap items-center gap-2">
         <span class={cn('inline-flex items-center rounded-full border px-2 py-1 font-medium', gitToneBadgeClass('neutral'))}>
           {browser.currentFiles().length} items
@@ -178,30 +166,34 @@ function FileBrowserWorkspaceInner(props: Omit<FileBrowserWorkspaceProps, 'files
       resizable={props.resizable}
       onResize={props.onResize}
       onClose={props.onClose}
+      onOpenSidebar={props.onOpenSidebar}
+      showSidebarToggle={props.showSidebarToggle}
+      sidebarToggleLabel="Files sidebar"
+      sidebarToggleIcon={FilesIcon}
       bodyRef={(el) => {
         sidebarScrollEl = el;
       }}
       modeSwitcher={<GitHistoryModeSwitch mode={props.mode} onChange={props.onModeChange} gitHistoryDisabled={props.gitHistoryDisabled} class="w-full" />}
       sidebarBody={(
-        <div class="flex h-full min-h-0 flex-col space-y-2">
+        <div class="flex h-full min-h-0 flex-col space-y-1.5">
           <div class="flex items-center justify-between px-1 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground/70">
             <span>Folders</span>
             <span>{browser.currentPath() === '/' ? 'Root' : 'Tree'}</span>
           </div>
-          <div class={cn('min-h-0 flex-1 overflow-hidden rounded-xl border p-2', gitToneInsetClass('neutral'))}>
+          <div class={cn('min-h-0 flex-1 overflow-hidden rounded-lg border p-1.5', gitToneInsetClass('neutral'))}>
             <DirectoryTree instanceId={props.instanceId} enableDragDrop={dragEnabled()} class="min-h-0 h-full" />
           </div>
         </div>
       )}
       content={(
         <div class="flex h-full min-h-0 flex-col bg-background">
-          <FileWorkspaceHeader showSidebarToggle={props.showSidebarToggle} onOpenSidebar={props.onOpenSidebar} />
+          <FileWorkspaceHeader />
           <div
             ref={(el) => {
               contentScrollEl = el;
               browser.setScrollContainer(el);
             }}
-            class="flex-1 min-h-0 overflow-auto bg-gradient-to-b from-background to-muted/[0.03]"
+            class="flex-1 min-h-0 overflow-auto bg-background"
           >
             <Show when={browser.viewMode() === 'list'} fallback={<FileGridView instanceId={props.instanceId} enableDragDrop={dragEnabled()} class="h-full" />}>
               <FileListView instanceId={props.instanceId} enableDragDrop={dragEnabled()} class="h-full" />
