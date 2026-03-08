@@ -1,7 +1,6 @@
 import { For, Show } from 'solid-js';
 import { cn } from '@floegence/floe-webapp-core';
 import { SnakeLoader } from '@floegence/floe-webapp-core/loading';
-import { SidebarItem, SidebarItemList, SidebarPane } from '@floegence/floe-webapp-core/layout';
 import { Button } from '@floegence/floe-webapp-core/ui';
 import type {
   GitBranchSummary,
@@ -11,13 +10,11 @@ import type {
   GitRepoSummaryResponse,
   GitWorkspaceChange,
 } from '../protocol/redeven_v1';
-import { gitChangeDotClass } from '../utils/gitPatch';
 import {
   WORKSPACE_SECTIONS,
   branchDisplayName,
   branchIdentity,
   branchStatusSummary,
-  buildGitWorkbenchSubviewItems,
   changeMetricsText,
   changeSecondaryPath,
   summarizeWorkspaceCount,
@@ -27,21 +24,19 @@ import {
   workspaceSectionLabel,
   type GitWorkbenchSubview,
 } from '../utils/gitWorkbench';
-import { GitHistoryModeSwitch, type GitHistoryMode } from './GitHistoryModeSwitch';
-import { GitSubviewSwitch } from './GitSubviewSwitch';
-
-const DEFAULT_PAGE_SIDEBAR_WIDTH = 280;
+import {
+  gitBranchTone,
+  gitChangeTone,
+  gitSubviewTone,
+  gitToneBadgeClass,
+  gitToneInsetClass,
+  gitToneSelectableCardClass,
+  gitToneSurfaceClass,
+  workspaceSectionTone,
+} from './GitChrome';
 
 export interface GitWorkbenchSidebarProps {
-  mode: GitHistoryMode;
-  onModeChange: (mode: GitHistoryMode) => void;
-  gitHistoryDisabled?: boolean;
   subview: GitWorkbenchSubview;
-  onSubviewChange: (view: GitWorkbenchSubview) => void;
-  width?: number;
-  open?: boolean;
-  resizable?: boolean;
-  onResize?: (delta: number) => void;
   onClose?: () => void;
   repoInfoLoading?: boolean;
   repoInfoError?: string;
@@ -83,14 +78,14 @@ function formatRelativeTime(ms?: number): string {
   return 'now';
 }
 
-function subviewTitle(view: GitWorkbenchSubview): string {
+function selectorLabel(view: GitWorkbenchSubview): string {
   switch (view) {
     case 'changes':
-      return 'Workspace Changes';
+      return 'Workspace Files';
     case 'branches':
       return 'Branches';
     case 'history':
-      return 'Commit History';
+      return 'Commits';
     default:
       return 'Overview';
   }
@@ -101,256 +96,234 @@ export function GitWorkbenchSidebar(props: GitWorkbenchSidebarProps) {
     props.onClose?.();
   };
 
-  const branchCount = () => (props.branches?.local.length ?? 0) + (props.branches?.remote.length ?? 0);
   const workspaceCount = () => summarizeWorkspaceCount(props.workspace?.summary ?? props.repoSummary?.workspaceSummary);
-  const subviewItems = () => buildGitWorkbenchSubviewItems({
-    repoSummary: props.repoSummary,
-    workspace: props.workspace,
-    branchesCount: branchCount(),
-  });
+  const branchCount = () => (props.branches?.local.length ?? 0) + (props.branches?.remote.length ?? 0);
+  const sidebarTone = () => gitSubviewTone(props.subview);
 
   return (
-    <SidebarPane
-      title="Git"
-      headerActions={<span class="text-[10px] uppercase tracking-[0.18em] text-muted-foreground/70">Navigator</span>}
-      width={props.width ?? DEFAULT_PAGE_SIDEBAR_WIDTH}
-      open={props.open}
-      resizable={props.resizable}
-      onResize={props.onResize}
-      onClose={props.onClose}
-      class={cn('h-full border-r border-border/70 bg-background', props.class)}
-      bodyClass="py-0"
-    >
-      <div class="flex h-full min-h-0 flex-col">
-        <div class="shrink-0 border-b border-border/70 bg-background/95 px-2.5 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/85">
-          <div class="space-y-3">
-            <div class="space-y-1.5">
-              <div class="px-1 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground/70">Mode</div>
-              <GitHistoryModeSwitch
-                mode={props.mode}
-                onChange={props.onModeChange}
-                gitHistoryDisabled={props.gitHistoryDisabled}
-                class="w-full"
-              />
-            </div>
-
-            <div class="space-y-1.5">
-              <div class="flex items-center justify-between px-1 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground/70">
-                <span>View</span>
-                <span>{subviewTitle(props.subview)}</span>
+    <div class={cn('space-y-2.5', props.class)}>
+      <Show when={!props.repoInfoLoading} fallback={<div class="flex items-center gap-2 py-3 text-xs text-muted-foreground"><SnakeLoader size="sm" /><span>Checking repository...</span></div>}>
+        <Show when={!props.repoInfoError} fallback={<div class="py-3 text-xs break-words text-error">{props.repoInfoError}</div>}>
+          <Show when={props.repoAvailable} fallback={<div class="py-3 text-xs text-muted-foreground">Current path is not inside a Git repository.</div>}>
+            <div class="space-y-2.5">
+              <div class={cn('rounded-lg border px-2.5 py-2', gitToneSurfaceClass(sidebarTone()))}>
+                <div class="flex items-center justify-between gap-2">
+                  <span class="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground/70">{selectorLabel(props.subview)}</span>
+                  <span class={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', gitToneBadgeClass(sidebarTone()))}>
+                    {props.subview === 'changes' ? workspaceCount() : props.subview === 'branches' ? branchCount() : props.subview === 'history' ? (props.commits?.length ?? 0) : 'Ready'}
+                  </span>
+                </div>
+                <div class="mt-1 text-[11px] text-muted-foreground">
+                  {props.subview === 'overview'
+                    ? 'High-level status and entry points.'
+                    : props.subview === 'changes'
+                      ? 'Pick a file to inspect its diff.'
+                      : props.subview === 'branches'
+                        ? 'Pick a branch to inspect compare state.'
+                        : 'Pick a commit to inspect file diffs.'}
+                </div>
               </div>
-              <GitSubviewSwitch
-                value={props.subview}
-                items={subviewItems()}
-                onChange={props.onSubviewChange}
-                class="w-full"
-              />
-            </div>
-          </div>
-        </div>
 
-        <div class="min-h-0 flex-1 px-2.5 py-2">
-          <Show when={!props.repoInfoLoading} fallback={<div class="flex items-center gap-2 py-3 text-xs text-muted-foreground"><SnakeLoader size="sm" /><span>Checking repository...</span></div>}>
-            <Show when={!props.repoInfoError} fallback={<div class="py-3 text-xs break-words text-error">{props.repoInfoError}</div>}>
-              <Show when={props.repoAvailable} fallback={<div class="py-3 text-xs text-muted-foreground">Current path is not inside a Git repository.</div>}>
-                <div class="flex h-full min-h-0 flex-col overflow-hidden">
-                  <div class="flex items-center justify-between px-1 pb-2 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground/70">
-                    <span>{props.subview === 'overview' ? 'Focus' : 'Selection'}</span>
-                    <span>{subviewTitle(props.subview)}</span>
+              <Show when={props.subview === 'overview'}>
+                <div class="space-y-1.5">
+                  <div class={cn('rounded-lg border p-2.5', gitToneSurfaceClass(workspaceCount() > 0 ? 'warning' : 'success'))}>
+                    <div class="flex items-center justify-between gap-2">
+                      <span class={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', gitToneBadgeClass(workspaceCount() > 0 ? 'warning' : 'success'))}>Workspace</span>
+                      <span class="text-xl font-semibold tracking-tight text-foreground">{workspaceCount()}</span>
+                    </div>
+                    <div class="mt-2 text-[11px] text-muted-foreground">{workspaceCount() > 0 ? 'Open Changes to review the working tree.' : 'Working tree is clean.'}</div>
                   </div>
 
-                  <div class="min-h-0 flex-1 overflow-hidden">
-                    <Show when={props.subview === 'overview'}>
-                      <div class="h-full min-h-0 space-y-3 overflow-auto pr-1">
-                        <div class="rounded-lg border border-border/70 bg-muted/15 p-3">
-                          <div class="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground/70">Workspace</div>
-                          <div class="mt-2 text-2xl font-semibold tracking-tight text-foreground">{workspaceCount()}</div>
-                          <div class="mt-1 text-[11px] text-muted-foreground">{workspaceCount() > 0 ? 'Files need review in the Changes view.' : 'Working tree is clean.'}</div>
-                        </div>
-
-                        <div class="grid grid-cols-2 gap-2 text-[11px]">
-                          <div class="rounded-lg border border-border/70 bg-muted/10 px-3 py-2.5">
-                            <div class="text-muted-foreground">Branches</div>
-                            <div class="mt-1 text-base font-semibold text-foreground">{branchCount()}</div>
-                          </div>
-                          <div class="rounded-lg border border-border/70 bg-muted/10 px-3 py-2.5">
-                            <div class="text-muted-foreground">Loaded commits</div>
-                            <div class="mt-1 text-base font-semibold text-foreground">{props.commits?.length ?? 0}</div>
-                          </div>
-                        </div>
-
-                        <div class="rounded-lg border border-dashed border-border/70 bg-background/70 p-3 text-[11px] leading-5 text-muted-foreground">
-                          Use the view switch above to move from overview into changes, branches, or commit details without duplicating controls in the content area.
-                        </div>
-                      </div>
-                    </Show>
-
-                    <Show when={props.subview === 'changes'}>
-                      <div class="h-full min-h-0 space-y-3 overflow-auto pr-1">
-                        <Show when={!props.workspaceLoading} fallback={<div class="flex items-center gap-2 py-3 text-xs text-muted-foreground"><SnakeLoader size="sm" /><span>Loading workspace changes...</span></div>}>
-                          <Show when={!props.workspaceError} fallback={<div class="py-3 text-xs break-words text-error">{props.workspaceError}</div>}>
-                            <For each={WORKSPACE_SECTIONS}>
-                              {(section) => {
-                                const items = () => workspaceSectionItems(props.workspace, section);
-                                return (
-                                  <section class="space-y-1.5">
-                                    <div class="flex items-center justify-between px-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground/70">
-                                      <span>{workspaceSectionLabel(section)}</span>
-                                      <span>{workspaceSectionCount(props.workspace?.summary, section)}</span>
-                                    </div>
-                                    <Show when={items().length > 0} fallback={<div class="rounded-md border border-dashed border-border/60 bg-muted/10 px-3 py-2 text-[11px] text-muted-foreground">No files.</div>}>
-                                      <SidebarItemList>
-                                        <For each={items()}>
-                                          {(item) => (
-                                            <SidebarItem
-                                              active={props.selectedWorkspaceKey === workspaceEntryKey(item)}
-                                              class="py-0.5"
-                                              icon={<span class={`inline-block size-2 rounded-full ${gitChangeDotClass(item.changeType)}`} />}
-                                              onClick={() => {
-                                                props.onSelectWorkspaceItem?.(item);
-                                                closeAfterPick();
-                                              }}
-                                            >
-                                              <div class="flex min-w-0 items-center gap-2 text-left">
-                                                <span class="min-w-0 flex-1 truncate text-[11px] leading-4 text-current" title={changeSecondaryPath(item)}>{changeSecondaryPath(item)}</span>
-                                                <span class="shrink-0 text-[10px] tabular-nums text-muted-foreground/80">{changeMetricsText(item)}</span>
-                                              </div>
-                                            </SidebarItem>
-                                          )}
-                                        </For>
-                                      </SidebarItemList>
-                                    </Show>
-                                  </section>
-                                );
-                              }}
-                            </For>
-                          </Show>
-                        </Show>
-                      </div>
-                    </Show>
-
-                    <Show when={props.subview === 'branches'}>
-                      <div class="h-full min-h-0 space-y-3 overflow-auto pr-1">
-                        <Show when={!props.branchesLoading} fallback={<div class="flex items-center gap-2 py-3 text-xs text-muted-foreground"><SnakeLoader size="sm" /><span>Loading branches...</span></div>}>
-                          <Show when={!props.branchesError} fallback={<div class="py-3 text-xs break-words text-error">{props.branchesError}</div>}>
-                            <section class="space-y-1.5">
-                              <div class="flex items-center justify-between px-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground/70">
-                                <span>Local</span>
-                                <span>{props.branches?.local?.length ?? 0}</span>
-                              </div>
-                              <Show when={(props.branches?.local?.length ?? 0) > 0} fallback={<div class="rounded-md border border-dashed border-border/60 bg-muted/10 px-3 py-2 text-[11px] text-muted-foreground">No local branches.</div>}>
-                                <SidebarItemList>
-                                  <For each={props.branches?.local ?? []}>
-                                    {(branch) => (
-                                      <SidebarItem
-                                        active={props.selectedBranchKey === branchIdentity(branch)}
-                                        class="py-1"
-                                        onClick={() => {
-                                          props.onSelectBranch?.(branch);
-                                          closeAfterPick();
-                                        }}
-                                      >
-                                        <div class="min-w-0 flex-1 text-left">
-                                          <div class="flex items-center gap-2">
-                                            <span class="min-w-0 flex-1 truncate text-[11px] leading-4 text-current">{branchDisplayName(branch)}</span>
-                                            <Show when={branch.current}>
-                                              <span class="rounded-full border border-border/70 px-1.5 py-0.5 text-[10px] text-muted-foreground">Current</span>
-                                            </Show>
-                                          </div>
-                                          <div class="mt-0.5 truncate text-[10px] text-muted-foreground/80">{branchStatusSummary(branch)}</div>
-                                        </div>
-                                      </SidebarItem>
-                                    )}
-                                  </For>
-                                </SidebarItemList>
-                              </Show>
-                            </section>
-
-                            <section class="space-y-1.5">
-                              <div class="flex items-center justify-between px-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground/70">
-                                <span>Remote</span>
-                                <span>{props.branches?.remote?.length ?? 0}</span>
-                              </div>
-                              <Show when={(props.branches?.remote?.length ?? 0) > 0} fallback={<div class="rounded-md border border-dashed border-border/60 bg-muted/10 px-3 py-2 text-[11px] text-muted-foreground">No remote branches.</div>}>
-                                <SidebarItemList>
-                                  <For each={props.branches?.remote ?? []}>
-                                    {(branch) => (
-                                      <SidebarItem
-                                        active={props.selectedBranchKey === branchIdentity(branch)}
-                                        class="py-1"
-                                        onClick={() => {
-                                          props.onSelectBranch?.(branch);
-                                          closeAfterPick();
-                                        }}
-                                      >
-                                        <div class="min-w-0 flex-1 text-left">
-                                          <div class="truncate text-[11px] leading-4 text-current">{branchDisplayName(branch)}</div>
-                                          <div class="mt-0.5 truncate text-[10px] text-muted-foreground/80">{branch.subject || branchStatusSummary(branch)}</div>
-                                        </div>
-                                      </SidebarItem>
-                                    )}
-                                  </For>
-                                </SidebarItemList>
-                              </Show>
-                            </section>
-                          </Show>
-                        </Show>
-                      </div>
-                    </Show>
-
-                    <Show when={props.subview === 'history'}>
-                      <div class="flex h-full min-h-0 flex-col">
-                        <div class="min-h-0 flex-1 overflow-auto pr-1">
-                          <Show when={!props.listLoading} fallback={<div class="flex items-center gap-2 py-3 text-xs text-muted-foreground"><SnakeLoader size="sm" /><span>Loading commits...</span></div>}>
-                            <Show when={!props.listError} fallback={<div class="py-3 text-xs break-words text-error">{props.listError}</div>}>
-                              <Show when={(props.commits?.length ?? 0) > 0} fallback={<div class="py-3 text-xs text-muted-foreground">This repository has no commits yet.</div>}>
-                                <SidebarItemList>
-                                  <For each={props.commits ?? []}>
-                                    {(commit) => (
-                                      <SidebarItem
-                                        active={props.selectedCommitHash === commit.hash}
-                                        class="items-start py-1.5"
-                                        icon={<span class="mt-1 inline-block size-2 rounded-full bg-current" />}
-                                        onClick={() => {
-                                          props.onSelectCommit?.(commit.hash);
-                                          closeAfterPick();
-                                        }}
-                                      >
-                                        <div class="min-w-0 flex-1">
-                                          <div class="flex items-start justify-between gap-2">
-                                            <span class="min-w-0 flex-1 truncate text-[12px] leading-4.5 text-current">{commit.subject || '(no subject)'}</span>
-                                            <span class="shrink-0 text-[10px] text-muted-foreground/80">{formatRelativeTime(commit.authorTimeMs)}</span>
-                                          </div>
-                                          <div class="mt-0.5 flex items-center gap-2 text-[10px] text-muted-foreground/80">
-                                            <span class="shrink-0 font-mono">{commit.shortHash}</span>
-                                            <span class="min-w-0 flex-1 truncate">{commit.authorName || '-'}</span>
-                                          </div>
-                                        </div>
-                                      </SidebarItem>
-                                    )}
-                                  </For>
-                                </SidebarItemList>
-                              </Show>
-                            </Show>
-                          </Show>
-                        </div>
-
-                        <Show when={props.hasMore}>
-                          <div class="shrink-0 border-t border-border/60 pt-2">
-                            <Button size="sm" variant="outline" class="w-full" onClick={props.onLoadMore} loading={props.listLoadingMore} disabled={props.listLoadingMore}>
-                              Load More
-                            </Button>
-                          </div>
-                        </Show>
-                      </div>
-                    </Show>
+                  <div class="grid grid-cols-1 gap-2 text-[11px] sm:grid-cols-2">
+                    <div class={cn('rounded-lg border px-2.5 py-2', gitToneInsetClass('violet'))}>
+                      <div class="text-muted-foreground">Branches</div>
+                      <div class="mt-1 text-base font-semibold text-foreground">{branchCount()}</div>
+                    </div>
+                    <div class={cn('rounded-lg border px-2.5 py-2', gitToneInsetClass('brand'))}>
+                      <div class="text-muted-foreground">Loaded commits</div>
+                      <div class="mt-1 text-base font-semibold text-foreground">{props.commits?.length ?? 0}</div>
+                    </div>
                   </div>
                 </div>
               </Show>
-            </Show>
+
+              <Show when={props.subview === 'changes'}>
+                <Show when={!props.workspaceLoading} fallback={<div class="flex items-center gap-2 py-3 text-xs text-muted-foreground"><SnakeLoader size="sm" /><span>Loading workspace changes...</span></div>}>
+                  <Show when={!props.workspaceError} fallback={<div class="py-3 text-xs break-words text-error">{props.workspaceError}</div>}>
+                    <div class="space-y-1.5">
+                      <For each={WORKSPACE_SECTIONS}>
+                        {(section) => {
+                          const items = () => workspaceSectionItems(props.workspace, section);
+                          const tone = () => workspaceSectionTone(section);
+                          return (
+                            <section class="space-y-1.5">
+                              <div class="flex items-center justify-between gap-2 px-1">
+                                <span class={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', gitToneBadgeClass(tone()))}>{workspaceSectionLabel(section)}</span>
+                                <span class={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', gitToneBadgeClass('neutral'))}>{workspaceSectionCount(props.workspace?.summary ?? props.repoSummary?.workspaceSummary, section)}</span>
+                              </div>
+                              <Show when={items().length > 0} fallback={<div class={cn('rounded-xl border border-dashed px-3 py-2 text-[11px] text-muted-foreground', gitToneInsetClass(tone()))}>No files in this group.</div>}>
+                                <div class="space-y-1.5">
+                                  <For each={items()}>
+                                    {(item) => {
+                                      const active = () => props.selectedWorkspaceKey === workspaceEntryKey(item);
+                                      return (
+                                        <button
+                                          type="button"
+                                          class={cn(
+                                            'w-full rounded-lg border px-2.5 py-2 text-left transition-all duration-150',
+                                            gitToneSelectableCardClass(tone(), active())
+                                          )}
+                                          onClick={() => {
+                                            props.onSelectWorkspaceItem?.(item);
+                                            closeAfterPick();
+                                          }}
+                                        >
+                                          <div class="min-w-0">
+                                            <div class="truncate text-[12px] font-medium text-current" title={changeSecondaryPath(item)}>{changeSecondaryPath(item)}</div>
+                                            <div class="mt-0.5 flex flex-wrap items-center gap-1.5 text-[10px]">
+                                              <span class={cn('rounded-full border px-2 py-0.5 font-medium', gitToneBadgeClass(gitChangeTone(item.changeType)))}>{item.changeType || 'modified'}</span>
+                                              <span class={cn('rounded-full border px-2 py-0.5 font-medium', gitToneBadgeClass('neutral'))}>{changeMetricsText(item)}</span>
+                                            </div>
+                                          </div>
+                                        </button>
+                                      );
+                                    }}
+                                  </For>
+                                </div>
+                              </Show>
+                            </section>
+                          );
+                        }}
+                      </For>
+                    </div>
+                  </Show>
+                </Show>
+              </Show>
+
+              <Show when={props.subview === 'branches'}>
+                <Show when={!props.branchesLoading} fallback={<div class="flex items-center gap-2 py-3 text-xs text-muted-foreground"><SnakeLoader size="sm" /><span>Loading branches...</span></div>}>
+                  <Show when={!props.branchesError} fallback={<div class="py-3 text-xs break-words text-error">{props.branchesError}</div>}>
+                    <div class="space-y-1.5">
+                      <section class="space-y-1.5">
+                        <div class="flex items-center justify-between gap-2 px-1">
+                          <span class={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', gitToneBadgeClass('brand'))}>Local</span>
+                          <span class={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', gitToneBadgeClass('neutral'))}>{props.branches?.local?.length ?? 0}</span>
+                        </div>
+                        <Show when={(props.branches?.local?.length ?? 0) > 0} fallback={<div class={cn('rounded-xl border border-dashed px-3 py-2 text-[11px] text-muted-foreground', gitToneInsetClass('neutral'))}>No local branches.</div>}>
+                          <div class="space-y-1.5">
+                            <For each={props.branches?.local ?? []}>
+                              {(branch) => {
+                                const tone = () => gitBranchTone(branch);
+                                const active = () => props.selectedBranchKey === branchIdentity(branch);
+                                return (
+                                  <button
+                                    type="button"
+                                    class={cn('w-full rounded-lg border px-2.5 py-2 text-left transition-all duration-150', gitToneSelectableCardClass(tone(), active()))}
+                                    onClick={() => {
+                                      props.onSelectBranch?.(branch);
+                                      closeAfterPick();
+                                    }}
+                                  >
+                                    <div class="min-w-0">
+                                      <div class="flex items-center gap-2">
+                                        <span class="min-w-0 flex-1 truncate text-[12px] font-medium text-current">{branchDisplayName(branch)}</span>
+                                        <Show when={branch.current}>
+                                          <span class={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', gitToneBadgeClass('brand'))}>Current</span>
+                                        </Show>
+                                      </div>
+                                      <div class="mt-0.5 truncate text-[10px] text-muted-foreground">{branchStatusSummary(branch)}</div>
+                                    </div>
+                                  </button>
+                                );
+                              }}
+                            </For>
+                          </div>
+                        </Show>
+                      </section>
+
+                      <section class="space-y-1.5">
+                        <div class="flex items-center justify-between gap-2 px-1">
+                          <span class={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', gitToneBadgeClass('violet'))}>Remote</span>
+                          <span class={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', gitToneBadgeClass('neutral'))}>{props.branches?.remote?.length ?? 0}</span>
+                        </div>
+                        <Show when={(props.branches?.remote?.length ?? 0) > 0} fallback={<div class={cn('rounded-xl border border-dashed px-3 py-2 text-[11px] text-muted-foreground', gitToneInsetClass('violet'))}>No remote branches.</div>}>
+                          <div class="space-y-1.5">
+                            <For each={props.branches?.remote ?? []}>
+                              {(branch) => {
+                                const active = () => props.selectedBranchKey === branchIdentity(branch);
+                                return (
+                                  <button
+                                    type="button"
+                                    class={cn('w-full rounded-lg border px-2.5 py-2 text-left transition-all duration-150', gitToneSelectableCardClass('violet', active()))}
+                                    onClick={() => {
+                                      props.onSelectBranch?.(branch);
+                                      closeAfterPick();
+                                    }}
+                                  >
+                                    <div class="truncate text-[12px] font-medium text-current">{branchDisplayName(branch)}</div>
+                                    <div class="mt-0.5 truncate text-[10px] text-muted-foreground">{branch.subject || branchStatusSummary(branch)}</div>
+                                  </button>
+                                );
+                              }}
+                            </For>
+                          </div>
+                        </Show>
+                      </section>
+                    </div>
+                  </Show>
+                </Show>
+              </Show>
+
+              <Show when={props.subview === 'history'}>
+                <div class="space-y-1.5">
+                  <Show when={!props.listLoading} fallback={<div class="flex items-center gap-2 py-3 text-xs text-muted-foreground"><SnakeLoader size="sm" /><span>Loading commits...</span></div>}>
+                    <Show when={!props.listError} fallback={<div class="py-3 text-xs break-words text-error">{props.listError}</div>}>
+                      <Show when={(props.commits?.length ?? 0) > 0} fallback={<div class="py-3 text-xs text-muted-foreground">This repository has no commits yet.</div>}>
+                        <div class="space-y-1.5">
+                          <For each={props.commits ?? []}>
+                            {(commit) => {
+                              const active = () => props.selectedCommitHash === commit.hash;
+                              return (
+                                <button
+                                  type="button"
+                                  class={cn('w-full rounded-lg border px-2.5 py-2 text-left transition-all duration-150', gitToneSelectableCardClass('brand', active()))}
+                                  onClick={() => {
+                                    props.onSelectCommit?.(commit.hash);
+                                    closeAfterPick();
+                                  }}
+                                >
+                                  <div class="flex items-start justify-between gap-2">
+                                    <div class="min-w-0 flex-1">
+                                      <div class="truncate text-[12px] font-medium text-current">{commit.subject || '(no subject)'}</div>
+                                      <div class="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
+                                        <span class={cn('rounded-full border px-2 py-0.5 font-medium', gitToneBadgeClass('brand'))}>{commit.shortHash}</span>
+                                        <span>{commit.authorName || '-'}</span>
+                                      </div>
+                                    </div>
+                                    <span class="shrink-0 rounded-full border border-border/60 bg-background/70 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">{formatRelativeTime(commit.authorTimeMs)}</span>
+                                  </div>
+                                </button>
+                              );
+                            }}
+                          </For>
+                        </div>
+                      </Show>
+                    </Show>
+                  </Show>
+
+                  <Show when={props.hasMore}>
+                    <div class="border-t border-border/60 pt-2">
+                      <Button size="sm" variant="outline" class="w-full" onClick={props.onLoadMore} loading={props.listLoadingMore} disabled={props.listLoadingMore}>
+                        Load More
+                      </Button>
+                    </div>
+                  </Show>
+                </div>
+              </Show>
+            </div>
           </Show>
-        </div>
-      </div>
-    </SidebarPane>
+        </Show>
+      </Show>
+    </div>
   );
 }

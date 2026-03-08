@@ -9,46 +9,88 @@ function read(relPath: string): string {
   return fs.readFileSync(path.resolve(dir, relPath), 'utf8');
 }
 
-describe('git history layout wiring', () => {
-  it('shares the explorer width storage key between files mode and git mode', () => {
+describe('browser workspace layout wiring', () => {
+  it('shares one sidebar width state across files mode and git mode', () => {
     const src = read('./RemoteFileBrowser.tsx');
 
     expect(src).toContain("const PAGE_SIDEBAR_WIDTH_STORAGE_KEY = 'redeven:remote-file-browser:page-sidebar-width';");
-    expect(src).toContain('sidebarWidthStorageKey={PAGE_SIDEBAR_WIDTH_STORAGE_KEY}');
-    expect(src).toContain('width={gitHistorySidebarWidth()}');
-    expect(src).toContain('resizable');
+    expect(src).toContain('width={browserSidebarWidth()}');
+    expect(src).toContain('setBrowserSidebarWidth((width) => normalizePageSidebarWidth(width + delta))');
   });
 
-  it('uses the git sidebar as the single navigation surface for mode and view switching', () => {
+  it('routes files mode and git mode through dedicated unified workspace shells', () => {
+    const src = read('./RemoteFileBrowser.tsx');
+
+    expect(src).toContain("import { FileBrowserWorkspace } from './FileBrowserWorkspace';");
+    expect(src).toContain("import { GitWorkspace } from './GitWorkspace';");
+    expect(src).toContain('<FileBrowserWorkspace');
+    expect(src).toContain('<GitWorkspace');
+    expect(src).not.toContain('sidebarHeaderActions={');
+  });
+
+  it('keeps mode and git subview navigation out of selector-only sidebar content', () => {
     const src = read('./GitWorkbenchSidebar.tsx');
 
-    expect(src).toContain("import { GitHistoryModeSwitch, type GitHistoryMode } from './GitHistoryModeSwitch';");
-    expect(src).toContain("import { GitSubviewSwitch } from './GitSubviewSwitch';");
-    expect(src).toContain('title="Git"');
-    expect(src).toContain('headerActions={<span class="text-[10px] uppercase tracking-[0.18em] text-muted-foreground/70">Navigator</span>}');
-    expect(src).toContain('props.onClose?.();');
+    expect(src).not.toContain('SidebarPane');
+    expect(src).not.toContain('GitHistoryModeSwitch');
+    expect(src).not.toContain('GitSubviewSwitch');
   });
 
-  it('keeps the git sidebar mounted for overview so navigation stays in one place', () => {
-    const src = read('./RemoteFileBrowser.tsx');
-    const start = src.indexOf('const handleGitSubviewChange = (view: GitWorkbenchSubview) => {');
-    expect(start).toBeGreaterThanOrEqual(0);
-    const end = src.indexOf("const showPageSidebar = () => pageMode() === 'git';", start);
-    expect(end).toBeGreaterThan(start);
-    const handler = src.slice(start, end);
+  it('pins the mode switch area in the shared browser shell', () => {
+    const src = read('./BrowserWorkspaceShell.tsx');
 
-    expect(handler).toContain('setGitSubview(view);');
-    expect(handler).not.toContain('refreshGitWorkbench');
-    expect(handler).not.toContain('await ');
-    expect(src).toContain("const showPageSidebar = () => pageMode() === 'git';");
+    expect(src).toContain('Mode');
+    expect(src).toContain('props.modeSwitcher');
   });
 
-  it('keeps the global git header focused on context and refresh only', () => {
+  it('uses a compact mode switch and mobile activity bar in the shared browser shell', () => {
+    const modeSrc = read('./GitHistoryModeSwitch.tsx');
+    const shellSrc = read('./BrowserWorkspaceShell.tsx');
+    const navSrc = read('./GitViewNav.tsx');
+
+    expect(modeSrc).toContain('role="radiogroup"');
+    expect(modeSrc).toContain('aria-label="Browser mode"');
+    expect(modeSrc).toContain('inline-flex w-full items-center gap-0.5 rounded-lg border border-border bg-muted/40 p-0.5');
+    expect(modeSrc).not.toContain('>Browse<');
+    expect(modeSrc).not.toContain('>Inspect<');
+
+    expect(shellSrc).toContain('ActivityBar');
+    expect(shellSrc).toContain('showSidebarToggle');
+    expect(shellSrc).toContain('sidebarToggleLabel');
+    expect(shellSrc).toContain('sidebarToggleIcon');
+
+    expect(navSrc).toContain('role="tablist"');
+    expect(navSrc).toContain('aria-label="Git views"');
+    expect(navSrc).toContain('rounded-lg border px-2.5 py-2');
+  });
+
+  it('uses floating diff dialogs instead of inline patch sections', () => {
+    const changesSrc = read('./GitChangesPanel.tsx');
+    const branchesSrc = read('./GitBranchesPanel.tsx');
+    const historySrc = read('./GitHistoryBrowser.tsx');
+
+    expect(changesSrc).toContain("import { GitDiffDialog } from './GitDiffDialog';");
+    expect(branchesSrc).toContain("import { GitDiffDialog } from './GitDiffDialog';");
+    expect(historySrc).toContain("import { GitDiffDialog } from './GitDiffDialog';");
+    expect(branchesSrc).not.toContain('The selected file patch stays in the main detail surface');
+    expect(historySrc).not.toContain('The selected file patch stays in the main detail surface');
+  });
+
+  it('uses the dedicated git view navigation inside the git workspace shell', () => {
+    const src = read('./GitWorkspace.tsx');
+
+    expect(src).toContain("import { GitViewNav } from './GitViewNav';");
+    expect(src).toContain('navigationLabel="View"');
+    expect(src).toContain('<GitViewNav');
+  });
+
+  it('keeps the git content header focused on context and refresh only', () => {
     const src = read('./GitWorkbench.tsx');
 
     expect(src).toContain('Refresh');
     expect(src).toContain('subviewLabel(props.subview)');
     expect(src).not.toContain('GitHistoryModeSwitch');
     expect(src).not.toContain('GitSubviewSwitch');
+    expect(src).not.toContain('Open browser sidebar');
   });
 });
