@@ -33,9 +33,8 @@ export interface FileBrowserWorkspaceProps {
   resizable?: boolean;
   onResize?: (delta: number) => void;
   onClose?: () => void;
-  mobileSidebarToggleMode?: 'internal' | 'external';
-  showSidebarToggle?: boolean;
-  onOpenSidebar?: () => void;
+  showMobileSidebarButton?: boolean;
+  onToggleSidebar?: () => void;
   onNavigate?: (path: string) => void;
   onPathChange?: (path: string, source: 'user' | 'programmatic') => void;
   onOpen?: (item: FileItem) => void;
@@ -45,7 +44,12 @@ export interface FileBrowserWorkspaceProps {
   class?: string;
 }
 
-function FileWorkspaceHeader() {
+interface FileWorkspaceHeaderProps {
+  showMobileSidebarButton?: boolean;
+  onToggleSidebar?: () => void;
+}
+
+function FileWorkspaceHeader(props: FileWorkspaceHeaderProps) {
   const browser = useFileBrowser();
   const canNavigateUp = () => {
     const path = browser.currentPath();
@@ -56,7 +60,20 @@ function FileWorkspaceHeader() {
     <div class="shrink-0 border-b border-border/70 bg-background/95 px-3 py-2.5 backdrop-blur supports-[backdrop-filter]:bg-background/90">
       <div class="space-y-2.5">
         <div class="flex flex-wrap items-center gap-2">
-          <Button size="xs" variant="outline" icon={ArrowUp} onClick={browser.navigateUp} disabled={!canNavigateUp()}>
+          <Show when={props.showMobileSidebarButton && props.onToggleSidebar}>
+            <Button
+              size="xs"
+              variant="outline"
+              icon={FilesIcon}
+              class="cursor-pointer"
+              aria-label="Toggle browser sidebar"
+              onClick={props.onToggleSidebar}
+            >
+              Sidebar
+            </Button>
+          </Show>
+
+          <Button size="xs" variant="outline" icon={ArrowUp} class="cursor-pointer" onClick={browser.navigateUp} disabled={!canNavigateUp()}>
             Up
           </Button>
 
@@ -167,11 +184,6 @@ function FileBrowserWorkspaceInner(props: Omit<FileBrowserWorkspaceProps, 'files
       resizable={props.resizable}
       onResize={props.onResize}
       onClose={props.onClose}
-      onOpenSidebar={props.onOpenSidebar}
-      mobileSidebarToggleMode={props.mobileSidebarToggleMode}
-      showSidebarToggle={props.showSidebarToggle}
-      sidebarToggleLabel="Files sidebar"
-      sidebarToggleIcon={FilesIcon}
       bodyRef={(el) => {
         sidebarScrollEl = el;
       }}
@@ -189,7 +201,10 @@ function FileBrowserWorkspaceInner(props: Omit<FileBrowserWorkspaceProps, 'files
       )}
       content={(
         <div class="flex h-full min-h-0 flex-col bg-background">
-          <FileWorkspaceHeader />
+          <FileWorkspaceHeader
+            showMobileSidebarButton={props.showMobileSidebarButton}
+            onToggleSidebar={props.onToggleSidebar}
+          />
           <div
             ref={(el) => {
               contentScrollEl = el;
@@ -235,9 +250,8 @@ export function FileBrowserWorkspace(props: FileBrowserWorkspaceProps) {
         resizable={props.resizable}
         onResize={props.onResize}
         onClose={props.onClose}
-        mobileSidebarToggleMode={props.mobileSidebarToggleMode}
-        showSidebarToggle={props.showSidebarToggle}
-        onOpenSidebar={props.onOpenSidebar}
+        showMobileSidebarButton={props.showMobileSidebarButton}
+        onToggleSidebar={props.onToggleSidebar}
         onDragMove={props.onDragMove}
         contextMenuCallbacks={props.contextMenuCallbacks}
         overrideContextMenuItems={props.overrideContextMenuItems}

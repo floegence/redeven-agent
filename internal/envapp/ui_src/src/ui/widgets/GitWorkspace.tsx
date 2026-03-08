@@ -1,4 +1,3 @@
-import { History } from '@floegence/floe-webapp-core/icons';
 import type {
   GitBranchSummary,
   GitCommitSummary,
@@ -28,8 +27,6 @@ export interface GitWorkspaceProps {
   resizable?: boolean;
   onResize?: (delta: number) => void;
   onClose?: () => void;
-  onOpenSidebar?: () => void;
-  mobileSidebarToggleMode?: 'internal' | 'external';
   currentPath: string;
   repoInfo?: GitResolveRepoResponse | null;
   repoInfoLoading?: boolean;
@@ -61,7 +58,8 @@ export interface GitWorkspaceProps {
   selectedCommitHash?: string;
   onSelectCommit?: (hash: string) => void;
   onLoadMore?: () => void;
-  showSidebarToggle?: boolean;
+  showMobileSidebarButton?: boolean;
+  onToggleSidebar?: () => void;
   onRefresh?: () => void;
   class?: string;
 }
@@ -82,11 +80,6 @@ export function GitWorkspace(props: GitWorkspaceProps) {
       resizable={props.resizable}
       onResize={props.onResize}
       onClose={props.onClose}
-      onOpenSidebar={props.onOpenSidebar}
-      mobileSidebarToggleMode={props.mobileSidebarToggleMode}
-      showSidebarToggle={props.showSidebarToggle}
-      sidebarToggleLabel="Git sidebar"
-      sidebarToggleIcon={History}
       modeSwitcher={<GitHistoryModeSwitch mode={props.mode} onChange={props.onModeChange} gitHistoryDisabled={props.gitHistoryDisabled} class="w-full" />}
       navigationLabel="View"
       navigation={<GitViewNav value={props.subview} items={subviewItems()} onChange={props.onSubviewChange} />}
@@ -141,6 +134,8 @@ export function GitWorkspace(props: GitWorkspaceProps) {
           compareLoading={props.compareLoading}
           compareError={props.compareError}
           selectedCommitHash={props.selectedCommitHash}
+          showMobileSidebarButton={props.showMobileSidebarButton}
+          onToggleSidebar={props.onToggleSidebar}
           onRefresh={props.onRefresh}
         />
       )}

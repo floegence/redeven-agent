@@ -1,6 +1,6 @@
 import { Show } from 'solid-js';
 import { cn } from '@floegence/floe-webapp-core';
-import { Refresh } from '@floegence/floe-webapp-core/icons';
+import { History, Refresh } from '@floegence/floe-webapp-core/icons';
 import { Button } from '@floegence/floe-webapp-core/ui';
 import type {
   GitBranchSummary,
@@ -39,6 +39,8 @@ export interface GitWorkbenchProps {
   compareLoading?: boolean;
   compareError?: string;
   selectedCommitHash?: string;
+  showMobileSidebarButton?: boolean;
+  onToggleSidebar?: () => void;
   onRefresh?: () => void;
   class?: string;
 }
@@ -103,11 +105,25 @@ export function GitWorkbench(props: GitWorkbenchProps) {
             </div>
           </div>
 
-          <Show when={props.onRefresh}>
-            <Button size="sm" variant="outline" class="shrink-0 cursor-pointer" icon={Refresh} onClick={props.onRefresh}>
-              Refresh
-            </Button>
-          </Show>
+          <div class="flex shrink-0 flex-wrap items-center gap-2">
+            <Show when={props.showMobileSidebarButton && props.onToggleSidebar}>
+              <Button
+                size="sm"
+                variant="outline"
+                icon={History}
+                class="shrink-0 cursor-pointer"
+                aria-label="Toggle browser sidebar"
+                onClick={props.onToggleSidebar}
+              >
+                Sidebar
+              </Button>
+            </Show>
+            <Show when={props.onRefresh}>
+              <Button size="sm" variant="outline" class="shrink-0 cursor-pointer" icon={Refresh} onClick={props.onRefresh}>
+                Refresh
+              </Button>
+            </Show>
+          </div>
         </div>
       </div>
 

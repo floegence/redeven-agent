@@ -7,11 +7,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { FileBrowserWorkspace } from './FileBrowserWorkspace';
 
-beforeEach(() => {
+function mockMatchMedia(matches: boolean) {
   Object.defineProperty(window, 'matchMedia', {
     writable: true,
     value: vi.fn().mockImplementation((query: string) => ({
-      matches: false,
+      matches,
       media: query,
       onchange: null,
       addListener: () => {},
@@ -21,6 +21,10 @@ beforeEach(() => {
       dispatchEvent: () => false,
     })),
   });
+}
+
+beforeEach(() => {
+  mockMatchMedia(false);
 
   Object.defineProperty(globalThis, 'ResizeObserver', {
     writable: true,
@@ -37,15 +41,15 @@ afterEach(() => {
 });
 
 describe('FileBrowserWorkspace interactions', () => {
+  const files: FileItem[] = [
+    { id: 'folder-src', name: 'src', type: 'folder', path: '/src', children: [] },
+    { id: 'file-readme', name: 'README.md', type: 'file', path: '/README.md' },
+  ];
+
   it('keeps the Files/Git mode switch pinned in the shared sidebar shell', () => {
     let nextMode = '';
     const host = document.createElement('div');
     document.body.appendChild(host);
-
-    const files: FileItem[] = [
-      { id: 'folder-src', name: 'src', type: 'folder', path: '/src', children: [] },
-      { id: 'file-readme', name: 'README.md', type: 'file', path: '/README.md' },
-    ];
 
     const dispose = render(() => (
       <LayoutProvider>
@@ -74,6 +78,46 @@ describe('FileBrowserWorkspace interactions', () => {
       expect(gitButton).toBeTruthy();
       gitButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
       expect(nextMode).toBe('git');
+    } finally {
+      dispose();
+    }
+  });
+
+  it('uses the content header button to reopen the files sidebar on mobile widgets', () => {
+    mockMatchMedia(true);
+    let toggleSidebarCount = 0;
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+
+    const dispose = render(() => (
+      <LayoutProvider>
+        <div class="h-[560px]">
+          <FileBrowserWorkspace
+            mode="files"
+            onModeChange={() => {}}
+            files={files}
+            currentPath="/"
+            initialPath="/"
+            persistenceKey="test-files-workspace-mobile"
+            instanceId="test-files-workspace-mobile"
+            resetKey={0}
+            width={260}
+            open={false}
+            showMobileSidebarButton
+            onToggleSidebar={() => {
+              toggleSidebarCount += 1;
+            }}
+          />
+        </div>
+      </LayoutProvider>
+    ), host);
+
+    try {
+      const sidebarButton = host.querySelector('button[aria-label="Toggle browser sidebar"]');
+      expect(sidebarButton).toBeTruthy();
+      expect(sidebarButton?.textContent).toContain('Sidebar');
+      sidebarButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      expect(toggleSidebarCount).toBe(1);
     } finally {
       dispose();
     }
