@@ -3,9 +3,9 @@ import { cn } from '@floegence/floe-webapp-core';
 import { SnakeLoader } from '@floegence/floe-webapp-core/loading';
 import { useProtocol } from '@floegence/floe-webapp-protocol';
 import { useRedevenRpc, type GitCommitDetail, type GitCommitFileSummary, type GitResolveRepoResponse } from '../protocol/redeven_v1';
-import { GitPatchViewer } from './GitPatchViewer';
 import { readGitPatchTextOnce } from '../utils/gitPatchStreamReader';
 import { changeMetricsText, changeSecondaryPath } from '../utils/gitWorkbench';
+import { GitDiffDialog } from './GitDiffDialog';
 import { gitChangeTone, gitToneBadgeClass, gitToneSelectableCardClass, gitToneSurfaceClass } from './GitChrome';
 
 const COMMIT_BODY_PREVIEW_LINES = 5;
@@ -23,11 +23,6 @@ function formatDetailTime(ms?: number): string {
   return new Date(ms).toLocaleString();
 }
 
-function pickDefaultFile(files: GitCommitFileSummary[]): GitCommitFileSummary | null {
-  if (!Array.isArray(files) || files.length === 0) return null;
-  return files.find((file) => !file.isBinary) ?? files[0] ?? null;
-}
-
 function selectedFileIdentity(file: GitCommitFileSummary | null | undefined): string {
   return String(file?.patchPath || file?.path || file?.newPath || file?.oldPath || '').trim();
 }
@@ -42,6 +37,7 @@ export function GitHistoryBrowser(props: GitHistoryBrowserProps) {
   const [detailError, setDetailError] = createSignal('');
   const [selectedFileKey, setSelectedFileKey] = createSignal('');
   const [commitBodyExpanded, setCommitBodyExpanded] = createSignal(false);
+  const [diffOpen, setDiffOpen] = createSignal(false);
 
   let detailReqSeq = 0;
 
@@ -66,6 +62,7 @@ export function GitHistoryBrowser(props: GitHistoryBrowserProps) {
     setSelectedFileKey('');
     setDetailError('');
     setDetailLoading(false);
+    setDiffOpen(false);
   };
 
   const loadCommitDetail = async (hash: string) => {
@@ -80,8 +77,7 @@ export function GitHistoryBrowser(props: GitHistoryBrowserProps) {
       const files = Array.isArray(resp?.files) ? resp.files : [];
       setCommitDetail(resp?.commit ?? null);
       setCommitFiles(files);
-      const nextDefault = pickDefaultFile(files);
-      setSelectedFileKey(selectedFileIdentity(nextDefault));
+      setSelectedFileKey('');
     } catch (err) {
       if (seq !== detailReqSeq) return;
       setDetailError(err instanceof Error ? err.message : String(err ?? 'Failed to load commit detail'));
@@ -111,7 +107,13 @@ export function GitHistoryBrowser(props: GitHistoryBrowserProps) {
   createEffect(() => {
     commitHash();
     setCommitBodyExpanded(false);
+    setDiffOpen(false);
   });
+
+  const openFileDiff = (file: GitCommitFileSummary) => {
+    setSelectedFileKey(selectedFileIdentity(file));
+    setDiffOpen(true);
+  };
 
   return (
     <div class={cn('relative flex h-full min-h-0 flex-col bg-background', props.class)}>
@@ -130,7 +132,7 @@ export function GitHistoryBrowser(props: GitHistoryBrowserProps) {
           </div>
         }
       >
-        <Show when={commitHash()} fallback={<div class="flex-1 px-4 py-5 text-xs text-muted-foreground">Select a commit from the Git sidebar to inspect its details.</div>}>
+        <Show when={commitHash()} fallback={<div class="flex-1 px-3 py-4 text-xs text-muted-foreground">Select a commit from the Git sidebar to inspect its details.</div>}>
           <Show
             when={!detailLoading()}
             fallback={
@@ -140,126 +142,129 @@ export function GitHistoryBrowser(props: GitHistoryBrowserProps) {
               </div>
             }
           >
-            <Show when={!detailError()} fallback={<div class="flex-1 px-4 py-5 text-xs break-words text-error">{detailError()}</div>}>
-              <Show when={commitDetail()} fallback={<div class="flex-1 px-4 py-5 text-xs text-muted-foreground">Commit detail is unavailable.</div>}>
+            <Show when={!detailError()} fallback={<div class="flex-1 px-3 py-4 text-xs break-words text-error">{detailError()}</div>}>
+              <Show when={commitDetail()} fallback={<div class="flex-1 px-3 py-4 text-xs text-muted-foreground">Commit detail is unavailable.</div>}>
                 {(detailAccessor) => {
                   const detail = detailAccessor();
                   return (
-                    <div class="flex-1 min-h-0 overflow-auto px-4 py-3">
-                      <div class="space-y-4">
-                        <section class={cn('rounded-2xl border p-4 shadow-sm', gitToneSurfaceClass('brand'))}>
-                          <div class="flex flex-wrap items-start justify-between gap-3">
-                            <div class="min-w-0 flex-1">
-                              <div class="text-base font-semibold text-foreground">{detail.subject || '(no subject)'}</div>
-                              <div class="mt-2 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
-                                <span class={cn('rounded-full border px-2 py-0.5 font-medium', gitToneBadgeClass('brand'))}>{detail.shortHash}</span>
-                                <span class={cn('rounded-full border px-2 py-0.5 font-medium', gitToneBadgeClass('neutral'))}>{detail.authorName || '-'}</span>
-                                <Show when={detail.authorEmail}>
-                                  <span class={cn('rounded-full border px-2 py-0.5 font-medium', gitToneBadgeClass('neutral'))}>{detail.authorEmail}</span>
-                                </Show>
-                                <span class={cn('rounded-full border px-2 py-0.5 font-medium', gitToneBadgeClass('neutral'))}>{formatDetailTime(detail.authorTimeMs)}</span>
-                                <Show when={detail.parents.length > 0}>
-                                  <span class={cn('rounded-full border px-2 py-0.5 font-medium', gitToneBadgeClass('violet'))} title={detail.parents.map((item) => item.slice(0, 7)).join(', ')}>
-                                    Parents {detail.parents.map((item) => item.slice(0, 7)).join(', ')}
-                                  </span>
-                                </Show>
+                    <>
+                      <div class="flex-1 min-h-0 overflow-auto px-3 py-3">
+                        <div class="space-y-3">
+                          <section class={cn('rounded-xl border p-3', gitToneSurfaceClass('brand'))}>
+                            <div class="flex flex-wrap items-start justify-between gap-2.5">
+                              <div class="min-w-0 flex-1">
+                                <div class="text-sm font-semibold text-foreground">{detail.subject || '(no subject)'}</div>
+                                <div class="mt-2 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
+                                  <span class={cn('rounded-full border px-2 py-0.5 font-medium', gitToneBadgeClass('brand'))}>{detail.shortHash}</span>
+                                  <span class={cn('rounded-full border px-2 py-0.5 font-medium', gitToneBadgeClass('neutral'))}>{detail.authorName || '-'}</span>
+                                  <Show when={detail.authorEmail}>
+                                    <span class={cn('rounded-full border px-2 py-0.5 font-medium', gitToneBadgeClass('neutral'))}>{detail.authorEmail}</span>
+                                  </Show>
+                                  <span class={cn('rounded-full border px-2 py-0.5 font-medium', gitToneBadgeClass('neutral'))}>{formatDetailTime(detail.authorTimeMs)}</span>
+                                  <Show when={detail.parents.length > 0}>
+                                    <span class={cn('rounded-full border px-2 py-0.5 font-medium', gitToneBadgeClass('violet'))} title={detail.parents.map((item) => item.slice(0, 7)).join(', ')}>
+                                      Parents {detail.parents.map((item) => item.slice(0, 7)).join(', ')}
+                                    </span>
+                                  </Show>
+                                </div>
                               </div>
                             </div>
-                          </div>
 
-                          <Show when={commitBodyText()}>
-                            <div class="mt-4 space-y-1">
-                              <div
-                                class="rounded-xl border border-border/60 bg-background/75 px-3 py-2 text-[11px] leading-5 whitespace-pre-wrap break-words text-foreground"
-                                style={commitBodyExpanded() ? undefined : {
-                                  display: '-webkit-box',
-                                  '-webkit-box-orient': 'vertical',
-                                  '-webkit-line-clamp': String(COMMIT_BODY_PREVIEW_LINES),
-                                  overflow: 'hidden',
-                                }}
-                              >{commitBodyText()}</div>
-                              <Show when={hasExpandableCommitBody()}>
-                                <div class="flex justify-end">
-                                  <button
-                                    type="button"
-                                    class="text-[11px] text-muted-foreground transition-colors duration-150 hover:text-foreground"
-                                    onClick={() => setCommitBodyExpanded((value) => !value)}
-                                  >
-                                    {commitBodyExpanded() ? 'Show less' : 'Show more'}
-                                  </button>
-                                </div>
-                              </Show>
-                            </div>
-                          </Show>
-                        </section>
-
-                        <section class={cn('rounded-2xl border p-4 shadow-sm', gitToneSurfaceClass('info'))}>
-                          <div class="flex items-center justify-between gap-3">
-                            <div>
-                              <div class="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground/70">Changed Files</div>
-                              <div class="mt-1 text-xs text-muted-foreground">Select a changed file to inspect its patch below.</div>
-                            </div>
-                            <div class={cn('rounded-full border px-2.5 py-1 text-[10px] font-medium', gitToneBadgeClass('info'))}>{commitFiles().length}</div>
-                          </div>
-                          <Show when={commitFiles().length > 0} fallback={<div class="mt-4 text-xs text-muted-foreground">No changed files in this commit.</div>}>
-                            <div class="mt-4 max-h-[38vh] space-y-2 overflow-auto pr-1 sm:max-h-72">
-                              <For each={commitFiles()}>
-                                {(file) => {
-                                  const active = () => selectedFileKey() === selectedFileIdentity(file);
-                                  const tone = () => gitChangeTone(file.changeType);
-                                  return (
+                            <Show when={commitBodyText()}>
+                              <div class="mt-3 space-y-1">
+                                <div
+                                  class="rounded-lg border border-border/60 bg-background/80 px-2.5 py-2 text-[11px] leading-5 whitespace-pre-wrap break-words text-foreground"
+                                  style={commitBodyExpanded() ? undefined : {
+                                    display: '-webkit-box',
+                                    '-webkit-box-orient': 'vertical',
+                                    '-webkit-line-clamp': String(COMMIT_BODY_PREVIEW_LINES),
+                                    overflow: 'hidden',
+                                  }}
+                                >{commitBodyText()}</div>
+                                <Show when={hasExpandableCommitBody()}>
+                                  <div class="flex justify-end">
                                     <button
                                       type="button"
-                                      class={cn('w-full rounded-xl border px-3 py-2.5 text-left transition-all duration-150', gitToneSelectableCardClass(tone(), active()))}
-                                      onClick={() => setSelectedFileKey(selectedFileIdentity(file))}
+                                      class="cursor-pointer text-[11px] text-muted-foreground transition-colors duration-150 hover:text-foreground"
+                                      onClick={() => setCommitBodyExpanded((value) => !value)}
                                     >
-                                      <div class="min-w-0">
-                                        <div class="truncate text-[12px] font-medium text-current" title={changeSecondaryPath(file)}>{changeSecondaryPath(file)}</div>
-                                        <div class="mt-1 flex flex-wrap items-center gap-1.5 text-[10px]">
-                                          <span class={cn('rounded-full border px-2 py-0.5 font-medium', gitToneBadgeClass(tone()))}>{file.changeType || 'modified'}</span>
-                                          <span class={cn('rounded-full border px-2 py-0.5 font-medium', gitToneBadgeClass(file.isBinary ? 'warning' : 'neutral'))}>
-                                            {file.isBinary ? `Binary · ${changeMetricsText(file)}` : changeMetricsText(file)}
-                                          </span>
-                                        </div>
-                                      </div>
+                                      {commitBodyExpanded() ? 'Show less' : 'Show more'}
                                     </button>
-                                  );
-                                }}
-                              </For>
-                            </div>
-                          </Show>
-                        </section>
+                                  </div>
+                                </Show>
+                              </div>
+                            </Show>
+                          </section>
 
-                        <section class="space-y-3">
-                          <div>
-                            <div class="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground/70">Patch</div>
-                            <div class="mt-1 text-xs text-muted-foreground">The selected file patch stays in the main detail surface for easier reading.</div>
-                          </div>
-                          <GitPatchViewer
-                            item={selectedFile()}
-                            emptyMessage="Select a changed file to inspect its patch."
-                            loadPatch={async (item, signal) => {
-                              const client = protocol.client();
-                              const repoRootPath = String(props.repoInfo?.repoRootPath ?? '').trim();
-                              const hash = commitHash();
-                              const patchPath = String(item.patchPath || item.path || item.newPath || item.oldPath || '').trim();
-                              if (!client || !repoRootPath || !hash || !patchPath) {
-                                return { text: '', truncated: false };
-                              }
-                              const resp = await readGitPatchTextOnce({
-                                client,
-                                repoRootPath,
-                                commit: hash,
-                                filePath: patchPath,
-                                maxBytes: 2 * 1024 * 1024,
-                                signal,
-                              });
-                              return { text: resp.text, truncated: resp.meta.truncated };
-                            }}
-                          />
-                        </section>
+                          <section class={cn('rounded-xl border p-3', gitToneSurfaceClass('info'))}>
+                            <div class="flex flex-wrap items-center justify-between gap-2">
+                              <div>
+                                <div class="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground/70">Changed Files</div>
+                                <div class="mt-1 text-xs text-muted-foreground">Open a changed file to inspect its diff in a floating panel.</div>
+                              </div>
+                              <span class={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', gitToneBadgeClass('info'))}>{commitFiles().length}</span>
+                            </div>
+                            <Show when={commitFiles().length > 0} fallback={<div class="mt-3 text-xs text-muted-foreground">No changed files in this commit.</div>}>
+                              <div class="mt-3 space-y-1.5">
+                                <For each={commitFiles()}>
+                                  {(file) => {
+                                    const active = () => selectedFileKey() === selectedFileIdentity(file);
+                                    const tone = () => gitChangeTone(file.changeType);
+                                    return (
+                                      <button
+                                        type="button"
+                                        class={cn('w-full rounded-lg border px-2.5 py-2 text-left text-[12px] transition-all duration-150', gitToneSelectableCardClass(tone(), active()))}
+                                        onClick={() => openFileDiff(file)}
+                                      >
+                                        <div class="flex flex-wrap items-start justify-between gap-2">
+                                          <div class="min-w-0 flex-1">
+                                            <div class="truncate font-medium text-current" title={changeSecondaryPath(file)}>{changeSecondaryPath(file)}</div>
+                                            <div class="mt-1 flex flex-wrap items-center gap-1.5 text-[10px]">
+                                              <span class={cn('rounded-full border px-2 py-0.5 font-medium', gitToneBadgeClass(tone()))}>{file.changeType || 'modified'}</span>
+                                              <span class={cn('rounded-full border px-2 py-0.5 font-medium', gitToneBadgeClass(file.isBinary ? 'warning' : 'neutral'))}>
+                                                {file.isBinary ? `Binary · ${changeMetricsText(file)}` : changeMetricsText(file)}
+                                              </span>
+                                            </div>
+                                          </div>
+                                          <span class="text-[10px] font-medium text-muted-foreground">Open Diff</span>
+                                        </div>
+                                      </button>
+                                    );
+                                  }}
+                                </For>
+                              </div>
+                            </Show>
+                          </section>
+                        </div>
                       </div>
-                    </div>
+
+                      <GitDiffDialog
+                        open={diffOpen()}
+                        onOpenChange={setDiffOpen}
+                        item={selectedFile()}
+                        title="Commit Diff"
+                        description={detail.shortHash}
+                        emptyMessage="Open a changed file to inspect its diff."
+                        loadPatch={async (item, signal) => {
+                          const client = protocol.client();
+                          const repoRootPath = String(props.repoInfo?.repoRootPath ?? '').trim();
+                          const hash = commitHash();
+                          const patchPath = String(item.patchPath || item.path || item.newPath || item.oldPath || '').trim();
+                          if (!client || !repoRootPath || !hash || !patchPath) {
+                            return { text: '', truncated: false };
+                          }
+                          const resp = await readGitPatchTextOnce({
+                            client,
+                            repoRootPath,
+                            commit: hash,
+                            filePath: patchPath,
+                            maxBytes: 2 * 1024 * 1024,
+                            signal,
+                          });
+                          return { text: resp.text, truncated: resp.meta.truncated };
+                        }}
+                      />
+                    </>
                   );
                 }}
               </Show>

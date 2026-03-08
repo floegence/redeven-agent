@@ -6,11 +6,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { GitWorkspace } from './GitWorkspace';
 
-beforeEach(() => {
+function mockMatchMedia(matches: boolean) {
   Object.defineProperty(window, 'matchMedia', {
     writable: true,
     value: vi.fn().mockImplementation((query: string) => ({
-      matches: false,
+      matches,
       media: query,
       onchange: null,
       addListener: () => {},
@@ -20,6 +20,10 @@ beforeEach(() => {
       dispatchEvent: () => false,
     })),
   });
+}
+
+beforeEach(() => {
+  mockMatchMedia(false);
 });
 
 afterEach(() => {
@@ -93,6 +97,66 @@ describe('GitWorkspace interactions', () => {
 
       expect(nextSubview).toBe('history');
       expect(nextMode).toBe('files');
+    } finally {
+      dispose();
+    }
+  });
+
+  it('uses the mobile activity bar to reopen the git sidebar', () => {
+    mockMatchMedia(true);
+    let openSidebarCount = 0;
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+
+    const dispose = render(() => (
+      <LayoutProvider>
+        <div class="h-[620px]">
+          <GitWorkspace
+            mode="git"
+            onModeChange={() => {}}
+            subview="overview"
+            onSubviewChange={() => {}}
+            width={280}
+            open={false}
+            showSidebarToggle
+            onOpenSidebar={() => {
+              openSidebarCount += 1;
+            }}
+            currentPath="/workspace/repo/src"
+            repoInfo={{ available: true, repoRootPath: '/workspace/repo', headRef: 'main', headCommit: 'abc1234' }}
+            repoSummary={{
+              repoRootPath: '/workspace/repo',
+              headRef: 'main',
+              headCommit: 'abc1234',
+              aheadCount: 1,
+              behindCount: 0,
+              workspaceSummary: { stagedCount: 1, unstagedCount: 0, untrackedCount: 0, conflictedCount: 0 },
+            }}
+            workspace={{
+              repoRootPath: '/workspace/repo',
+              summary: { stagedCount: 1, unstagedCount: 0, untrackedCount: 0, conflictedCount: 0 },
+              staged: [],
+              unstaged: [],
+              untracked: [],
+              conflicted: [],
+            }}
+            branches={{
+              repoRootPath: '/workspace/repo',
+              currentRef: 'main',
+              local: [{ name: 'main', fullName: 'refs/heads/main', kind: 'local', current: true }],
+              remote: [],
+            }}
+            commits={[]}
+          />
+        </div>
+      </LayoutProvider>
+    ), host);
+
+    try {
+      const activityButton = host.querySelector('button[aria-label="Git sidebar"]');
+      expect(activityButton).toBeTruthy();
+      activityButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      expect(openSidebarCount).toBe(1);
     } finally {
       dispose();
     }

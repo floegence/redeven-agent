@@ -1,4 +1,5 @@
 import { For, Show } from 'solid-js';
+import { cn } from '@floegence/floe-webapp-core';
 import type {
   GitBranchSummary,
   GitGetBranchCompareResponse,
@@ -27,7 +28,7 @@ function summaryValue(value: unknown, fallback = '—'): string {
 
 export function GitOverviewPanel(props: GitOverviewPanelProps) {
   return (
-    <div class="h-full min-h-0 overflow-auto px-4 py-3">
+    <div class="h-full min-h-0 overflow-auto px-3 py-3">
       <Show when={!props.summaryLoading} fallback={<div class="text-xs text-muted-foreground">Loading repository summary...</div>}>
         <Show when={!props.summaryError} fallback={<div class="text-xs break-words text-error">{props.summaryError}</div>}>
           <Show when={props.repoSummary} fallback={<div class="text-xs text-muted-foreground">Repository summary is unavailable.</div>}>
@@ -48,121 +49,131 @@ export function GitOverviewPanel(props: GitOverviewPanelProps) {
               ].filter(Boolean) as { label: string; value: string; tone: 'neutral' | 'info' | 'brand' | 'warning' | 'violet' }[];
 
               return (
-                <div class="space-y-4">
-                  <div class="grid grid-cols-1 gap-3 xl:grid-cols-[1.35fr_1fr_1fr]">
-                    <section class={gitToneSurfaceClass(workspaceCount > 0 ? 'warning' : 'success') + ' rounded-2xl border p-4 shadow-sm'}>
-                      <div class="flex flex-wrap items-center gap-2">
-                        <span class={gitToneBadgeClass(workspaceCount > 0 ? 'warning' : 'success') + ' rounded-full border px-2.5 py-1 text-[10px] font-medium'}>
-                          Workspace Attention
-                        </span>
+                <div class="space-y-3">
+                  <section class={cn('rounded-xl border p-3', gitToneSurfaceClass(workspaceCount > 0 ? 'warning' : 'success'))}>
+                    <div class="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <div class="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground/70">Workspace Attention</div>
+                        <div class="mt-1 text-xs text-muted-foreground">{workspaceCount > 0 ? 'Files currently need review.' : 'Working tree is clean.'}</div>
                       </div>
-                      <div class="mt-3 flex flex-wrap items-end gap-3">
-                        <div class="text-4xl font-semibold tracking-tight text-foreground">{workspaceCount}</div>
-                        <div class="pb-1 text-xs text-muted-foreground">{workspaceCount > 0 ? 'Files currently need review.' : 'Working tree is clean.'}</div>
-                      </div>
-                      <div class="mt-4 grid grid-cols-1 gap-2 text-[11px] sm:grid-cols-2 xl:grid-cols-4">
-                        <div class={gitToneInsetClass(workspaceSectionTone('staged')) + ' rounded-xl border px-3 py-2'}>
-                          <div class="text-muted-foreground">Staged</div>
-                          <div class="mt-1 text-base font-semibold text-foreground">{workspaceSummary?.stagedCount ?? 0}</div>
-                        </div>
-                        <div class={gitToneInsetClass(workspaceSectionTone('unstaged')) + ' rounded-xl border px-3 py-2'}>
-                          <div class="text-muted-foreground">Unstaged</div>
-                          <div class="mt-1 text-base font-semibold text-foreground">{workspaceSummary?.unstagedCount ?? 0}</div>
-                        </div>
-                        <div class={gitToneInsetClass(workspaceSectionTone('untracked')) + ' rounded-xl border px-3 py-2'}>
-                          <div class="text-muted-foreground">Untracked</div>
-                          <div class="mt-1 text-base font-semibold text-foreground">{workspaceSummary?.untrackedCount ?? 0}</div>
-                        </div>
-                        <div class={gitToneInsetClass(workspaceSectionTone('conflicted')) + ' rounded-xl border px-3 py-2'}>
-                          <div class="text-muted-foreground">Conflicted</div>
-                          <div class="mt-1 text-base font-semibold text-foreground">{workspaceSummary?.conflictedCount ?? 0}</div>
-                        </div>
-                      </div>
-                    </section>
+                      <span class={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', gitToneBadgeClass(workspaceCount > 0 ? 'warning' : 'success'))}>
+                        {workspaceCount > 0 ? `${workspaceCount} open` : 'Clean'}
+                      </span>
+                    </div>
 
-                    <section class={gitToneSurfaceClass(compareTone()) + ' rounded-2xl border p-4 shadow-sm'}>
-                      <span class={gitToneBadgeClass(compareTone()) + ' rounded-full border px-2.5 py-1 text-[10px] font-medium'}>Branch Sync</span>
-                      <div class="mt-3 text-2xl font-semibold tracking-tight text-foreground">↑{summary.aheadCount ?? 0} ↓{summary.behindCount ?? 0}</div>
-                      <div class="mt-1 text-[11px] text-muted-foreground">{summary.upstreamRef ? `Tracking ${summary.upstreamRef}` : 'No upstream configured.'}</div>
-                      <div class="mt-4 grid grid-cols-1 gap-2 text-[11px] sm:grid-cols-2">
-                        <div class={gitToneInsetClass('brand') + ' rounded-xl border px-3 py-2'}>
+                    <div class="mt-3 flex flex-wrap items-end gap-3">
+                      <div class="text-3xl font-semibold tracking-tight text-foreground">{workspaceCount}</div>
+                      <div class="pb-1 text-[11px] text-muted-foreground">staged, unstaged, untracked, and conflicted status at a glance.</div>
+                    </div>
+
+                    <div class="mt-3 grid grid-cols-2 gap-2 text-[11px] xl:grid-cols-4">
+                      <div class={cn('rounded-lg border px-2.5 py-2', gitToneInsetClass(workspaceSectionTone('staged')))}>
+                        <div class="text-muted-foreground">Staged</div>
+                        <div class="mt-1 text-sm font-semibold text-foreground">{workspaceSummary?.stagedCount ?? 0}</div>
+                      </div>
+                      <div class={cn('rounded-lg border px-2.5 py-2', gitToneInsetClass(workspaceSectionTone('unstaged')))}>
+                        <div class="text-muted-foreground">Unstaged</div>
+                        <div class="mt-1 text-sm font-semibold text-foreground">{workspaceSummary?.unstagedCount ?? 0}</div>
+                      </div>
+                      <div class={cn('rounded-lg border px-2.5 py-2', gitToneInsetClass(workspaceSectionTone('untracked')))}>
+                        <div class="text-muted-foreground">Untracked</div>
+                        <div class="mt-1 text-sm font-semibold text-foreground">{workspaceSummary?.untrackedCount ?? 0}</div>
+                      </div>
+                      <div class={cn('rounded-lg border px-2.5 py-2', gitToneInsetClass(workspaceSectionTone('conflicted')))}>
+                        <div class="text-muted-foreground">Conflicted</div>
+                        <div class="mt-1 text-sm font-semibold text-foreground">{workspaceSummary?.conflictedCount ?? 0}</div>
+                      </div>
+                    </div>
+                  </section>
+
+                  <div class="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
+                    <section class={cn('rounded-xl border p-3', gitToneSurfaceClass('neutral'))}>
+                      <div class="flex flex-wrap items-center justify-between gap-2">
+                        <div class="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground/70">Repository Signals</div>
+                        <span class={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', gitToneBadgeClass('neutral'))}>{localBranches + remoteBranches} branches</span>
+                      </div>
+
+                      <div class="mt-3 flex flex-wrap gap-1.5 text-[11px]">
+                        <For each={repoSignals()}>
+                          {(signal) => (
+                            <div class={cn('inline-flex items-center rounded-full border px-2.5 py-1', gitToneBadgeClass(signal.tone))}>
+                              <span class="font-medium">{signal.label}</span>
+                              <span class="mx-1 opacity-60">·</span>
+                              <span class="min-w-0 truncate">{signal.value}</span>
+                            </div>
+                          )}
+                        </For>
+                      </div>
+
+                      <div class="mt-3 grid grid-cols-2 gap-2 text-[11px]">
+                        <div class={cn('rounded-lg border px-2.5 py-2', gitToneInsetClass('brand'))}>
                           <div class="text-muted-foreground">Local branches</div>
-                          <div class="mt-1 text-base font-semibold text-foreground">{localBranches}</div>
+                          <div class="mt-1 text-sm font-semibold text-foreground">{localBranches}</div>
                         </div>
-                        <div class={gitToneInsetClass('violet') + ' rounded-xl border px-3 py-2'}>
+                        <div class={cn('rounded-lg border px-2.5 py-2', gitToneInsetClass('violet'))}>
                           <div class="text-muted-foreground">Remote branches</div>
-                          <div class="mt-1 text-base font-semibold text-foreground">{remoteBranches}</div>
+                          <div class="mt-1 text-sm font-semibold text-foreground">{remoteBranches}</div>
                         </div>
                       </div>
                     </section>
 
-                    <section class={gitToneSurfaceClass(props.selectedBranch ? 'violet' : 'neutral') + ' rounded-2xl border p-4 shadow-sm'}>
-                      <span class={gitToneBadgeClass(props.selectedBranch ? 'violet' : 'neutral') + ' rounded-full border px-2.5 py-1 text-[10px] font-medium'}>Selected Branch</span>
-                      <div class="mt-3 text-base font-semibold text-foreground">{props.selectedBranch ? branchDisplayName(props.selectedBranch) : 'No branch selected yet'}</div>
+                    <section class={cn('rounded-xl border p-3', gitToneSurfaceClass(props.selectedBranch ? 'violet' : 'neutral'))}>
+                      <div class="flex flex-wrap items-center justify-between gap-2">
+                        <span class={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', gitToneBadgeClass(props.selectedBranch ? 'violet' : 'neutral'))}>Selected Branch</span>
+                        <span class={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', gitToneBadgeClass(compareTone()))}>↑{summary.aheadCount ?? 0} ↓{summary.behindCount ?? 0}</span>
+                      </div>
+
+                      <div class="mt-3 text-sm font-semibold text-foreground">{props.selectedBranch ? branchDisplayName(props.selectedBranch) : 'No branch selected yet'}</div>
                       <div class="mt-1 text-[11px] leading-5 text-muted-foreground">
                         {props.selectedBranch ? branchStatusSummary(props.selectedBranch) : 'Open Branches to inspect compare details for a target branch.'}
                       </div>
                       <Show when={props.selectedBranch?.subject}>
-                        <div class={gitToneInsetClass('violet') + ' mt-3 rounded-xl border px-3 py-2 text-[11px] leading-5 text-foreground'}>
+                        <div class={cn('mt-3 rounded-lg border px-2.5 py-2 text-[11px] leading-5 text-foreground', gitToneInsetClass('violet'))}>
                           {props.selectedBranch?.subject}
                         </div>
                       </Show>
                     </section>
                   </div>
 
-                  <div class="grid grid-cols-1 gap-3 xl:grid-cols-2">
-                    <section class={gitToneSurfaceClass('neutral') + ' rounded-2xl border p-4 shadow-sm'}>
-                      <div class="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground/70">Repository Signals</div>
-                      <div class="mt-3 flex flex-wrap gap-2">
-                        <For each={repoSignals()}>
-                          {(signal) => (
-                            <div class={gitToneBadgeClass(signal.tone) + ' inline-flex items-center rounded-full border px-3 py-1.5 text-[11px]'}>
-                              <span class="font-medium">{signal.label}</span>
-                              <span class="mx-1.5 opacity-60">·</span>
-                              <span class="min-w-0 truncate">{signal.value}</span>
-                            </div>
-                          )}
-                        </For>
+                  <section class={cn('rounded-xl border p-3', gitToneSurfaceClass(compareTone()))}>
+                    <div class="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <div class="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground/70">Compare Snapshot</div>
+                        <div class="mt-1 text-xs text-muted-foreground">{compareHeadline(props.compare)}</div>
                       </div>
-                    </section>
-
-                    <section class={gitToneSurfaceClass(compareTone()) + ' rounded-2xl border p-4 shadow-sm'}>
-                      <div class="flex flex-wrap items-center gap-2">
-                        <span class={gitToneBadgeClass(compareTone()) + ' rounded-full border px-2.5 py-1 text-[10px] font-medium'}>Compare Snapshot</span>
-                        <Show when={props.compare}>
-                          <span class={gitToneBadgeClass('neutral') + ' rounded-full border px-2 py-0.5 text-[10px] font-medium'}>
-                            {props.compare?.commits.length ?? 0} commits · {props.compare?.files.length ?? 0} files
-                          </span>
-                        </Show>
-                      </div>
-                      <div class="mt-3 text-sm text-foreground">{compareHeadline(props.compare)}</div>
                       <Show when={props.compare}>
-                        {(compareAccessor) => {
-                          const compare = compareAccessor();
-                          return (
-                            <div class="mt-4 grid grid-cols-1 gap-2 text-[11px] sm:grid-cols-2">
-                              <div class={gitToneInsetClass('brand') + ' rounded-xl border px-3 py-2'}>
-                                <div class="text-muted-foreground">Base</div>
-                                <div class="mt-1 text-sm font-medium text-foreground">{compare.baseRef}</div>
-                              </div>
-                              <div class={gitToneInsetClass('violet') + ' rounded-xl border px-3 py-2'}>
-                                <div class="text-muted-foreground">Target</div>
-                                <div class="mt-1 text-sm font-medium text-foreground">{compare.targetRef}</div>
-                              </div>
-                              <div class={gitToneInsetClass('neutral') + ' rounded-xl border px-3 py-2'}>
-                                <div class="text-muted-foreground">Ahead / Behind</div>
-                                <div class="mt-1 text-sm font-medium text-foreground">↑{compare.targetAheadCount ?? 0} ↓{compare.targetBehindCount ?? 0}</div>
-                              </div>
-                              <div class={gitToneInsetClass('neutral') + ' rounded-xl border px-3 py-2'}>
-                                <div class="text-muted-foreground">Merge base</div>
-                                <div class="mt-1 text-sm font-medium text-foreground">{compare.mergeBase ? compare.mergeBase.slice(0, 7) : '—'}</div>
-                              </div>
-                            </div>
-                          );
-                        }}
+                        <span class={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', gitToneBadgeClass(compareTone()))}>
+                          {props.compare?.commits.length ?? 0} commits · {props.compare?.files.length ?? 0} files
+                        </span>
                       </Show>
-                    </section>
-                  </div>
+                    </div>
+
+                    <Show when={props.compare}>
+                      {(compareAccessor) => {
+                        const compare = compareAccessor();
+                        return (
+                          <div class="mt-3 grid grid-cols-2 gap-2 text-[11px]">
+                            <div class={cn('rounded-lg border px-2.5 py-2', gitToneInsetClass('brand'))}>
+                              <div class="text-muted-foreground">Base</div>
+                              <div class="mt-1 text-sm font-medium text-foreground">{compare.baseRef}</div>
+                            </div>
+                            <div class={cn('rounded-lg border px-2.5 py-2', gitToneInsetClass('violet'))}>
+                              <div class="text-muted-foreground">Target</div>
+                              <div class="mt-1 text-sm font-medium text-foreground">{compare.targetRef}</div>
+                            </div>
+                            <div class={cn('rounded-lg border px-2.5 py-2', gitToneInsetClass(compareTone()))}>
+                              <div class="text-muted-foreground">Ahead / Behind</div>
+                              <div class="mt-1 text-sm font-medium text-foreground">↑{compare.targetAheadCount ?? 0} ↓{compare.targetBehindCount ?? 0}</div>
+                            </div>
+                            <div class={cn('rounded-lg border px-2.5 py-2', gitToneInsetClass('neutral'))}>
+                              <div class="text-muted-foreground">Merge base</div>
+                              <div class="mt-1 text-sm font-medium text-foreground">{compare.mergeBase ? compare.mergeBase.slice(0, 7) : '—'}</div>
+                            </div>
+                          </div>
+                        );
+                      }}
+                    </Show>
+                  </section>
                 </div>
               );
             }}
