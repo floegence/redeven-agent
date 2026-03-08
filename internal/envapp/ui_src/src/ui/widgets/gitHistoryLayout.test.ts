@@ -136,6 +136,25 @@ describe('browser workspace layout wiring', () => {
     expect(src).toContain('<GitViewNav');
   });
 
+  it('keeps the git sidebar labels and density aligned with the compact workspace language', () => {
+    const src = read('./GitWorkbenchSidebar.tsx');
+
+    expect(src).toContain('Overview Summary');
+    expect(src).toContain('Workspace Summary');
+    expect(src).toContain('Branch Scope');
+    expect(src).toContain('Commit History');
+    expect(src).toContain('Local Branches');
+    expect(src).toContain('Remote Branches');
+    expect(src).toContain('Quick counts and repository context.');
+    expect(src).toContain('Choose a file to open its floating diff.');
+    expect(src).toContain('space-y-1.5 sm:space-y-2');
+    expect(src).not.toContain('Workspace Files');
+    expect(src).not.toContain('History loaded');
+    expect(src).not.toContain('No files in this group.');
+    expect(src).not.toContain('text-lg font-semibold tracking-tight');
+  });
+
+
   it('lets the files activity control page-level mobile sidebars while widget views use header buttons', () => {
     const envSrc = read('../EnvAppShell.tsx');
     const browserSrc = read('./RemoteFileBrowser.tsx');
