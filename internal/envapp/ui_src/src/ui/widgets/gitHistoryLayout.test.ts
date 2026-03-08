@@ -43,26 +43,37 @@ describe('browser workspace layout wiring', () => {
     expect(src).toContain('props.modeSwitcher');
   });
 
-  it('keeps semantic sidebar controls and mobile-first grids in the new git chrome', () => {
+  it('uses a compact mode switch and mobile activity bar in the shared browser shell', () => {
     const modeSrc = read('./GitHistoryModeSwitch.tsx');
+    const shellSrc = read('./BrowserWorkspaceShell.tsx');
     const navSrc = read('./GitViewNav.tsx');
-    const sidebarSrc = read('./GitWorkbenchSidebar.tsx');
-    const overviewSrc = read('./GitOverviewPanel.tsx');
-    const branchesSrc = read('./GitBranchesPanel.tsx');
 
     expect(modeSrc).toContain('role="radiogroup"');
     expect(modeSrc).toContain('aria-label="Browser mode"');
-    expect(modeSrc).toContain('grid grid-cols-2');
-    expect(modeSrc).toContain('sm:inline-flex');
+    expect(modeSrc).toContain('inline-flex w-full items-center gap-0.5 rounded-lg border border-border bg-muted/40 p-0.5');
+    expect(modeSrc).not.toContain('>Browse<');
+    expect(modeSrc).not.toContain('>Inspect<');
+
+    expect(shellSrc).toContain('ActivityBar');
+    expect(shellSrc).toContain('showSidebarToggle');
+    expect(shellSrc).toContain('sidebarToggleLabel');
+    expect(shellSrc).toContain('sidebarToggleIcon');
 
     expect(navSrc).toContain('role="tablist"');
     expect(navSrc).toContain('aria-label="Git views"');
-    expect(navSrc).toContain('gitToneSelectableCardClass');
+    expect(navSrc).toContain('rounded-lg border px-2.5 py-2');
+  });
 
-    expect(sidebarSrc).toContain('grid grid-cols-1 gap-2 text-[11px] sm:grid-cols-2');
-    expect(overviewSrc).toContain('mt-4 grid grid-cols-1 gap-2 text-[11px] sm:grid-cols-2 xl:grid-cols-4');
-    expect(overviewSrc).toContain('mt-4 grid grid-cols-1 gap-2 text-[11px] sm:grid-cols-2');
-    expect(branchesSrc).toContain('mt-4 grid grid-cols-1 gap-2 text-[11px] sm:grid-cols-2');
+  it('uses floating diff dialogs instead of inline patch sections', () => {
+    const changesSrc = read('./GitChangesPanel.tsx');
+    const branchesSrc = read('./GitBranchesPanel.tsx');
+    const historySrc = read('./GitHistoryBrowser.tsx');
+
+    expect(changesSrc).toContain("import { GitDiffDialog } from './GitDiffDialog';");
+    expect(branchesSrc).toContain("import { GitDiffDialog } from './GitDiffDialog';");
+    expect(historySrc).toContain("import { GitDiffDialog } from './GitDiffDialog';");
+    expect(branchesSrc).not.toContain('The selected file patch stays in the main detail surface');
+    expect(historySrc).not.toContain('The selected file patch stays in the main detail surface');
   });
 
   it('uses the dedicated git view navigation inside the git workspace shell', () => {
@@ -80,5 +91,6 @@ describe('browser workspace layout wiring', () => {
     expect(src).toContain('subviewLabel(props.subview)');
     expect(src).not.toContain('GitHistoryModeSwitch');
     expect(src).not.toContain('GitSubviewSwitch');
+    expect(src).not.toContain('Open browser sidebar');
   });
 });
