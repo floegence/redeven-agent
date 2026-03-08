@@ -91,6 +91,35 @@ function selectorLabel(view: GitWorkbenchSubview): string {
   }
 }
 
+function selectorDescription(view: GitWorkbenchSubview): string {
+  switch (view) {
+    case 'overview':
+      return 'High-level status and entry points.';
+    case 'changes':
+      return 'Pick a file to inspect its diff.';
+    case 'branches':
+      return 'Pick a branch to inspect compare state.';
+    case 'history':
+      return 'Pick a commit to inspect file diffs.';
+    default:
+      return '';
+  }
+}
+
+function cardCountLabel(view: GitWorkbenchSubview, workspaceCount: number, branchCount: number, commitCount: number): string | number {
+  switch (view) {
+    case 'changes':
+      return workspaceCount;
+    case 'branches':
+      return branchCount;
+    case 'history':
+      return commitCount;
+    case 'overview':
+    default:
+      return 'Ready';
+  }
+}
+
 export function GitWorkbenchSidebar(props: GitWorkbenchSidebarProps) {
   const closeAfterPick = () => {
     props.onClose?.();
@@ -98,51 +127,46 @@ export function GitWorkbenchSidebar(props: GitWorkbenchSidebarProps) {
 
   const workspaceCount = () => summarizeWorkspaceCount(props.workspace?.summary ?? props.repoSummary?.workspaceSummary);
   const branchCount = () => (props.branches?.local.length ?? 0) + (props.branches?.remote.length ?? 0);
+  const commitCount = () => props.commits?.length ?? 0;
   const sidebarTone = () => gitSubviewTone(props.subview);
 
   return (
-    <div class={cn('space-y-2.5', props.class)}>
+    <div class={cn('space-y-1.5', props.class)}>
       <Show when={!props.repoInfoLoading} fallback={<div class="flex items-center gap-2 py-3 text-xs text-muted-foreground"><SnakeLoader size="sm" /><span>Checking repository...</span></div>}>
         <Show when={!props.repoInfoError} fallback={<div class="py-3 text-xs break-words text-error">{props.repoInfoError}</div>}>
           <Show when={props.repoAvailable} fallback={<div class="py-3 text-xs text-muted-foreground">Current path is not inside a Git repository.</div>}>
-            <div class="space-y-2.5">
-              <div class={cn('rounded-lg border px-2.5 py-2', gitToneSurfaceClass(sidebarTone()))}>
+            <div class="space-y-2">
+              <div class={cn('rounded-xl border px-2.5 py-2', gitToneSurfaceClass(sidebarTone()))}>
                 <div class="flex items-center justify-between gap-2">
                   <span class="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground/70">{selectorLabel(props.subview)}</span>
                   <span class={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', gitToneBadgeClass(sidebarTone()))}>
-                    {props.subview === 'changes' ? workspaceCount() : props.subview === 'branches' ? branchCount() : props.subview === 'history' ? (props.commits?.length ?? 0) : 'Ready'}
+                    {cardCountLabel(props.subview, workspaceCount(), branchCount(), commitCount())}
                   </span>
                 </div>
-                <div class="mt-1 text-[11px] text-muted-foreground">
-                  {props.subview === 'overview'
-                    ? 'High-level status and entry points.'
-                    : props.subview === 'changes'
-                      ? 'Pick a file to inspect its diff.'
-                      : props.subview === 'branches'
-                        ? 'Pick a branch to inspect compare state.'
-                        : 'Pick a commit to inspect file diffs.'}
-                </div>
+                <div class="mt-1 text-[11px] text-muted-foreground">{selectorDescription(props.subview)}</div>
               </div>
 
               <Show when={props.subview === 'overview'}>
-                <div class="space-y-1.5">
-                  <div class={cn('rounded-lg border p-2.5', gitToneSurfaceClass(workspaceCount() > 0 ? 'warning' : 'success'))}>
-                    <div class="flex items-center justify-between gap-2">
-                      <span class={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', gitToneBadgeClass(workspaceCount() > 0 ? 'warning' : 'success'))}>Workspace</span>
-                      <span class="text-xl font-semibold tracking-tight text-foreground">{workspaceCount()}</span>
-                    </div>
-                    <div class="mt-2 text-[11px] text-muted-foreground">{workspaceCount() > 0 ? 'Open Changes to review the working tree.' : 'Working tree is clean.'}</div>
+                <div class="grid grid-cols-2 gap-2 text-[11px]">
+                  <div class={cn('rounded-xl border px-2.5 py-2', gitToneSurfaceClass(workspaceCount() > 0 ? 'warning' : 'success'))}>
+                    <div class="text-muted-foreground">Workspace</div>
+                    <div class="mt-1 text-lg font-semibold tracking-tight text-foreground">{workspaceCount()}</div>
+                    <div class="mt-1 text-[10px] text-muted-foreground">{workspaceCount() > 0 ? 'Needs review' : 'Clean'}</div>
                   </div>
-
-                  <div class="grid grid-cols-1 gap-2 text-[11px] sm:grid-cols-2">
-                    <div class={cn('rounded-lg border px-2.5 py-2', gitToneInsetClass('violet'))}>
-                      <div class="text-muted-foreground">Branches</div>
-                      <div class="mt-1 text-base font-semibold text-foreground">{branchCount()}</div>
-                    </div>
-                    <div class={cn('rounded-lg border px-2.5 py-2', gitToneInsetClass('brand'))}>
-                      <div class="text-muted-foreground">Loaded commits</div>
-                      <div class="mt-1 text-base font-semibold text-foreground">{props.commits?.length ?? 0}</div>
-                    </div>
+                  <div class={cn('rounded-xl border px-2.5 py-2', gitToneInsetClass('violet'))}>
+                    <div class="text-muted-foreground">Branches</div>
+                    <div class="mt-1 text-base font-semibold text-foreground">{branchCount()}</div>
+                    <div class="mt-1 text-[10px] text-muted-foreground">{props.branches?.local?.length ?? 0} local · {props.branches?.remote?.length ?? 0} remote</div>
+                  </div>
+                  <div class={cn('rounded-xl border px-2.5 py-2', gitToneInsetClass('brand'))}>
+                    <div class="text-muted-foreground">History loaded</div>
+                    <div class="mt-1 text-base font-semibold text-foreground">{commitCount()}</div>
+                    <div class="mt-1 text-[10px] text-muted-foreground">Loaded in sidebar</div>
+                  </div>
+                  <div class={cn('rounded-xl border px-2.5 py-2', gitToneInsetClass('neutral'))}>
+                    <div class="text-muted-foreground">Stashes</div>
+                    <div class="mt-1 text-base font-semibold text-foreground">{props.repoSummary?.stashCount ?? 0}</div>
+                    <div class="mt-1 text-[10px] text-muted-foreground">Repository shelf</div>
                   </div>
                 </div>
               </Show>
@@ -150,18 +174,18 @@ export function GitWorkbenchSidebar(props: GitWorkbenchSidebarProps) {
               <Show when={props.subview === 'changes'}>
                 <Show when={!props.workspaceLoading} fallback={<div class="flex items-center gap-2 py-3 text-xs text-muted-foreground"><SnakeLoader size="sm" /><span>Loading workspace changes...</span></div>}>
                   <Show when={!props.workspaceError} fallback={<div class="py-3 text-xs break-words text-error">{props.workspaceError}</div>}>
-                    <div class="space-y-1.5">
+                    <div class="space-y-2">
                       <For each={WORKSPACE_SECTIONS}>
                         {(section) => {
                           const items = () => workspaceSectionItems(props.workspace, section);
                           const tone = () => workspaceSectionTone(section);
                           return (
-                            <section class="space-y-1.5">
-                              <div class="flex items-center justify-between gap-2 px-1">
+                            <section class={cn('rounded-xl border p-2', gitToneSurfaceClass(tone()))}>
+                              <div class="mb-2 flex items-center justify-between gap-2">
                                 <span class={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', gitToneBadgeClass(tone()))}>{workspaceSectionLabel(section)}</span>
                                 <span class={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', gitToneBadgeClass('neutral'))}>{workspaceSectionCount(props.workspace?.summary ?? props.repoSummary?.workspaceSummary, section)}</span>
                               </div>
-                              <Show when={items().length > 0} fallback={<div class={cn('rounded-xl border border-dashed px-3 py-2 text-[11px] text-muted-foreground', gitToneInsetClass(tone()))}>No files in this group.</div>}>
+                              <Show when={items().length > 0} fallback={<div class={cn('rounded-lg border border-dashed px-2.5 py-2 text-[11px] text-muted-foreground', gitToneInsetClass(tone()))}>No files in this group.</div>}>
                                 <div class="space-y-1.5">
                                   <For each={items()}>
                                     {(item) => {
@@ -169,18 +193,15 @@ export function GitWorkbenchSidebar(props: GitWorkbenchSidebarProps) {
                                       return (
                                         <button
                                           type="button"
-                                          class={cn(
-                                            'w-full rounded-lg border px-2.5 py-2 text-left transition-all duration-150',
-                                            gitToneSelectableCardClass(tone(), active())
-                                          )}
+                                          class={cn('w-full rounded-xl border px-2.5 py-1.5 text-left transition-all duration-150', gitToneSelectableCardClass(tone(), active()))}
                                           onClick={() => {
                                             props.onSelectWorkspaceItem?.(item);
                                             closeAfterPick();
                                           }}
                                         >
                                           <div class="min-w-0">
-                                            <div class="truncate text-[12px] font-medium text-current" title={changeSecondaryPath(item)}>{changeSecondaryPath(item)}</div>
-                                            <div class="mt-0.5 flex flex-wrap items-center gap-1.5 text-[10px]">
+                                            <div class="truncate text-[11.5px] font-medium text-current" title={changeSecondaryPath(item)}>{changeSecondaryPath(item)}</div>
+                                            <div class="mt-1 flex flex-wrap items-center gap-1.5 text-[10px]">
                                               <span class={cn('rounded-full border px-2 py-0.5 font-medium', gitToneBadgeClass(gitChangeTone(item.changeType)))}>{item.changeType || 'modified'}</span>
                                               <span class={cn('rounded-full border px-2 py-0.5 font-medium', gitToneBadgeClass('neutral'))}>{changeMetricsText(item)}</span>
                                             </div>
@@ -203,13 +224,13 @@ export function GitWorkbenchSidebar(props: GitWorkbenchSidebarProps) {
               <Show when={props.subview === 'branches'}>
                 <Show when={!props.branchesLoading} fallback={<div class="flex items-center gap-2 py-3 text-xs text-muted-foreground"><SnakeLoader size="sm" /><span>Loading branches...</span></div>}>
                   <Show when={!props.branchesError} fallback={<div class="py-3 text-xs break-words text-error">{props.branchesError}</div>}>
-                    <div class="space-y-1.5">
-                      <section class="space-y-1.5">
-                        <div class="flex items-center justify-between gap-2 px-1">
+                    <div class="space-y-2">
+                      <section class={cn('rounded-xl border p-2', gitToneSurfaceClass('brand'))}>
+                        <div class="mb-2 flex items-center justify-between gap-2">
                           <span class={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', gitToneBadgeClass('brand'))}>Local</span>
                           <span class={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', gitToneBadgeClass('neutral'))}>{props.branches?.local?.length ?? 0}</span>
                         </div>
-                        <Show when={(props.branches?.local?.length ?? 0) > 0} fallback={<div class={cn('rounded-xl border border-dashed px-3 py-2 text-[11px] text-muted-foreground', gitToneInsetClass('neutral'))}>No local branches.</div>}>
+                        <Show when={(props.branches?.local?.length ?? 0) > 0} fallback={<div class={cn('rounded-lg border border-dashed px-2.5 py-2 text-[11px] text-muted-foreground', gitToneInsetClass('neutral'))}>No local branches.</div>}>
                           <div class="space-y-1.5">
                             <For each={props.branches?.local ?? []}>
                               {(branch) => {
@@ -218,7 +239,7 @@ export function GitWorkbenchSidebar(props: GitWorkbenchSidebarProps) {
                                 return (
                                   <button
                                     type="button"
-                                    class={cn('w-full rounded-lg border px-2.5 py-2 text-left transition-all duration-150', gitToneSelectableCardClass(tone(), active()))}
+                                    class={cn('w-full rounded-xl border px-2.5 py-1.5 text-left transition-all duration-150', gitToneSelectableCardClass(tone(), active()))}
                                     onClick={() => {
                                       props.onSelectBranch?.(branch);
                                       closeAfterPick();
@@ -226,12 +247,12 @@ export function GitWorkbenchSidebar(props: GitWorkbenchSidebarProps) {
                                   >
                                     <div class="min-w-0">
                                       <div class="flex items-center gap-2">
-                                        <span class="min-w-0 flex-1 truncate text-[12px] font-medium text-current">{branchDisplayName(branch)}</span>
+                                        <span class="min-w-0 flex-1 truncate text-[11.5px] font-medium text-current">{branchDisplayName(branch)}</span>
                                         <Show when={branch.current}>
                                           <span class={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', gitToneBadgeClass('brand'))}>Current</span>
                                         </Show>
                                       </div>
-                                      <div class="mt-0.5 truncate text-[10px] text-muted-foreground">{branchStatusSummary(branch)}</div>
+                                      <div class="mt-1 truncate text-[10px] text-muted-foreground">{branchStatusSummary(branch)}</div>
                                     </div>
                                   </button>
                                 );
@@ -241,12 +262,12 @@ export function GitWorkbenchSidebar(props: GitWorkbenchSidebarProps) {
                         </Show>
                       </section>
 
-                      <section class="space-y-1.5">
-                        <div class="flex items-center justify-between gap-2 px-1">
+                      <section class={cn('rounded-xl border p-2', gitToneSurfaceClass('violet'))}>
+                        <div class="mb-2 flex items-center justify-between gap-2">
                           <span class={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', gitToneBadgeClass('violet'))}>Remote</span>
                           <span class={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', gitToneBadgeClass('neutral'))}>{props.branches?.remote?.length ?? 0}</span>
                         </div>
-                        <Show when={(props.branches?.remote?.length ?? 0) > 0} fallback={<div class={cn('rounded-xl border border-dashed px-3 py-2 text-[11px] text-muted-foreground', gitToneInsetClass('violet'))}>No remote branches.</div>}>
+                        <Show when={(props.branches?.remote?.length ?? 0) > 0} fallback={<div class={cn('rounded-lg border border-dashed px-2.5 py-2 text-[11px] text-muted-foreground', gitToneInsetClass('violet'))}>No remote branches.</div>}>
                           <div class="space-y-1.5">
                             <For each={props.branches?.remote ?? []}>
                               {(branch) => {
@@ -254,14 +275,14 @@ export function GitWorkbenchSidebar(props: GitWorkbenchSidebarProps) {
                                 return (
                                   <button
                                     type="button"
-                                    class={cn('w-full rounded-lg border px-2.5 py-2 text-left transition-all duration-150', gitToneSelectableCardClass('violet', active()))}
+                                    class={cn('w-full rounded-xl border px-2.5 py-1.5 text-left transition-all duration-150', gitToneSelectableCardClass('violet', active()))}
                                     onClick={() => {
                                       props.onSelectBranch?.(branch);
                                       closeAfterPick();
                                     }}
                                   >
-                                    <div class="truncate text-[12px] font-medium text-current">{branchDisplayName(branch)}</div>
-                                    <div class="mt-0.5 truncate text-[10px] text-muted-foreground">{branch.subject || branchStatusSummary(branch)}</div>
+                                    <div class="truncate text-[11.5px] font-medium text-current">{branchDisplayName(branch)}</div>
+                                    <div class="mt-1 truncate text-[10px] text-muted-foreground">{branch.subject || branchStatusSummary(branch)}</div>
                                   </button>
                                 );
                               }}
@@ -275,7 +296,7 @@ export function GitWorkbenchSidebar(props: GitWorkbenchSidebarProps) {
               </Show>
 
               <Show when={props.subview === 'history'}>
-                <div class="space-y-1.5">
+                <div class="space-y-2">
                   <Show when={!props.listLoading} fallback={<div class="flex items-center gap-2 py-3 text-xs text-muted-foreground"><SnakeLoader size="sm" /><span>Loading commits...</span></div>}>
                     <Show when={!props.listError} fallback={<div class="py-3 text-xs break-words text-error">{props.listError}</div>}>
                       <Show when={(props.commits?.length ?? 0) > 0} fallback={<div class="py-3 text-xs text-muted-foreground">This repository has no commits yet.</div>}>
@@ -286,7 +307,7 @@ export function GitWorkbenchSidebar(props: GitWorkbenchSidebarProps) {
                               return (
                                 <button
                                   type="button"
-                                  class={cn('w-full rounded-lg border px-2.5 py-2 text-left transition-all duration-150', gitToneSelectableCardClass('brand', active()))}
+                                  class={cn('w-full rounded-xl border px-2.5 py-1.5 text-left transition-all duration-150', gitToneSelectableCardClass('brand', active()))}
                                   onClick={() => {
                                     props.onSelectCommit?.(commit.hash);
                                     closeAfterPick();
@@ -294,7 +315,7 @@ export function GitWorkbenchSidebar(props: GitWorkbenchSidebarProps) {
                                 >
                                   <div class="flex items-start justify-between gap-2">
                                     <div class="min-w-0 flex-1">
-                                      <div class="truncate text-[12px] font-medium text-current">{commit.subject || '(no subject)'}</div>
+                                      <div class="truncate text-[11.5px] font-medium text-current">{commit.subject || '(no subject)'}</div>
                                       <div class="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
                                         <span class={cn('rounded-full border px-2 py-0.5 font-medium', gitToneBadgeClass('brand'))}>{commit.shortHash}</span>
                                         <span>{commit.authorName || '-'}</span>
@@ -313,7 +334,7 @@ export function GitWorkbenchSidebar(props: GitWorkbenchSidebarProps) {
 
                   <Show when={props.hasMore}>
                     <div class="border-t border-border/60 pt-2">
-                      <Button size="sm" variant="outline" class="w-full" onClick={props.onLoadMore} loading={props.listLoadingMore} disabled={props.listLoadingMore}>
+                      <Button size="sm" variant="outline" class="w-full cursor-pointer" onClick={props.onLoadMore} loading={props.listLoadingMore} disabled={props.listLoadingMore}>
                         Load More
                       </Button>
                     </div>
