@@ -45,7 +45,9 @@ describe('GitChrome semantic tone helpers', () => {
     expect(gitToneBadgeClass('warning')).toContain('bg-warning/10');
     expect(gitToneBadgeClass('brand')).toContain('text-indigo-700');
     expect(gitToneSelectableCardClass('brand', true)).toContain('bg-indigo-500/[0.08]');
+    expect(gitToneSelectableCardClass('brand', true)).toContain('cursor-pointer');
     expect(gitToneSelectableCardClass('info', false)).toContain('hover:bg-sky-500/[0.04]');
+    expect(gitToneSelectableCardClass('info', false)).toContain('cursor-pointer');
     expect(gitToneSelectableCardClass('neutral', false)).toContain('hover:bg-background');
   });
 });
