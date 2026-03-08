@@ -88,4 +88,56 @@ describe('GitBranchesPanel interactions', () => {
       dispose();
     }
   });
+
+
+  it('uses one compact branch summary card instead of a separate branch state panel', () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+
+    const dispose = render(() => (
+      <LayoutProvider>
+        <NotificationProvider>
+          <div class="h-[640px]">
+            <GitBranchesPanel
+              repoRootPath="/workspace/repo"
+              selectedBranch={{
+                name: 'feature/demo',
+                fullName: 'refs/heads/feature/demo',
+                kind: 'local',
+                current: true,
+                upstreamRef: 'origin/feature/demo',
+                worktreePath: '/workspace/repo-worktree',
+                headCommit: 'abc1234def5678',
+                subject: 'Feature branch change',
+                authorTimeMs: 1706000000000,
+                aheadCount: 1,
+                behindCount: 0,
+              }}
+              compare={{
+                repoRootPath: '/workspace/repo',
+                baseRef: 'main',
+                targetRef: 'feature/demo',
+                targetAheadCount: 1,
+                targetBehindCount: 0,
+                mergeBase: 'ff00aa11223344',
+                commits: [],
+                files: [],
+              }}
+            />
+          </div>
+        </NotificationProvider>
+      </LayoutProvider>
+    ), host);
+
+    try {
+      expect(host.querySelectorAll('section')).toHaveLength(3);
+      expect(host.textContent).toContain('Reference');
+      expect(host.textContent).toContain('Latest commit');
+      expect(host.textContent).toContain('Linked worktree');
+      expect(host.textContent).toContain('Compare Snapshot');
+      expect(host.textContent).not.toContain('Branch State');
+    } finally {
+      dispose();
+    }
+  });
 });

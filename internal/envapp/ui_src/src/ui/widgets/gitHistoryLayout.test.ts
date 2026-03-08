@@ -96,6 +96,18 @@ describe('browser workspace layout wiring', () => {
     expect(historySrc).not.toContain('xl:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]');
   });
 
+  it('stacks branch compare details into compact vertical sections', () => {
+    const branchesSrc = read('./GitBranchesPanel.tsx');
+
+    expect(branchesSrc).toContain('space-y-1.5 sm:space-y-2');
+    expect(branchesSrc).toContain('Compare Snapshot');
+    expect(branchesSrc).toContain('Reference');
+    expect(branchesSrc).toContain('Latest commit');
+    expect(branchesSrc).toContain('Linked worktree');
+    expect(branchesSrc).not.toContain('Branch State');
+    expect(branchesSrc).not.toContain('xl:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]');
+  });
+
   it('uses the dedicated git view navigation inside the git workspace shell', () => {
     const src = read('./GitWorkspace.tsx');
 
