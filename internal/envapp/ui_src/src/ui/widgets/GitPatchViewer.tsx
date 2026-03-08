@@ -176,7 +176,7 @@ export function GitPatchViewer<T extends GitPatchRenderable>(props: GitPatchView
 
                     <Show when={hasMorePatchLines()}>
                       <div class="chat-tool-apply-patch-toggle-row">
-                        <button type="button" class="chat-tool-apply-patch-toggle-btn" onClick={() => setPatchExpanded((value) => !value)}>
+                        <button type="button" class="chat-tool-apply-patch-toggle-btn cursor-pointer" onClick={() => setPatchExpanded((value) => !value)}>
                           {patchExpanded() ? 'Show less' : `Show all ${renderedPatchLines().length} lines`}
                         </button>
                       </div>

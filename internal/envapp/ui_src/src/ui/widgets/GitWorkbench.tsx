@@ -1,6 +1,6 @@
 import { Show } from 'solid-js';
 import { cn } from '@floegence/floe-webapp-core';
-import { Menu, Refresh } from '@floegence/floe-webapp-core/icons';
+import { Refresh } from '@floegence/floe-webapp-core/icons';
 import { Button } from '@floegence/floe-webapp-core/ui';
 import type {
   GitBranchSummary,
@@ -30,6 +30,7 @@ export interface GitWorkbenchProps {
   workspaceLoading?: boolean;
   workspaceError?: string;
   selectedWorkspaceItem?: GitWorkspaceChange | null;
+  workspaceInspectNonce?: number;
   branches?: GitListBranchesResponse | null;
   branchesLoading?: boolean;
   branchesError?: string;
@@ -38,8 +39,6 @@ export interface GitWorkbenchProps {
   compareLoading?: boolean;
   compareError?: string;
   selectedCommitHash?: string;
-  showSidebarToggle?: boolean;
-  onOpenSidebar?: () => void;
   onRefresh?: () => void;
   class?: string;
 }
@@ -63,65 +62,49 @@ export function GitWorkbench(props: GitWorkbenchProps) {
   const changeCount = () => summarizeWorkspaceCount(props.workspace?.summary ?? props.repoSummary?.workspaceSummary);
   const headRef = () => String(props.repoSummary?.headRef || props.repoInfo?.headRef || '').trim();
   const loadingBusy = () => Boolean(props.repoInfoLoading || props.repoSummaryLoading || props.workspaceLoading || props.branchesLoading || props.compareLoading);
-  const showMenuButton = () => Boolean(props.showSidebarToggle && props.onOpenSidebar);
   const subviewTone = () => gitSubviewTone(props.subview);
 
   return (
     <div class={cn('relative flex h-full min-h-0 flex-col bg-background', props.class)}>
-      <div class={cn('shrink-0 border-b border-border/70 bg-background/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/85', showMenuButton() && 'pl-14')}>
-        <Show when={showMenuButton()}>
-          <Button
-            size="xs"
-            variant="outline"
-            icon={Menu}
-            class="absolute left-3 top-3 z-10 h-7 w-7 bg-background/95 px-0 shadow-sm backdrop-blur-sm"
-            aria-label="Open browser sidebar"
-            title="Open browser sidebar"
-            onClick={props.onOpenSidebar}
-          />
-        </Show>
-
-        <div class="flex flex-wrap items-start justify-between gap-3">
-          <div class="min-w-0 flex-1 space-y-2.5">
-            <div class="flex flex-wrap items-center gap-2 text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground/70">
-              <span class={cn('rounded-full border px-2.5 py-0.5 text-[10px] font-medium normal-case tracking-normal', gitToneBadgeClass(subviewTone()))}>
+      <div class="shrink-0 border-b border-border/70 bg-background/95 px-3 py-2.5 backdrop-blur supports-[backdrop-filter]:bg-background/90">
+        <div class="flex flex-wrap items-start justify-between gap-2.5">
+          <div class="min-w-0 flex-1 space-y-1.5">
+            <div class="flex flex-wrap items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground/70">
+              <span class={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium normal-case tracking-normal', gitToneBadgeClass(subviewTone()))}>
                 {subviewLabel(props.subview)}
               </span>
               <Show when={loadingBusy()}>
-                <span class={cn('rounded-full border px-2.5 py-0.5 text-[10px] font-medium normal-case tracking-normal', gitToneBadgeClass('warning'))}>Refreshing…</span>
+                <span class={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium normal-case tracking-normal', gitToneBadgeClass('warning'))}>Refreshing…</span>
+              </Show>
+              <Show when={headRef()}>
+                <span class={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium normal-case tracking-normal', gitToneBadgeClass('brand'))}>{headRef()}</span>
               </Show>
             </div>
 
-            <div class="min-w-0 space-y-1">
-              <div class="truncate text-base font-semibold text-foreground">{repoLabel()}</div>
-              <div class="truncate text-[11px] text-muted-foreground" title={repoPath()}>{repoPath()}</div>
-            </div>
+            <div class="truncate text-sm font-semibold text-foreground">{repoLabel()}</div>
 
             <div class="flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
-              <Show when={headRef()}>
-                <span class={cn('rounded-full border px-2 py-0.5 font-medium', gitToneBadgeClass('brand'))}>{headRef()}</span>
-              </Show>
+              <span class="max-w-full truncate" title={repoPath()}>{repoPath()}</span>
               <span class={cn('rounded-full border px-2 py-0.5 font-medium', gitToneBadgeClass(changeCount() > 0 ? 'warning' : 'success'))}>
                 {changeCount() > 0 ? `${changeCount()} changes` : 'Clean workspace'}
               </span>
               <Show when={typeof props.repoSummary?.aheadCount === 'number' || typeof props.repoSummary?.behindCount === 'number'}>
-                <span class={cn('rounded-full border px-2 py-0.5 font-medium', gitToneBadgeClass('violet'))}>
+                <span class={cn('rounded-full border px-2 py-0.5 font-medium', gitToneBadgeClass('neutral'))}>
                   ↑{props.repoSummary?.aheadCount ?? 0} ↓{props.repoSummary?.behindCount ?? 0}
                 </span>
-              </Show>
-              <Show when={props.repoSummary?.isWorktree}>
-                <span class={cn('rounded-full border px-2 py-0.5 font-medium', gitToneBadgeClass('info'))}>Linked worktree</span>
               </Show>
             </div>
           </div>
 
-          <Button size="xs" variant="outline" icon={Refresh} onClick={() => props.onRefresh?.()} disabled={!props.onRefresh || loadingBusy()}>
-            Refresh
-          </Button>
+          <Show when={props.onRefresh}>
+            <Button size="sm" variant="outline" class="shrink-0 cursor-pointer" icon={Refresh} onClick={props.onRefresh}>
+              Refresh
+            </Button>
+          </Show>
         </div>
       </div>
 
-      <div class="min-h-0 flex-1 overflow-hidden">
+      <div class="flex-1 min-h-0 overflow-hidden bg-muted/[0.02]">
         <Show when={props.subview === 'overview'}>
           <GitOverviewPanel
             repoSummary={props.repoSummary}
@@ -142,6 +125,7 @@ export function GitWorkbench(props: GitWorkbenchProps) {
             selectedItem={props.selectedWorkspaceItem}
             loading={props.workspaceLoading}
             error={props.workspaceError}
+            inspectNonce={props.workspaceInspectNonce}
           />
         </Show>
 

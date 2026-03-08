@@ -205,6 +205,7 @@ export function RemoteFileBrowser(props: RemoteFileBrowserProps = {}) {
   const [gitWorkspaceLoading, setGitWorkspaceLoading] = createSignal(false);
   const [gitWorkspaceError, setGitWorkspaceError] = createSignal('');
   const [selectedGitWorkspaceKey, setSelectedGitWorkspaceKey] = createSignal('');
+  const [gitWorkspaceInspectNonce, setGitWorkspaceInspectNonce] = createSignal(0);
   const [gitBranches, setGitBranches] = createSignal<GitListBranchesResponse | null>(null);
   const [gitBranchesLoading, setGitBranchesLoading] = createSignal(false);
   const [gitBranchesError, setGitBranchesError] = createSignal('');
@@ -426,6 +427,7 @@ export function RemoteFileBrowser(props: RemoteFileBrowserProps = {}) {
     setGitWorkspaceLoading(false);
     setGitWorkspaceError('');
     setSelectedGitWorkspaceKey('');
+    setGitWorkspaceInspectNonce(0);
     setGitBranches(null);
     setGitBranchesLoading(false);
     setGitBranchesError('');
@@ -441,6 +443,7 @@ export function RemoteFileBrowser(props: RemoteFileBrowserProps = {}) {
 
   const selectGitWorkspaceItem = (item: GitWorkspaceChange | null | undefined) => {
     setSelectedGitWorkspaceKey(workspaceEntryKey(item));
+    setGitWorkspaceInspectNonce((value) => value + 1);
     if (layout.isMobile()) {
       setBrowserSidebarOpen(false);
     }
@@ -1744,8 +1747,9 @@ export function RemoteFileBrowser(props: RemoteFileBrowserProps = {}) {
                   selectedCommitHash={selectedCommitHash()}
                   onSelectCommit={selectGitCommit}
                   onLoadMore={() => void loadGitCommits(false)}
-                  showSidebarToggle={layout.isMobile() && !pageSidebarOpen()}
+                  showSidebarToggle={layout.isMobile()}
                   onOpenSidebar={() => setBrowserSidebarOpen(true)}
+                  workspaceInspectNonce={gitWorkspaceInspectNonce()}
                   onRefresh={() => { void refreshGitWorkbench(); }}
                 />
               }
@@ -1766,7 +1770,7 @@ export function RemoteFileBrowser(props: RemoteFileBrowserProps = {}) {
                 resizable
                 onResize={(delta) => setBrowserSidebarWidth((width) => normalizePageSidebarWidth(width + delta))}
                 onClose={() => setBrowserSidebarOpen(false)}
-                showSidebarToggle={layout.isMobile() && !pageSidebarOpen()}
+                showSidebarToggle={layout.isMobile()}
                 onOpenSidebar={() => setBrowserSidebarOpen(true)}
                 onNavigate={(path) => {
                   const targetPath = normalizePath(path);
