@@ -71,39 +71,39 @@ export function gitToneSelectableCardClass(tone: GitChromeTone | undefined, acti
   if (active) {
     switch (normalizeTone(tone)) {
       case 'info':
-        return 'border-sky-500/35 bg-sky-500/[0.08] text-foreground shadow-sm';
+        return 'cursor-pointer border-sky-500/35 bg-sky-500/[0.08] text-foreground shadow-sm';
       case 'brand':
-        return 'border-indigo-500/35 bg-indigo-500/[0.08] text-foreground shadow-sm';
+        return 'cursor-pointer border-indigo-500/35 bg-indigo-500/[0.08] text-foreground shadow-sm';
       case 'success':
-        return 'border-success/35 bg-success/[0.08] text-foreground shadow-sm';
+        return 'cursor-pointer border-success/35 bg-success/[0.08] text-foreground shadow-sm';
       case 'warning':
-        return 'border-warning/35 bg-warning/[0.08] text-foreground shadow-sm';
+        return 'cursor-pointer border-warning/35 bg-warning/[0.08] text-foreground shadow-sm';
       case 'danger':
-        return 'border-error/35 bg-error/[0.08] text-foreground shadow-sm';
+        return 'cursor-pointer border-error/35 bg-error/[0.08] text-foreground shadow-sm';
       case 'violet':
-        return 'border-violet-500/35 bg-violet-500/[0.08] text-foreground shadow-sm';
+        return 'cursor-pointer border-violet-500/35 bg-violet-500/[0.08] text-foreground shadow-sm';
       case 'neutral':
       default:
-        return 'border-border bg-background text-foreground shadow-sm';
+        return 'cursor-pointer border-border bg-background text-foreground shadow-sm';
     }
   }
 
   switch (normalizeTone(tone)) {
     case 'info':
-      return 'border-sky-500/10 bg-background/70 text-foreground hover:border-sky-500/25 hover:bg-sky-500/[0.04]';
+      return 'cursor-pointer border-sky-500/10 bg-background/70 text-foreground hover:border-sky-500/25 hover:bg-sky-500/[0.04]';
     case 'brand':
-      return 'border-indigo-500/10 bg-background/70 text-foreground hover:border-indigo-500/25 hover:bg-indigo-500/[0.04]';
+      return 'cursor-pointer border-indigo-500/10 bg-background/70 text-foreground hover:border-indigo-500/25 hover:bg-indigo-500/[0.04]';
     case 'success':
-      return 'border-success/10 bg-background/70 text-foreground hover:border-success/25 hover:bg-success/[0.04]';
+      return 'cursor-pointer border-success/10 bg-background/70 text-foreground hover:border-success/25 hover:bg-success/[0.04]';
     case 'warning':
-      return 'border-warning/10 bg-background/70 text-foreground hover:border-warning/25 hover:bg-warning/[0.04]';
+      return 'cursor-pointer border-warning/10 bg-background/70 text-foreground hover:border-warning/25 hover:bg-warning/[0.04]';
     case 'danger':
-      return 'border-error/10 bg-background/70 text-foreground hover:border-error/25 hover:bg-error/[0.04]';
+      return 'cursor-pointer border-error/10 bg-background/70 text-foreground hover:border-error/25 hover:bg-error/[0.04]';
     case 'violet':
-      return 'border-violet-500/10 bg-background/70 text-foreground hover:border-violet-500/25 hover:bg-violet-500/[0.04]';
+      return 'cursor-pointer border-violet-500/10 bg-background/70 text-foreground hover:border-violet-500/25 hover:bg-violet-500/[0.04]';
     case 'neutral':
     default:
-      return 'border-border/50 bg-background/60 text-foreground hover:border-border hover:bg-background';
+      return 'cursor-pointer border-border/50 bg-background/60 text-foreground hover:border-border hover:bg-background';
   }
 }
 
