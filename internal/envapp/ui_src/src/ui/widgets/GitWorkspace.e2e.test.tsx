@@ -102,6 +102,61 @@ describe('GitWorkspace interactions', () => {
     }
   });
 
+  it('hides the inner mobile activity bar when sidebar toggling is delegated externally', () => {
+    mockMatchMedia(true);
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+
+    const dispose = render(() => (
+      <LayoutProvider>
+        <div class="h-[620px]">
+          <GitWorkspace
+            mode="git"
+            onModeChange={() => {}}
+            subview="overview"
+            onSubviewChange={() => {}}
+            width={280}
+            open={false}
+            showSidebarToggle
+            mobileSidebarToggleMode="external"
+            onOpenSidebar={() => {}}
+            currentPath="/workspace/repo/src"
+            repoInfo={{ available: true, repoRootPath: '/workspace/repo', headRef: 'main', headCommit: 'abc1234' }}
+            repoSummary={{
+              repoRootPath: '/workspace/repo',
+              headRef: 'main',
+              headCommit: 'abc1234',
+              aheadCount: 1,
+              behindCount: 0,
+              workspaceSummary: { stagedCount: 1, unstagedCount: 0, untrackedCount: 0, conflictedCount: 0 },
+            }}
+            workspace={{
+              repoRootPath: '/workspace/repo',
+              summary: { stagedCount: 1, unstagedCount: 0, untrackedCount: 0, conflictedCount: 0 },
+              staged: [],
+              unstaged: [],
+              untracked: [],
+              conflicted: [],
+            }}
+            branches={{
+              repoRootPath: '/workspace/repo',
+              currentRef: 'main',
+              local: [{ name: 'main', fullName: 'refs/heads/main', kind: 'local', current: true }],
+              remote: [],
+            }}
+            commits={[]}
+          />
+        </div>
+      </LayoutProvider>
+    ), host);
+
+    try {
+      expect(host.querySelector('button[aria-label="Git sidebar"]')).toBeNull();
+    } finally {
+      dispose();
+    }
+  });
+
   it('uses the mobile activity bar to reopen the git sidebar', () => {
     mockMatchMedia(true);
     let openSidebarCount = 0;

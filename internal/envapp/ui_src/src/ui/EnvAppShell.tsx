@@ -251,6 +251,8 @@ export function EnvAppShell() {
   const canUseFlower = createMemo(() => env.state === 'ready' && hasRWXPermissions(env()));
 
   const [pendingAutoOpenAI, setPendingAutoOpenAI] = createSignal(false);
+  const [filesMobileSidebarOpen, setFilesMobileSidebarOpen] = createSignal(false);
+  const toggleFilesMobileSidebar = () => setFilesMobileSidebarOpen((open) => !open);
   let initialTab: EnvNavTab | null = null;
 
   const [askFlowerIntentSeq, setAskFlowerIntentSeq] = createSignal(0);
@@ -1039,6 +1041,12 @@ export function EnvAppShell() {
     layout.setSidebarActiveTab(fallback, { openSidebar: false });
   });
 
+  createEffect(() => {
+    if (!layout.isMobile() || layout.sidebarActiveTab() !== 'files') {
+      setFilesMobileSidebarOpen(false);
+    }
+  });
+
   // Keep a global (cross-env) active tab preference, independent from FloeProvider's per-env storage namespace.
   // NOTE: On mobile, the "deck" tab is downgraded to "terminal"; skip persisting that one downgrade.
   createEffect(() => {
@@ -1070,7 +1078,24 @@ export function EnvAppShell() {
     items.push(
       { id: 'terminal', icon: Terminal, label: 'Terminal', collapseBehavior: 'preserve' },
       { id: 'monitor', icon: Activity, label: 'Monitoring', collapseBehavior: 'preserve' },
-      { id: 'files', icon: Files, label: 'File Browser', collapseBehavior: 'preserve' },
+      layout.isMobile()
+        ? {
+            id: 'files',
+            icon: Files,
+            label: 'File Browser',
+            collapseBehavior: 'preserve',
+            onClick: () => {
+              const active = layout.sidebarActiveTab() === 'files';
+              if (!active) {
+                persistActiveTab('files');
+                layout.setSidebarActiveTab('files', { openSidebar: false });
+                setFilesMobileSidebarOpen(true);
+                return;
+              }
+              toggleFilesMobileSidebar();
+            },
+          }
+        : { id: 'files', icon: Files, label: 'File Browser', collapseBehavior: 'preserve' },
       { id: 'codespaces', icon: Code, label: 'Codespaces', collapseBehavior: 'preserve' },
     );
     if (!isLocalMode()) {
@@ -1330,6 +1355,9 @@ export function EnvAppShell() {
         connecting,
         connectError,
         goTab,
+        filesSidebarOpen: filesMobileSidebarOpen,
+        setFilesSidebarOpen: setFilesMobileSidebarOpen,
+        toggleFilesSidebar: toggleFilesMobileSidebar,
         settingsSeq,
         bumpSettingsSeq,
         openSettings,

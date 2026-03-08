@@ -84,6 +84,18 @@ describe('browser workspace layout wiring', () => {
     expect(src).toContain('<GitViewNav');
   });
 
+  it('lets the files activity control page-level mobile sidebars without rendering an inner activity bar', () => {
+    const envSrc = read('../EnvAppShell.tsx');
+    const browserSrc = read('./RemoteFileBrowser.tsx');
+
+    expect(envSrc).toContain('filesSidebarOpen: filesMobileSidebarOpen');
+    expect(envSrc).toContain('toggleFilesSidebar: toggleFilesMobileSidebar');
+    expect(envSrc).toContain("layout.setSidebarActiveTab('files', { openSidebar: false });");
+    expect(browserSrc).toContain("mobileSidebarToggleMode={props.widgetId ? 'internal' : 'external'}");
+    expect(browserSrc).toContain('ctx.filesSidebarOpen()');
+    expect(browserSrc).toContain('ctx.setFilesSidebarOpen(open);');
+  });
+
   it('keeps the git content header focused on context and refresh only', () => {
     const src = read('./GitWorkbench.tsx');
 

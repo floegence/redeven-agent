@@ -151,6 +151,7 @@ export function RemoteFileBrowser(props: RemoteFileBrowserProps = {}) {
   const notification = useNotification();
 
   const envId = () => (ctx.env_id() ?? '').trim();
+  const useExternalMobileSidebarToggle = () => !props.widgetId;
 
   const [files, setFiles] = createSignal<FileItem[]>([]);
   const [loading, setLoading] = createSignal(false);
@@ -537,7 +538,7 @@ export function RemoteFileBrowser(props: RemoteFileBrowserProps = {}) {
     setSelectedGitWorkspaceKey(workspaceEntryKey(item));
     setGitWorkspaceInspectNonce((value) => value + 1);
     if (layout.isMobile()) {
-      setBrowserSidebarOpen(false);
+      closePageSidebar();
     }
   };
 
@@ -545,14 +546,14 @@ export function RemoteFileBrowser(props: RemoteFileBrowserProps = {}) {
     setSelectedGitBranchName(branchIdentity(branch));
     void loadGitBranchCompare(branch);
     if (layout.isMobile()) {
-      setBrowserSidebarOpen(false);
+      closePageSidebar();
     }
   };
 
   const selectGitCommit = (hash: string) => {
     setSelectedCommitHash(hash);
     if (layout.isMobile()) {
-      setBrowserSidebarOpen(false);
+      closePageSidebar();
     }
   };
 
@@ -709,7 +710,17 @@ export function RemoteFileBrowser(props: RemoteFileBrowserProps = {}) {
   };
 
   const canEnterGitHistory = () => repoHistoryAvailable() && !repoInfoLoading();
-  const pageSidebarOpen = () => !layout.isMobile() || browserSidebarOpen();
+  const mobileSidebarOpen = () => (useExternalMobileSidebarToggle() ? ctx.filesSidebarOpen() : browserSidebarOpen());
+  const setMobileSidebarOpen = (open: boolean) => {
+    if (useExternalMobileSidebarToggle()) {
+      ctx.setFilesSidebarOpen(open);
+      return;
+    }
+    setBrowserSidebarOpen(open);
+  };
+  const openPageSidebar = () => setMobileSidebarOpen(true);
+  const closePageSidebar = () => setMobileSidebarOpen(false);
+  const pageSidebarOpen = () => !layout.isMobile() || mobileSidebarOpen();
 
   const setBrowserPageMode = (mode: BrowserPageMode) => {
     const next = normalizeBrowserPageMode(mode);
@@ -755,7 +766,7 @@ export function RemoteFileBrowser(props: RemoteFileBrowserProps = {}) {
     setFsRootAbs('');
     setGitSubview(nextSubview);
     setBrowserPageMode(nextMode);
-    setBrowserSidebarOpen(false);
+    closePageSidebar();
     setRepoInfo(null);
     setRepoInfoLoading(false);
     setRepoInfoResolved(false);
@@ -1394,7 +1405,7 @@ export function RemoteFileBrowser(props: RemoteFileBrowserProps = {}) {
     if (pageMode() === 'git' && repoInfoResolved() && !repoInfoLoading() && !repoHistoryAvailable()) {
       setBrowserPageMode('files');
       if (layout.isMobile()) {
-        setBrowserSidebarOpen(false);
+        closePageSidebar();
       }
     }
   });
@@ -1824,7 +1835,7 @@ export function RemoteFileBrowser(props: RemoteFileBrowserProps = {}) {
                   open={pageSidebarOpen()}
                   resizable
                   onResize={(delta) => setBrowserSidebarWidth((width) => normalizePageSidebarWidth(width + delta))}
-                  onClose={() => setBrowserSidebarOpen(false)}
+                  onClose={closePageSidebar}
                   currentPath={currentBrowserPath()}
                   repoInfo={repoInfo()}
                   repoInfoLoading={repoInfoLoading()}
@@ -1855,8 +1866,9 @@ export function RemoteFileBrowser(props: RemoteFileBrowserProps = {}) {
                   selectedCommitHash={selectedCommitHash()}
                   onSelectCommit={selectGitCommit}
                   onLoadMore={() => void loadGitCommits(false)}
-                  showSidebarToggle={layout.isMobile()}
-                  onOpenSidebar={() => setBrowserSidebarOpen(true)}
+                  mobileSidebarToggleMode={props.widgetId ? 'internal' : 'external'}
+                  showSidebarToggle={layout.isMobile() && Boolean(props.widgetId)}
+                  onOpenSidebar={openPageSidebar}
                   workspaceInspectNonce={gitWorkspaceInspectNonce()}
                   onRefresh={() => { void refreshGitWorkbench(); }}
                 />
@@ -1877,9 +1889,10 @@ export function RemoteFileBrowser(props: RemoteFileBrowserProps = {}) {
                 open={pageSidebarOpen()}
                 resizable
                 onResize={(delta) => setBrowserSidebarWidth((width) => normalizePageSidebarWidth(width + delta))}
-                onClose={() => setBrowserSidebarOpen(false)}
-                showSidebarToggle={layout.isMobile()}
-                onOpenSidebar={() => setBrowserSidebarOpen(true)}
+                onClose={closePageSidebar}
+                mobileSidebarToggleMode={props.widgetId ? 'internal' : 'external'}
+                showSidebarToggle={layout.isMobile() && Boolean(props.widgetId)}
+                onOpenSidebar={openPageSidebar}
                 onNavigate={(path) => {
                   const targetPath = normalizePath(path);
                   writePersistedLastPath(id, targetPath);
@@ -1901,7 +1914,7 @@ export function RemoteFileBrowser(props: RemoteFileBrowserProps = {}) {
                 }}
                 onPathChange={(_path, source) => {
                   if (source === 'user' && layout.isMobile()) {
-                    setBrowserSidebarOpen(false);
+                    closePageSidebar();
                   }
                 }}
                 onOpen={(item) => void openPreview(item)}

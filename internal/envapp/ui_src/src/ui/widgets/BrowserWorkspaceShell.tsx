@@ -17,6 +17,7 @@ export interface BrowserWorkspaceShellProps {
   sidebarBody: JSX.Element;
   content: JSX.Element;
   headerActions?: JSX.Element;
+  mobileSidebarToggleMode?: 'internal' | 'external';
   showSidebarToggle?: boolean;
   sidebarToggleLabel?: string;
   sidebarToggleIcon?: Component<{ class?: string }>;
@@ -25,7 +26,7 @@ export interface BrowserWorkspaceShellProps {
 
 export function BrowserWorkspaceShell(props: BrowserWorkspaceShellProps) {
   const layout = useLayout();
-  const showMobileActivityBar = () => Boolean(layout.isMobile() && props.showSidebarToggle && props.sidebarToggleIcon && props.onOpenSidebar);
+  const showMobileActivityBar = () => Boolean(props.mobileSidebarToggleMode !== 'external' && layout.isMobile() && props.showSidebarToggle && props.sidebarToggleIcon && props.onOpenSidebar);
   const sidebarActivityId = 'browser-sidebar';
 
   return (

@@ -29,6 +29,7 @@ export interface GitWorkspaceProps {
   onResize?: (delta: number) => void;
   onClose?: () => void;
   onOpenSidebar?: () => void;
+  mobileSidebarToggleMode?: 'internal' | 'external';
   currentPath: string;
   repoInfo?: GitResolveRepoResponse | null;
   repoInfoLoading?: boolean;
@@ -82,6 +83,7 @@ export function GitWorkspace(props: GitWorkspaceProps) {
       onResize={props.onResize}
       onClose={props.onClose}
       onOpenSidebar={props.onOpenSidebar}
+      mobileSidebarToggleMode={props.mobileSidebarToggleMode}
       showSidebarToggle={props.showSidebarToggle}
       sidebarToggleLabel="Git sidebar"
       sidebarToggleIcon={History}
