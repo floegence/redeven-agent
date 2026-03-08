@@ -43,7 +43,7 @@ describe('browser workspace layout wiring', () => {
     expect(src).toContain('props.modeSwitcher');
   });
 
-  it('uses a compact mode switch and mobile activity bar in the shared browser shell', () => {
+  it('uses a compact mode switch and a rail-free shared browser shell', () => {
     const modeSrc = read('./GitHistoryModeSwitch.tsx');
     const shellSrc = read('./BrowserWorkspaceShell.tsx');
     const navSrc = read('./GitViewNav.tsx');
@@ -54,10 +54,11 @@ describe('browser workspace layout wiring', () => {
     expect(modeSrc).not.toContain('>Browse<');
     expect(modeSrc).not.toContain('>Inspect<');
 
-    expect(shellSrc).toContain('ActivityBar');
-    expect(shellSrc).toContain('showSidebarToggle');
-    expect(shellSrc).toContain('sidebarToggleLabel');
-    expect(shellSrc).toContain('sidebarToggleIcon');
+    expect(shellSrc).not.toContain('ActivityBar');
+    expect(shellSrc).not.toContain('showSidebarToggle');
+    expect(shellSrc).not.toContain('sidebarToggleLabel');
+    expect(shellSrc).not.toContain('sidebarToggleIcon');
+    expect(shellSrc).not.toContain('mobileSidebarToggleMode');
 
     expect(navSrc).toContain('role="tablist"');
     expect(navSrc).toContain('aria-label="Git views"');
@@ -84,25 +85,31 @@ describe('browser workspace layout wiring', () => {
     expect(src).toContain('<GitViewNav');
   });
 
-  it('lets the files activity control page-level mobile sidebars without rendering an inner activity bar', () => {
+  it('lets the files activity control page-level mobile sidebars while widget views use header buttons', () => {
     const envSrc = read('../EnvAppShell.tsx');
     const browserSrc = read('./RemoteFileBrowser.tsx');
 
     expect(envSrc).toContain('filesSidebarOpen: filesMobileSidebarOpen');
     expect(envSrc).toContain('toggleFilesSidebar: toggleFilesMobileSidebar');
     expect(envSrc).toContain("layout.setSidebarActiveTab('files', { openSidebar: false });");
-    expect(browserSrc).toContain("mobileSidebarToggleMode={props.widgetId ? 'internal' : 'external'}");
     expect(browserSrc).toContain('ctx.filesSidebarOpen()');
     expect(browserSrc).toContain('ctx.setFilesSidebarOpen(open);');
+    expect(browserSrc).toContain('const togglePageSidebar = () => setMobileSidebarOpen(!mobileSidebarOpen());');
+    expect(browserSrc).toContain('showMobileSidebarButton={layout.isMobile() && Boolean(props.widgetId)}');
+    expect(browserSrc).toContain('onToggleSidebar={togglePageSidebar}');
+    expect(browserSrc).not.toContain("mobileSidebarToggleMode={props.widgetId ? 'internal' : 'external'}");
+    expect(browserSrc).not.toContain('showSidebarToggle={layout.isMobile() && Boolean(props.widgetId)}');
   });
 
-  it('keeps the git content header focused on context and refresh only', () => {
+  it('keeps the git content header focused on context, refresh, and an optional mobile sidebar button', () => {
     const src = read('./GitWorkbench.tsx');
 
     expect(src).toContain('Refresh');
+    expect(src).toContain('showMobileSidebarButton');
+    expect(src).toContain('onToggleSidebar');
+    expect(src).toContain('Toggle browser sidebar');
     expect(src).toContain('subviewLabel(props.subview)');
     expect(src).not.toContain('GitHistoryModeSwitch');
     expect(src).not.toContain('GitSubviewSwitch');
-    expect(src).not.toContain('Open browser sidebar');
   });
 });

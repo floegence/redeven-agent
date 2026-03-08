@@ -29,7 +29,7 @@ describe('GitWorkbench interactions', () => {
     document.body.innerHTML = '';
   });
 
-  it('keeps the global header lightweight while exposing refresh only in the content surface', () => {
+  it('keeps the global header lightweight while exposing refresh only when no sidebar toggle is requested', () => {
     let refreshCount = 0;
     const host = document.createElement('div');
     document.body.appendChild(host);
@@ -92,7 +92,7 @@ describe('GitWorkbench interactions', () => {
       expect(refreshButton).toBeTruthy();
       refreshButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
-      expect(host.querySelector('button[aria-label="Open browser sidebar"]')).toBeNull();
+      expect(host.querySelector('button[aria-label="Toggle browser sidebar"]')).toBeNull();
       expect(refreshCount).toBe(1);
       expect(host.textContent).toContain('Branches');
     } finally {

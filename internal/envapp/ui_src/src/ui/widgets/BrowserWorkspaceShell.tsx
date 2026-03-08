@@ -1,6 +1,6 @@
-import { Show, type Component, type JSX } from 'solid-js';
-import { cn, useLayout } from '@floegence/floe-webapp-core';
-import { ActivityBar, SidebarPane } from '@floegence/floe-webapp-core/layout';
+import { Show, type JSX } from 'solid-js';
+import { cn } from '@floegence/floe-webapp-core';
+import { SidebarPane } from '@floegence/floe-webapp-core/layout';
 
 export interface BrowserWorkspaceShellProps {
   title?: JSX.Element;
@@ -9,7 +9,6 @@ export interface BrowserWorkspaceShellProps {
   resizable?: boolean;
   onResize?: (delta: number) => void;
   onClose?: () => void;
-  onOpenSidebar?: () => void;
   bodyRef?: (el: HTMLDivElement) => void;
   modeSwitcher: JSX.Element;
   navigation?: JSX.Element;
@@ -17,47 +16,12 @@ export interface BrowserWorkspaceShellProps {
   sidebarBody: JSX.Element;
   content: JSX.Element;
   headerActions?: JSX.Element;
-  mobileSidebarToggleMode?: 'internal' | 'external';
-  showSidebarToggle?: boolean;
-  sidebarToggleLabel?: string;
-  sidebarToggleIcon?: Component<{ class?: string }>;
   class?: string;
 }
 
 export function BrowserWorkspaceShell(props: BrowserWorkspaceShellProps) {
-  const layout = useLayout();
-  const showMobileActivityBar = () => Boolean(props.mobileSidebarToggleMode !== 'external' && layout.isMobile() && props.showSidebarToggle && props.sidebarToggleIcon && props.onOpenSidebar);
-  const sidebarActivityId = 'browser-sidebar';
-
   return (
     <div class={cn('relative flex h-full min-h-0 overflow-hidden bg-muted/[0.02]', props.class)}>
-      <Show when={showMobileActivityBar()}>
-        <ActivityBar
-          items={[
-            {
-              id: sidebarActivityId,
-              icon: props.sidebarToggleIcon!,
-              label: props.sidebarToggleLabel || 'Browser sidebar',
-            },
-          ]}
-          activeId={sidebarActivityId}
-          collapsed={props.open === false}
-          onActiveChange={(_id, opts) => {
-            if (opts?.openSidebar) {
-              props.onOpenSidebar?.();
-            }
-          }}
-          onCollapsedChange={(collapsed) => {
-            if (collapsed) {
-              props.onClose?.();
-              return;
-            }
-            props.onOpenSidebar?.();
-          }}
-          class="z-[12]"
-        />
-      </Show>
-
       <SidebarPane
         title={props.title ?? 'Browser'}
         headerActions={props.headerActions}
@@ -66,7 +30,7 @@ export function BrowserWorkspaceShell(props: BrowserWorkspaceShellProps) {
         resizable={props.resizable}
         onResize={props.onResize}
         onClose={props.onClose}
-        class={cn('h-full border-r border-border/70 bg-background', showMobileActivityBar() && 'relative z-[13]')}
+        class="h-full border-r border-border/70 bg-background"
         bodyClass="py-0"
         bodyRef={props.bodyRef}
       >

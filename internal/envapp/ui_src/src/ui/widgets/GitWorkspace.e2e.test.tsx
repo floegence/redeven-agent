@@ -102,7 +102,7 @@ describe('GitWorkspace interactions', () => {
     }
   });
 
-  it('hides the inner mobile activity bar when sidebar toggling is delegated externally', () => {
+  it('does not render a mobile sidebar button unless requested explicitly', () => {
     mockMatchMedia(true);
     const host = document.createElement('div');
     document.body.appendChild(host);
@@ -117,9 +117,6 @@ describe('GitWorkspace interactions', () => {
             onSubviewChange={() => {}}
             width={280}
             open={false}
-            showSidebarToggle
-            mobileSidebarToggleMode="external"
-            onOpenSidebar={() => {}}
             currentPath="/workspace/repo/src"
             repoInfo={{ available: true, repoRootPath: '/workspace/repo', headRef: 'main', headCommit: 'abc1234' }}
             repoSummary={{
@@ -151,15 +148,15 @@ describe('GitWorkspace interactions', () => {
     ), host);
 
     try {
-      expect(host.querySelector('button[aria-label="Git sidebar"]')).toBeNull();
+      expect(host.querySelector('button[aria-label="Toggle browser sidebar"]')).toBeNull();
     } finally {
       dispose();
     }
   });
 
-  it('uses the mobile activity bar to reopen the git sidebar', () => {
+  it('uses the content header button to reopen the git sidebar on mobile widgets', () => {
     mockMatchMedia(true);
-    let openSidebarCount = 0;
+    let toggleSidebarCount = 0;
     const host = document.createElement('div');
     document.body.appendChild(host);
 
@@ -173,9 +170,9 @@ describe('GitWorkspace interactions', () => {
             onSubviewChange={() => {}}
             width={280}
             open={false}
-            showSidebarToggle
-            onOpenSidebar={() => {
-              openSidebarCount += 1;
+            showMobileSidebarButton
+            onToggleSidebar={() => {
+              toggleSidebarCount += 1;
             }}
             currentPath="/workspace/repo/src"
             repoInfo={{ available: true, repoRootPath: '/workspace/repo', headRef: 'main', headCommit: 'abc1234' }}
@@ -208,10 +205,11 @@ describe('GitWorkspace interactions', () => {
     ), host);
 
     try {
-      const activityButton = host.querySelector('button[aria-label="Git sidebar"]');
-      expect(activityButton).toBeTruthy();
-      activityButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-      expect(openSidebarCount).toBe(1);
+      const sidebarButton = host.querySelector('button[aria-label="Toggle browser sidebar"]');
+      expect(sidebarButton).toBeTruthy();
+      expect(sidebarButton?.textContent).toContain('Sidebar');
+      sidebarButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      expect(toggleSidebarCount).toBe(1);
     } finally {
       dispose();
     }
