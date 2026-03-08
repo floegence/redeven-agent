@@ -33,7 +33,7 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
       <div class="shrink-0 border-b border-border/70 px-3 py-2.5">
         <div class="flex flex-wrap items-start justify-between gap-2.5">
           <div class="min-w-0">
-            <div class="text-sm font-medium text-foreground">Workspace Detail</div>
+            <div class="text-sm font-medium text-foreground">Workspace</div>
             <div class="mt-0.5 text-[11px] text-muted-foreground">
               <Show when={!props.loading && !props.error} fallback={<span>Loading workspace state...</span>}>
                 <span>{totalChanges() > 0 ? `${totalChanges()} file${totalChanges() === 1 ? '' : 's'} need review.` : 'Working tree is clean.'}</span>
@@ -41,82 +41,94 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
             </div>
           </div>
 
-          <Show when={props.selectedItem}>
-            {(itemAccessor) => {
-              const item = itemAccessor();
-              return (
-                <div class={cn('inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-medium', gitToneBadgeClass(selectedSectionTone()))}>
-                  <span>{workspaceSectionLabel((item.section || 'unstaged') as 'staged' | 'unstaged' | 'untracked' | 'conflicted')}</span>
-                  <span class="opacity-60">·</span>
-                  <span class="truncate max-w-[14rem]" title={changeSecondaryPath(item)}>{changeSecondaryPath(item)}</span>
-                </div>
-              );
-            }}
-          </Show>
+          <span class={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', gitToneBadgeClass(totalChanges() > 0 ? 'warning' : 'success'))}>
+            {totalChanges() > 0 ? `${totalChanges()} open` : 'Clean'}
+          </span>
         </div>
       </div>
 
       <div class="flex-1 min-h-0 overflow-auto px-3 py-3">
         <Show when={!props.loading} fallback={<div class="text-xs text-muted-foreground">Loading workspace changes...</div>}>
           <Show when={!props.error} fallback={<div class="text-xs text-error">{props.error}</div>}>
-            <div class="space-y-3">
-              <section class={cn('rounded-xl border p-3', gitToneSurfaceClass(totalChanges() > 0 ? 'warning' : 'success'))}>
-                <div class="flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <div class="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground/70">Workspace Summary</div>
-                    <div class="mt-1 text-xs text-muted-foreground">Keep scanning files from the sidebar. Clicking a file opens its diff in a floating panel.</div>
+            <div class="space-y-2">
+              <div class="grid grid-cols-1 gap-2 xl:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]">
+                <section class={cn('rounded-xl border p-2.5', gitToneSurfaceClass(totalChanges() > 0 ? 'warning' : 'success'))}>
+                  <div class="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <div class="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground/70">Workspace Summary</div>
+                      <div class="mt-1 text-[11px] text-muted-foreground">Select files from the sidebar; diff opens in a floating panel.</div>
+                    </div>
+                    <span class={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', gitToneBadgeClass(totalChanges() > 0 ? 'warning' : 'success'))}>
+                      {totalChanges() > 0 ? `${totalChanges()} open` : 'Clean'}
+                    </span>
                   </div>
-                  <span class={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', gitToneBadgeClass(totalChanges() > 0 ? 'warning' : 'success'))}>
-                    {totalChanges() > 0 ? `${totalChanges()} open` : 'Clean'}
-                  </span>
-                </div>
 
-                <div class="mt-3 grid grid-cols-2 gap-2 text-[11px] lg:grid-cols-4">
-                  <div class={cn('rounded-lg border px-2.5 py-2', gitToneInsetClass(workspaceSectionTone('staged')))}>
-                    <div class="text-muted-foreground">Staged</div>
-                    <div class="mt-1 text-sm font-semibold text-foreground">{props.workspace?.summary?.stagedCount ?? 0}</div>
+                  <div class="mt-2.5 grid grid-cols-2 gap-2 text-[11px] lg:grid-cols-4">
+                    <div class={cn('rounded-lg border px-2.5 py-1.5', gitToneInsetClass(workspaceSectionTone('staged')))}>
+                      <div class="text-muted-foreground">Staged</div>
+                      <div class="mt-0.5 text-sm font-semibold text-foreground">{props.workspace?.summary?.stagedCount ?? 0}</div>
+                    </div>
+                    <div class={cn('rounded-lg border px-2.5 py-1.5', gitToneInsetClass(workspaceSectionTone('unstaged')))}>
+                      <div class="text-muted-foreground">Unstaged</div>
+                      <div class="mt-0.5 text-sm font-semibold text-foreground">{props.workspace?.summary?.unstagedCount ?? 0}</div>
+                    </div>
+                    <div class={cn('rounded-lg border px-2.5 py-1.5', gitToneInsetClass(workspaceSectionTone('untracked')))}>
+                      <div class="text-muted-foreground">Untracked</div>
+                      <div class="mt-0.5 text-sm font-semibold text-foreground">{props.workspace?.summary?.untrackedCount ?? 0}</div>
+                    </div>
+                    <div class={cn('rounded-lg border px-2.5 py-1.5', gitToneInsetClass(workspaceSectionTone('conflicted')))}>
+                      <div class="text-muted-foreground">Conflicted</div>
+                      <div class="mt-0.5 text-sm font-semibold text-foreground">{props.workspace?.summary?.conflictedCount ?? 0}</div>
+                    </div>
                   </div>
-                  <div class={cn('rounded-lg border px-2.5 py-2', gitToneInsetClass(workspaceSectionTone('unstaged')))}>
-                    <div class="text-muted-foreground">Unstaged</div>
-                    <div class="mt-1 text-sm font-semibold text-foreground">{props.workspace?.summary?.unstagedCount ?? 0}</div>
-                  </div>
-                  <div class={cn('rounded-lg border px-2.5 py-2', gitToneInsetClass(workspaceSectionTone('untracked')))}>
-                    <div class="text-muted-foreground">Untracked</div>
-                    <div class="mt-1 text-sm font-semibold text-foreground">{props.workspace?.summary?.untrackedCount ?? 0}</div>
-                  </div>
-                  <div class={cn('rounded-lg border px-2.5 py-2', gitToneInsetClass(workspaceSectionTone('conflicted')))}>
-                    <div class="text-muted-foreground">Conflicted</div>
-                    <div class="mt-1 text-sm font-semibold text-foreground">{props.workspace?.summary?.conflictedCount ?? 0}</div>
-                  </div>
-                </div>
-              </section>
+                </section>
 
-              <Show when={props.selectedItem}>
-                {(itemAccessor) => {
-                  const item = itemAccessor();
-                  return (
-                    <section class={cn('rounded-xl border p-3', gitToneSurfaceClass(selectedSectionTone()))}>
-                      <div class="flex flex-wrap items-start justify-between gap-2.5">
-                        <div class="min-w-0 flex-1">
-                          <div class="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground/70">Focused File</div>
-                          <div class="mt-1 truncate text-sm font-medium text-foreground" title={changeSecondaryPath(item)}>{changeSecondaryPath(item)}</div>
-                          <div class="mt-2 flex flex-wrap items-center gap-1.5 text-[10px]">
-                            <span class={cn('rounded-full border px-2 py-0.5 font-medium', gitToneBadgeClass(selectedSectionTone()))}>
-                              {workspaceSectionLabel((item.section || 'unstaged') as 'staged' | 'unstaged' | 'untracked' | 'conflicted')}
-                            </span>
-                            <span class={cn('rounded-full border px-2 py-0.5 font-medium', gitToneBadgeClass(gitChangeTone(item.changeType)))}>{item.changeType || 'modified'}</span>
-                            <span class={cn('rounded-full border px-2 py-0.5 font-medium', gitToneBadgeClass('neutral'))}>{changeMetricsText(item)}</span>
+                <section class={cn('rounded-xl border p-2.5', gitToneSurfaceClass(props.selectedItem ? selectedSectionTone() : 'neutral'))}>
+                  <Show when={props.selectedItem} fallback={(
+                    <div class="flex h-full min-h-[160px] flex-col justify-between gap-2">
+                      <div>
+                        <div class="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground/70">Focused File</div>
+                        <div class="mt-2 text-sm font-medium text-foreground">No file selected</div>
+                        <div class="mt-1 text-[11px] leading-5 text-muted-foreground">Select a file from the sidebar to open its diff.</div>
+                      </div>
+                      <div class={cn('rounded-lg border px-2.5 py-2 text-[11px] text-muted-foreground', gitToneInsetClass('neutral'))}>
+                        Diff opens separately, so this view stays compact.
+                      </div>
+                    </div>
+                  )}>
+                    {(itemAccessor) => {
+                      const item = itemAccessor();
+                      return (
+                        <div class="flex h-full min-h-[160px] flex-col justify-between gap-2.5">
+                          <div>
+                            <div class="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground/70">Focused File</div>
+                            <div class="mt-2 truncate text-sm font-medium text-foreground" title={changeSecondaryPath(item)}>{changeSecondaryPath(item)}</div>
+                            <div class="mt-2 flex flex-wrap items-center gap-1.5 text-[10px]">
+                              <span class={cn('rounded-full border px-2 py-0.5 font-medium', gitToneBadgeClass(selectedSectionTone()))}>
+                                {workspaceSectionLabel((item.section || 'unstaged') as 'staged' | 'unstaged' | 'untracked' | 'conflicted')}
+                              </span>
+                              <span class={cn('rounded-full border px-2 py-0.5 font-medium', gitToneBadgeClass(gitChangeTone(item.changeType)))}>{item.changeType || 'modified'}</span>
+                              <span class={cn('rounded-full border px-2 py-0.5 font-medium', gitToneBadgeClass('neutral'))}>{changeMetricsText(item)}</span>
+                            </div>
+                          </div>
+
+                          <div class={cn('rounded-lg border px-2.5 py-2 text-[11px] text-muted-foreground', gitToneInsetClass(selectedSectionTone()))}>
+                            {item.section === 'untracked'
+                              ? 'Untracked files do not have a Git patch yet, but you can still keep them in the current review queue.'
+                              : 'Open the floating diff to inspect exact line changes.'}
+                          </div>
+
+                          <div class="flex justify-end">
+                            <Button size="sm" variant="outline" class="cursor-pointer" onClick={() => setDiffOpen(true)}>
+                              Open Diff
+                            </Button>
                           </div>
                         </div>
-
-                        <Button size="sm" variant="outline" class="cursor-pointer" onClick={() => setDiffOpen(true)}>
-                          Open Diff
-                        </Button>
-                      </div>
-                    </section>
-                  );
-                }}
-              </Show>
+                      );
+                    }}
+                  </Show>
+                </section>
+              </div>
             </div>
           </Show>
         </Show>

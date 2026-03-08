@@ -32,7 +32,7 @@ export function GitViewNav(props: GitViewNavProps) {
               <span
                 class={cn(
                   'inline-flex min-w-[1.75rem] items-center justify-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium tabular-nums',
-                  gitToneBadgeClass(tone()),
+                  gitToneBadgeClass(typeof item.count === 'number' && item.count > 0 ? tone() : 'neutral'),
                 )}
               >
                 {typeof item.count === 'number' && item.count > 0 ? item.count : '•'}
