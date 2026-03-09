@@ -67,12 +67,12 @@ export function GitBranchesPanel(props: GitBranchesPanelProps) {
                         tone={branchTone()}
                       >
                         <div class="flex flex-wrap items-center gap-1.5">
-                          <div class="min-w-0 truncate text-[12px] font-medium text-foreground">{branchDisplayName(branch)}</div>
+                          <div class="min-w-0 truncate text-xs font-medium text-foreground">{branchDisplayName(branch)}</div>
                           <Show when={branch.current}>
                             <span class="text-[10px] text-muted-foreground">Current</span>
                           </Show>
                         </div>
-                        <div class="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
+                        <div class="mt-0.5 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
                           <Show when={branch.kind}>
                             <span class="capitalize">{branch.kind}</span>
                             <span aria-hidden="true">·</span>
@@ -137,7 +137,7 @@ export function GitBranchesPanel(props: GitBranchesPanelProps) {
                         <Show when={!props.compareLoading} fallback={<div class="text-xs text-muted-foreground">Loading compare files...</div>}>
                           <Show when={!props.compareError} fallback={<div class="text-xs break-words text-error">{props.compareError}</div>}>
                             <Show when={(props.compare?.files.length ?? 0) > 0} fallback={<div class="text-xs text-muted-foreground">No compare files are available for this branch.</div>}>
-                              <div class="grid grid-cols-1 gap-1.5 xl:grid-cols-2">
+                              <div class="grid grid-cols-1 gap-1 xl:grid-cols-2">
                                 <For each={props.compare?.files ?? []}>
                                   {(file) => {
                                     const active = () => selectedFileKey() === compareFileKey(file);
@@ -145,13 +145,13 @@ export function GitBranchesPanel(props: GitBranchesPanelProps) {
                                     return (
                                       <button
                                         type="button"
-                                        class={cn('w-full rounded-lg px-2.5 py-2 text-left text-[12px]', gitToneSelectableCardClass(tone(), active()))}
+                                        class={cn('w-full rounded-md px-2.5 py-1.5 text-left text-xs', gitToneSelectableCardClass(tone(), active()))}
                                         onClick={() => openFileDiff(file)}
                                       >
                                         <div class="flex flex-wrap items-start justify-between gap-2">
                                           <div class="min-w-0 flex-1">
                                             <div class="truncate font-medium text-current" title={changeSecondaryPath(file)}>{changeSecondaryPath(file)}</div>
-                                            <div class="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
+                                            <div class="mt-0.5 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
                                               <span class="capitalize">{file.changeType || 'modified'}</span>
                                               <span aria-hidden="true">·</span>
                                               <span>{file.isBinary ? `Binary · ${changeMetricsText(file)}` : changeMetricsText(file)}</span>

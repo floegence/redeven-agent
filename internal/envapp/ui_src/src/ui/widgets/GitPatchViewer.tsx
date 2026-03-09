@@ -68,7 +68,7 @@ export function GitPatchViewer<T extends GitPatchRenderable>(props: GitPatchView
         {(fileAccessor) => {
           const file = fileAccessor();
           return (
-            <div class="space-y-2.5 rounded-md bg-muted/[0.16] p-2.5 shadow-[0_1px_0_rgba(255,255,255,0.03)_inset]">
+            <div class="space-y-2 rounded-md bg-muted/[0.16] p-2 shadow-[0_1px_0_rgba(255,255,255,0.03)_inset]">
               <div class="flex items-start justify-between gap-2">
                 <div class="min-w-0 flex-1 space-y-1">
                   <div class="flex min-w-0 flex-wrap items-center gap-1.5">
@@ -105,14 +105,14 @@ export function GitPatchViewer<T extends GitPatchRenderable>(props: GitPatchView
                 fallback={<div class="rounded-md bg-background/70 px-3 py-2 text-[11px] leading-5 text-muted-foreground shadow-[0_1px_0_rgba(255,255,255,0.03)_inset]">{unavailableMessage() || 'Binary file changed. Inline text diff is not available.'}</div>}
               >
                 <Show when={visiblePatchLines().length > 0} fallback={<div class="rounded-md bg-background/70 px-3 py-2 text-[11px] leading-5 text-muted-foreground shadow-[0_1px_0_rgba(255,255,255,0.03)_inset]">No inline diff lines available for this file.</div>}>
-                  <div class="max-h-[28rem] overflow-auto rounded-md bg-background/78 p-1 shadow-[0_1px_0_rgba(255,255,255,0.03)_inset]">
-                    <div class="space-y-px rounded-[5px] bg-muted/[0.20] p-px">
+                  <div class="max-h-[28rem] overflow-auto rounded-md bg-background/78 p-0.5 shadow-[0_1px_0_rgba(255,255,255,0.03)_inset]">
+                    <div class="bg-muted/[0.20] p-px">
                       <For each={visiblePatchLines()}>
                         {(line) => (
-                          <div class={cn('grid grid-cols-[2.6rem_2.6rem_minmax(0,1fr)] items-stretch overflow-hidden rounded-[4px]', gitPatchRenderedLineClass(line))}>
-                            <span class="px-2 py-1 text-right font-mono text-[10px] leading-5 text-muted-foreground/72">{formatGitPatchLineNumber(line.oldLine)}</span>
-                            <span class="border-r border-border/20 px-2 py-1 text-right font-mono text-[10px] leading-5 text-muted-foreground/72">{formatGitPatchLineNumber(line.newLine)}</span>
-                            <span class={cn('block min-w-0 px-3 py-1 font-mono text-[11px] leading-5 whitespace-pre', gitPatchPreviewLineClass(line.text))}>{line.text}</span>
+                          <div class={cn('grid grid-cols-[2.5rem_2.5rem_minmax(0,1fr)] items-stretch overflow-hidden', gitPatchRenderedLineClass(line))}>
+                            <span class="px-1.5 text-right font-mono text-[10.5px] leading-[1.6] text-muted-foreground/60">{formatGitPatchLineNumber(line.oldLine)}</span>
+                            <span class="border-r border-border/20 px-1.5 text-right font-mono text-[10.5px] leading-[1.6] text-muted-foreground/60">{formatGitPatchLineNumber(line.newLine)}</span>
+                            <span class={cn('block min-w-0 px-2.5 font-mono text-[11px] leading-[1.6] whitespace-pre', gitPatchPreviewLineClass(line.text))}>{line.text}</span>
                           </div>
                         )}
                       </For>

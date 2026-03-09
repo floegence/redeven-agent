@@ -60,8 +60,8 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
                   when={props.selectedItem}
                   fallback={
                     <div>
-                      <div class="text-[12px] font-medium text-foreground">Choose a workspace file</div>
-                      <div class="mt-1 text-[11px] leading-5 text-muted-foreground">Select a file from the sidebar to load its floating diff.</div>
+                      <div class="text-xs font-medium text-foreground">Choose a workspace file</div>
+                      <div class="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">Select a file from the sidebar to load its floating diff.</div>
                       <GitSubtleNote class="mt-2">Line-level inspection opens in a floating panel while this review surface stays compact.</GitSubtleNote>
                     </div>
                   }
@@ -72,8 +72,8 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
                       <div>
                         <div class="flex flex-wrap items-start justify-between gap-2">
                           <div class="min-w-0 flex-1">
-                            <div class="truncate text-[12px] font-medium text-foreground" title={changeSecondaryPath(item)}>{changeSecondaryPath(item)}</div>
-                            <div class="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
+                            <div class="truncate text-xs font-medium text-foreground" title={changeSecondaryPath(item)}>{changeSecondaryPath(item)}</div>
+                            <div class="mt-0.5 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
                               <span>{workspaceSectionLabel((item.section || 'unstaged') as 'staged' | 'unstaged' | 'untracked' | 'conflicted')}</span>
                               <span aria-hidden="true">·</span>
                               <span class="capitalize">{item.changeType || 'modified'}</span>

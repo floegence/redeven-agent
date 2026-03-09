@@ -79,7 +79,7 @@ describe('GitChrome semantic tone helpers', () => {
     expect(gitToneSelectableCardClass('brand', true)).not.toContain('border-transparent');
     expect(gitToneSelectableCardClass('brand', true)).not.toContain('ring-indigo-500/[0.10]');
     expect(gitToneSelectableCardClass('brand', true)).toContain('cursor-pointer');
-    expect(gitToneSelectableCardClass('brand', true)).toContain('min-h-[38px]');
+    expect(gitToneSelectableCardClass('brand', true)).not.toContain('min-h-[38px]');
     expect(gitToneSelectableCardClass('brand', true)).toContain('focus-visible:ring-2');
 
     expect(gitToneSelectableCardClass('info', false)).toContain('hover:bg-background/72');
