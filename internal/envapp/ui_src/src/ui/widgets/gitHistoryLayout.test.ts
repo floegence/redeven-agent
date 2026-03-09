@@ -84,7 +84,7 @@ describe('browser workspace layout wiring', () => {
 
     expect(modeSrc).toContain('role="radiogroup"');
     expect(modeSrc).toContain('aria-label="Browser mode"');
-    expect(modeSrc).toContain('inline-flex w-full items-center gap-0.5 rounded-lg border border-border bg-muted/40 p-0.5 shadow-[0_1px_0_rgba(0,0,0,0.03)_inset]');
+    expect(modeSrc).toContain('inline-flex w-full items-center gap-0.5 rounded-md border border-border bg-muted/40 p-0.5 shadow-[0_1px_0_rgba(0,0,0,0.03)_inset]');
     expect(modeSrc).not.toContain('>Browse<');
     expect(modeSrc).not.toContain('>Inspect<');
 
@@ -96,10 +96,10 @@ describe('browser workspace layout wiring', () => {
 
     expect(navSrc).toContain('role="tablist"');
     expect(navSrc).toContain('aria-label="Git views"');
-    expect(navSrc).toContain('space-y-1 rounded-lg bg-muted/[0.14] p-1');
-    expect(navSrc).toContain('rounded-md px-2.5 py-2');
+    expect(navSrc).toContain('space-y-0.5 rounded-md bg-muted/[0.14] p-0.5');
+    expect(navSrc).toContain('rounded px-2.5 py-1.5');
     expect(navSrc).toContain('border-l-[2px] border-primary bg-background text-foreground shadow-sm');
-    expect(navSrc).toContain('bg-transparent text-muted-foreground hover:bg-muted/50 hover:text-foreground hover:shadow-[0_1px_2px_rgba(0,0,0,0.04)]');
+    expect(navSrc).toContain('bg-transparent text-muted-foreground hover:bg-muted/50 hover:text-foreground');
     expect(navSrc).toContain('bg-muted/70 text-foreground');
     expect(navSrc).not.toContain('gitSubviewTone');
     expect(navSrc).not.toContain('gitToneBadgeClass');
@@ -153,8 +153,8 @@ describe('browser workspace layout wiring', () => {
     expect(overviewSrc).toContain('Repository Signals');
     expect(overviewSrc).toContain('GitStatStrip');
     expect(overviewSrc).toContain('columnsClass="grid-cols-2 xl:grid-cols-4"');
-    expect(overviewSrc).toContain('space-y-1 rounded-lg bg-muted/[0.22] p-1');
-    expect(overviewSrc).toContain('rounded-md bg-background/70 px-2.5 py-2 text-[11px] transition-shadow duration-150 hover:shadow-sm');
+    expect(overviewSrc).toContain('space-y-0.5 rounded-md bg-muted/[0.22] p-0.5');
+    expect(overviewSrc).toContain('rounded bg-background/70 px-2 py-1.5 text-[11px] transition-shadow duration-150 hover:shadow-sm');
     expect(overviewSrc).not.toContain('xl:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)]');
     expect(overviewSrc).not.toContain('text-[24px] font-semibold tracking-tight');
 
@@ -219,17 +219,17 @@ describe('browser workspace layout wiring', () => {
     expect(src).toContain('onToggleSidebar');
     expect(src).toContain('Toggle browser sidebar');
     expect(src).toContain('Repository Context');
-    expect(src).toContain('Compact repo signals and actions for the current view.');
+    expect(src).not.toContain('Compact repo signals and actions for the current view.');
     expect(src).toContain('Workspace Summary');
     expect(src).toContain('Sync Status');
     expect(src).toContain('Focused View');
     expect(src).toContain('gitToneActionButtonClass()');
     expect(src).toContain('variant="ghost"');
-    expect(src).toContain('rounded-lg border border-border/50 bg-muted/[0.18]');
+    expect(src).toContain('border-b border-border/40');
     expect(src).not.toContain('bg-card');
     expect(src).not.toContain("gitToneSurfaceClass(subviewTone())");
     expect(src).not.toContain('variant="outline"');
-    expect(src).not.toContain('border-b border-border/40');
+    expect(src).not.toContain('rounded-lg border border-border/50 bg-muted/[0.18]');
     expect(src).not.toContain('GitHistoryModeSwitch');
     expect(src).not.toContain('GitSubviewSwitch');
   });
@@ -244,7 +244,7 @@ describe('browser workspace layout wiring', () => {
     expect(dialogSrc).not.toContain('rounded-[20px]');
     expect(dialogSrc).not.toContain('rounded-xl');
     expect(patchSrc).toContain('rounded-md bg-muted/[0.16]');
-    expect(patchSrc).toContain('max-h-[28rem] overflow-auto rounded-md bg-background/78 p-1');
+    expect(patchSrc).toContain('max-h-[28rem] overflow-auto rounded-md bg-background/78 p-0.5');
     expect(patchSrc).not.toContain('chat-tool-apply-patch');
     expect(patchUtilSrc).toContain("return 'border-l-[2px] border-l-success/60 bg-success/10';");
     expect(patchUtilSrc).toContain("return 'text-success';");

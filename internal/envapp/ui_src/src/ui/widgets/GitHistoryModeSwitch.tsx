@@ -12,13 +12,13 @@ export interface GitHistoryModeSwitchProps {
 
 export function GitHistoryModeSwitch(props: GitHistoryModeSwitchProps) {
   const buttonBaseClass =
-    'cursor-pointer rounded-md border px-2.5 py-1.5 text-[12px] font-medium transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-55';
+    'cursor-pointer rounded border px-2 py-1 text-xs font-medium transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-55';
 
   return (
     <div
       role="radiogroup"
       aria-label="Browser mode"
-      class={cn('inline-flex w-full items-center gap-0.5 rounded-lg border border-border bg-muted/40 p-0.5 shadow-[0_1px_0_rgba(0,0,0,0.03)_inset]', props.class)}
+      class={cn('inline-flex w-full items-center gap-0.5 rounded-md border border-border bg-muted/40 p-0.5 shadow-[0_1px_0_rgba(0,0,0,0.03)_inset]', props.class)}
     >
       <button
         type="button"
@@ -28,7 +28,7 @@ export function GitHistoryModeSwitch(props: GitHistoryModeSwitchProps) {
           buttonBaseClass,
           'flex min-w-0 flex-1 items-center justify-center gap-1.5 text-center',
           props.mode === 'files'
-            ? 'border-border bg-background text-foreground shadow-[0_1px_3px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.06)]'
+            ? 'border-border bg-background text-foreground shadow-sm'
             : 'border-transparent text-muted-foreground hover:bg-muted/50 hover:text-foreground',
         )}
         onClick={() => props.onChange('files')}
@@ -46,7 +46,7 @@ export function GitHistoryModeSwitch(props: GitHistoryModeSwitchProps) {
           buttonBaseClass,
           'flex min-w-0 flex-1 items-center justify-center gap-1.5 text-center',
           props.mode === 'git'
-            ? 'border-border bg-background text-foreground shadow-[0_1px_3px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.06)]'
+            ? 'border-border bg-background text-foreground shadow-sm'
             : 'border-transparent text-muted-foreground hover:bg-muted/50 hover:text-foreground',
         )}
         onClick={() => props.onChange('git')}

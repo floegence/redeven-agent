@@ -208,14 +208,14 @@ export function GitWorkbenchSidebar(props: GitWorkbenchSidebarProps) {
                                 when={items().length > 0}
                                 fallback={<GitSubtleNote>No files in this section.</GitSubtleNote>}
                               >
-                                <div class="space-y-1.5">
+                                <div class="space-y-1">
                                   <For each={items()}>
                                     {(item) => {
                                       const active = () => props.selectedWorkspaceKey === workspaceEntryKey(item);
                                       return (
                                         <button
                                           type="button"
-                                          class={cn('w-full rounded-lg px-2.5 py-1.5 text-left', gitToneSelectableCardClass(tone(), active()))}
+                                          class={cn('w-full rounded-md px-2.5 py-1.5 text-left', gitToneSelectableCardClass(tone(), active()))}
                                           onClick={() => {
                                             props.onSelectWorkspaceItem?.(item);
                                             closeAfterPick();
@@ -223,7 +223,7 @@ export function GitWorkbenchSidebar(props: GitWorkbenchSidebarProps) {
                                         >
                                           <div class="min-w-0">
                                             <div class="truncate text-[11.5px] font-medium text-current" title={changeSecondaryPath(item)}>{changeSecondaryPath(item)}</div>
-                                            <div class="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
+                                            <div class="mt-0.5 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
                                               <span class="capitalize">{item.changeType || 'modified'}</span>
                                               <span aria-hidden="true">·</span>
                                               <span>{changeMetricsText(item)}</span>
@@ -256,7 +256,7 @@ export function GitWorkbenchSidebar(props: GitWorkbenchSidebarProps) {
                           when={localBranchCount() > 0}
                           fallback={<GitSubtleNote>No local branches.</GitSubtleNote>}
                         >
-                          <div class="space-y-1.5">
+                          <div class="space-y-1">
                             <For each={props.branches?.local ?? []}>
                               {(branch) => {
                                 const tone = () => gitBranchTone(branch);
@@ -264,7 +264,7 @@ export function GitWorkbenchSidebar(props: GitWorkbenchSidebarProps) {
                                 return (
                                   <button
                                     type="button"
-                                    class={cn('w-full rounded-lg px-2.5 py-1.5 text-left', gitToneSelectableCardClass(tone(), active()))}
+                                    class={cn('w-full rounded-md px-2.5 py-1.5 text-left', gitToneSelectableCardClass(tone(), active()))}
                                     onClick={() => {
                                       props.onSelectBranch?.(branch);
                                       closeAfterPick();
@@ -277,7 +277,7 @@ export function GitWorkbenchSidebar(props: GitWorkbenchSidebarProps) {
                                           <span class="text-[10px] text-muted-foreground">Current</span>
                                         </Show>
                                       </div>
-                                      <div class="mt-1 truncate text-[10px] text-muted-foreground">{branchStatusSummary(branch)}</div>
+                                      <div class="mt-0.5 truncate text-[10px] text-muted-foreground">{branchStatusSummary(branch)}</div>
                                     </div>
                                   </button>
                                 );
@@ -292,21 +292,21 @@ export function GitWorkbenchSidebar(props: GitWorkbenchSidebarProps) {
                           when={remoteBranchCount() > 0}
                           fallback={<GitSubtleNote>No remote branches.</GitSubtleNote>}
                         >
-                          <div class="space-y-1.5">
+                          <div class="space-y-1">
                             <For each={props.branches?.remote ?? []}>
                               {(branch) => {
                                 const active = () => props.selectedBranchKey === branchIdentity(branch);
                                 return (
                                   <button
                                     type="button"
-                                    class={cn('w-full rounded-lg px-2.5 py-1.5 text-left', gitToneSelectableCardClass('violet', active()))}
+                                    class={cn('w-full rounded-md px-2.5 py-1.5 text-left', gitToneSelectableCardClass('violet', active()))}
                                     onClick={() => {
                                       props.onSelectBranch?.(branch);
                                       closeAfterPick();
                                     }}
                                   >
                                     <div class="truncate text-[11.5px] font-medium text-current">{branchDisplayName(branch)}</div>
-                                    <div class="mt-1 truncate text-[10px] text-muted-foreground">{branch.subject || branchStatusSummary(branch)}</div>
+                                    <div class="mt-0.5 truncate text-[10px] text-muted-foreground">{branch.subject || branchStatusSummary(branch)}</div>
                                   </button>
                                 );
                               }}
@@ -330,14 +330,14 @@ export function GitWorkbenchSidebar(props: GitWorkbenchSidebarProps) {
                         when={commitCount() > 0}
                         fallback={<GitSubtleNote>This repository has no commits yet.</GitSubtleNote>}
                       >
-                        <div class="space-y-1.5">
+                        <div class="space-y-1">
                           <For each={props.commits ?? []}>
                             {(commit) => {
                               const active = () => props.selectedCommitHash === commit.hash;
                               return (
                                 <button
                                   type="button"
-                                  class={cn('w-full rounded-lg px-2.5 py-1.5 text-left', gitToneSelectableCardClass('brand', active()))}
+                                  class={cn('w-full rounded-md px-2.5 py-1.5 text-left', gitToneSelectableCardClass('brand', active()))}
                                   onClick={() => {
                                     props.onSelectCommit?.(commit.hash);
                                     closeAfterPick();
@@ -346,7 +346,7 @@ export function GitWorkbenchSidebar(props: GitWorkbenchSidebarProps) {
                                   <div class="flex items-start justify-between gap-2">
                                     <div class="min-w-0 flex-1">
                                       <div class="truncate text-[11.5px] font-medium text-current">{commit.subject || '(no subject)'}</div>
-                                      <div class="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
+                                      <div class="mt-0.5 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
                                         <span class="font-mono text-foreground/80 bg-muted/30 rounded px-1 py-0.5">{commit.shortHash}</span>
                                         <span aria-hidden="true">·</span>
                                         <span>{commit.authorName || '-'}</span>

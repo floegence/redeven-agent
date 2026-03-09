@@ -5,7 +5,7 @@ import { FolderIcon, FolderOpenIcon, useFileBrowser, type FileItem } from '@floe
 
 const MAX_VISIBLE_DEPTH = 5;
 const TREE_ROW_BASE_PADDING = 8;
-const TREE_ROW_DEPTH_STEP = 14;
+const TREE_ROW_DEPTH_STEP = 12;
 const FILE_TREE_PANEL_CLASS = 'rounded-lg border border-border/45 bg-muted/20 shadow-[0_1px_0_rgba(255,255,255,0.03)_inset]';
 const FILE_TREE_BADGE_CLASS = 'rounded-full border border-border/45 bg-background/85 px-2 py-0.5 text-[10px] font-medium text-muted-foreground';
 const FILE_TREE_ACCENT_BADGE_CLASS = 'rounded-full border border-primary/20 bg-primary/[0.05] px-2 py-0.5 text-[10px] font-medium text-primary/80';
@@ -74,10 +74,10 @@ export function FileBrowserCurrentFolderCard(props: FileBrowserCurrentFolderCard
       <div class="flex items-start justify-between gap-2">
         <div class="min-w-0 flex-1">
           <div class="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground/60">Current Folder</div>
-          <div class="mt-1 truncate text-[12px] font-medium text-foreground" title={browser.currentPath() === '/' ? 'Repository root' : browser.currentPath()}>
+          <div class="mt-0.5 truncate text-xs font-medium text-foreground" title={browser.currentPath() === '/' ? 'Repository root' : browser.currentPath()}>
             {currentLabel()}
           </div>
-          <div class="mt-1 max-h-8 overflow-hidden break-all text-[10px] leading-4 text-muted-foreground">
+          <div class="mt-0.5 max-h-8 overflow-hidden break-all text-[10px] leading-4 text-muted-foreground">
             {browser.currentPath() === '/' ? 'Repository root' : browser.currentPath()}
           </div>
         </div>
@@ -178,7 +178,7 @@ function FileBrowserSidebarTreeRow(props: FileBrowserSidebarTreeRowProps) {
       <div class="py-0.5" style={{ 'padding-left': rowPaddingLeft() }}>
         <div
           class={cn(
-            'flex items-center gap-1 rounded-lg border border-transparent bg-transparent transition-colors duration-150',
+            'flex items-center gap-0.5 rounded-md border border-transparent bg-transparent transition-colors duration-150',
             isCurrent() && 'border-border/55 bg-muted/45 text-foreground',
             !isCurrent() && 'hover:bg-muted/35',
             isDropTarget() && canAcceptDrop() && 'border-primary/25 bg-primary/[0.06]',
@@ -189,16 +189,16 @@ function FileBrowserSidebarTreeRow(props: FileBrowserSidebarTreeRowProps) {
         >
           <Show
             when={hasChildren()}
-            fallback={<span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground/45"><ChevronRight class="h-3.5 w-3.5 opacity-0" /></span>}
+            fallback={<span class="flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground/45"><ChevronRight class="h-3 w-3 opacity-0" /></span>}
           >
             <button
               type="button"
-              class="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors duration-150 hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70 focus-visible:ring-offset-1"
+              class="flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground transition-colors duration-150 hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70 focus-visible:ring-offset-1"
               aria-label={isExpanded() ? 'Collapse folder' : 'Expand folder'}
               aria-expanded={isExpanded()}
               onClick={handleToggleExpand}
             >
-              <ChevronRight class={cn('h-3.5 w-3.5 transition-transform duration-150', isExpanded() && 'rotate-90')} />
+              <ChevronRight class={cn('h-3 w-3 transition-transform duration-150', isExpanded() && 'rotate-90')} />
             </button>
           </Show>
 
@@ -208,13 +208,13 @@ function FileBrowserSidebarTreeRow(props: FileBrowserSidebarTreeRowProps) {
             }}
             type="button"
             data-tree-row-path={props.item.path}
-            class="flex min-h-[36px] min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md px-1.5 py-1.5 text-left text-[12px] text-foreground transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70 focus-visible:ring-offset-1"
+            class="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded px-1.5 py-1 text-left text-xs text-foreground transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70 focus-visible:ring-offset-1"
             aria-current={isCurrent() ? 'page' : undefined}
             title={props.item.path}
             onClick={handleNavigate}
             onContextMenu={handleContextMenu}
           >
-            <span class={cn('flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-border/45 bg-background/90 text-muted-foreground', isCurrent() && 'border-primary/20 bg-primary/[0.04] text-primary')}>
+            <span class={cn('flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground', isCurrent() && 'text-primary')}>
               <Show when={hasChildren() && isExpanded()} fallback={<FolderIcon class="h-3.5 w-3.5" />}>
                 <FolderOpenIcon class="h-3.5 w-3.5" />
               </Show>

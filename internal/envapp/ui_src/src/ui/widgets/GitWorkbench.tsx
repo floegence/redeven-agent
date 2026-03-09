@@ -82,17 +82,21 @@ export function GitWorkbench(props: GitWorkbenchProps) {
 
   return (
     <div class={cn('relative flex h-full min-h-0 flex-col bg-background', props.class)}>
-      <div class="shrink-0 bg-background/95 px-3 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/90">
-        <section class="rounded-lg border border-border/50 bg-muted/[0.18] p-2 shadow-sm sm:p-2.5">
+      <div class="shrink-0 border-b border-border/40 bg-background/95 px-3 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/90">
+        <section class="space-y-1.5">
           <div class="flex flex-wrap items-start justify-between gap-2">
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-1.5">
                 <span class={cn('h-1.5 w-1.5 shrink-0 rounded-full', gitToneDotClass(subviewTone()))} aria-hidden="true" />
-                <div class="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/65">Repository Context</div>
+                <div class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">Repository Context</div>
               </div>
-              <div class="mt-1 max-w-full truncate text-sm font-medium text-foreground">{repoLabel()}</div>
-              <div class="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+              <div class="mt-0.5 max-w-full truncate text-xs font-medium text-foreground">{repoLabel()}</div>
+              <div class="mt-0.5 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
                 <span>{changeCount() > 0 ? `${changeCount()} open` : 'Clean'}</span>
+                <span aria-hidden="true">·</span>
+                <span>{subviewLabel(props.subview)}</span>
+                <span aria-hidden="true">·</span>
+                <span>{headRef() || 'Detached HEAD'}</span>
                 <Show when={loadingBusy()}>
                   <>
                     <span aria-hidden="true">·</span>
@@ -100,20 +104,12 @@ export function GitWorkbench(props: GitWorkbenchProps) {
                   </>
                 </Show>
               </div>
-              <div class="mt-1 text-[11px] leading-5 text-muted-foreground">Compact repo signals and actions for the current view.</div>
-              <div class="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
-                <span>{subviewLabel(props.subview)}</span>
-                <span aria-hidden="true">·</span>
-                <span>{headRef() || 'Detached HEAD'}</span>
-                <span aria-hidden="true">·</span>
-                <span class="min-w-0 max-w-full truncate" title={repoPath()}>{repoPath()}</span>
-              </div>
             </div>
 
-            <div class="flex shrink-0 flex-wrap items-center gap-2">
+            <div class="flex shrink-0 items-center gap-1.5">
               <Show when={props.showMobileSidebarButton && props.onToggleSidebar}>
                 <Button
-                  size="sm"
+                  size="xs"
                   variant="ghost"
                   icon={History}
                   class={cn('shrink-0', gitToneActionButtonClass())}
@@ -124,7 +120,7 @@ export function GitWorkbench(props: GitWorkbenchProps) {
                 </Button>
               </Show>
               <Show when={props.onRefresh}>
-                <Button size="sm" variant="ghost" class={cn('shrink-0', gitToneActionButtonClass())} icon={Refresh} onClick={props.onRefresh}>
+                <Button size="xs" variant="ghost" class={cn('shrink-0', gitToneActionButtonClass())} icon={Refresh} onClick={props.onRefresh}>
                   Refresh
                 </Button>
               </Show>
@@ -132,7 +128,6 @@ export function GitWorkbench(props: GitWorkbenchProps) {
           </div>
 
           <GitStatStrip
-            class="mt-2"
             columnsClass="grid-cols-2 sm:grid-cols-4"
             items={[
               { label: 'Workspace Summary', value: changeCount() > 0 ? `${changeCount()} open` : 'Clean' },

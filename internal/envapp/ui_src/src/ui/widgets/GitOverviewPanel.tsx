@@ -80,8 +80,8 @@ export function GitOverviewPanel(props: GitOverviewPanelProps) {
                     aside={`↑${summary.aheadCount ?? 0} ↓${summary.behindCount ?? 0}`}
                     tone={props.selectedBranch ? 'violet' : 'neutral'}
                   >
-                    <div class="text-[12px] font-medium text-foreground">{props.selectedBranch ? branchDisplayName(props.selectedBranch) : 'Choose a branch'}</div>
-                    <div class="mt-1 text-[11px] leading-5 text-muted-foreground">
+                    <div class="text-xs font-medium text-foreground">{props.selectedBranch ? branchDisplayName(props.selectedBranch) : 'Choose a branch'}</div>
+                    <div class="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">
                       {props.selectedBranch ? branchStatusSummary(props.selectedBranch) : 'Branch compare details appear here after you pick a branch from the sidebar.'}
                     </div>
                     <Show when={props.selectedBranch?.subject}>
@@ -103,10 +103,10 @@ export function GitOverviewPanel(props: GitOverviewPanelProps) {
                     aside={`${repoSignals().length} signals`}
                     tone="info"
                   >
-                    <div class="space-y-1 rounded-lg bg-muted/[0.22] p-1">
+                    <div class="space-y-0.5 rounded-md bg-muted/[0.22] p-0.5">
                       <For each={repoSignals()}>
                         {(signal) => (
-                          <div class="flex items-start justify-between gap-3 rounded-md bg-background/70 px-2.5 py-2 text-[11px] transition-shadow duration-150 hover:shadow-sm" title={signal.value}>
+                          <div class="flex items-start justify-between gap-3 rounded bg-background/70 px-2 py-1.5 text-[11px] transition-shadow duration-150 hover:shadow-sm" title={signal.value}>
                             <div class="shrink-0 text-muted-foreground/80">{signal.label}</div>
                             <div class="min-w-0 flex-1 truncate text-right font-medium text-foreground">{signal.value}</div>
                           </div>

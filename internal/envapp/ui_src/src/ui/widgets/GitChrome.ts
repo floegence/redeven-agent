@@ -103,7 +103,7 @@ export function gitToneActionButtonClass(): string {
 
 export function gitToneSelectableCardClass(_tone: GitChromeTone | undefined, active: boolean): string {
   const interactiveBase =
-    'cursor-pointer min-h-[38px] select-none transition-[background-color,box-shadow,color] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70 focus-visible:ring-offset-1';
+    'cursor-pointer select-none transition-[background-color,box-shadow,color] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70 focus-visible:ring-offset-1';
 
   if (active) {
     return `${interactiveBase} border-l-[2px] border-l-primary bg-background/92 text-foreground shadow-[0_1px_3px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.06)]`;
