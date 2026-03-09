@@ -16,7 +16,7 @@ import { GitOverviewPanel } from './GitOverviewPanel';
 import { GitChangesPanel } from './GitChangesPanel';
 import { GitBranchesPanel } from './GitBranchesPanel';
 import { GitHistoryBrowser } from './GitHistoryBrowser';
-import { gitSubviewTone, gitToneActionButtonClass, gitToneSurfaceClass } from './GitChrome';
+import { gitSubviewTone, gitToneActionButtonClass, gitToneDotClass } from './GitChrome';
 import { GitStatStrip } from './GitWorkbenchPrimitives';
 
 export interface GitWorkbenchProps {
@@ -83,10 +83,13 @@ export function GitWorkbench(props: GitWorkbenchProps) {
   return (
     <div class={cn('relative flex h-full min-h-0 flex-col bg-background', props.class)}>
       <div class="shrink-0 bg-background/95 px-3 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/90">
-        <section class={cn('rounded-lg p-2 sm:p-2.5', gitToneSurfaceClass(subviewTone()))}>
+        <section class="rounded-lg border border-border/60 bg-card p-2 shadow-sm sm:p-2.5">
           <div class="flex flex-wrap items-start justify-between gap-2">
             <div class="min-w-0 flex-1">
-              <div class="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/65">Repository Context</div>
+              <div class="flex items-center gap-1.5">
+                <span class={cn('h-1.5 w-1.5 shrink-0 rounded-full', gitToneDotClass(subviewTone()))} aria-hidden="true" />
+                <div class="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/65">Repository Context</div>
+              </div>
               <div class="mt-1 max-w-full truncate text-sm font-medium text-foreground">{repoLabel()}</div>
               <div class="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
                 <span>{changeCount() > 0 ? `${changeCount()} open` : 'Clean'}</span>
