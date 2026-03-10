@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
+
 import {
   allGitBranches,
+  applyWorkspaceSectionMutation,
   branchIdentity,
   branchStatusSummary,
   buildGitWorkbenchSubviewItems,
@@ -9,6 +11,8 @@ import {
   findWorkspaceChangeByKey,
   repoDisplayName,
   summarizeWorkspaceCount,
+  unstageWorkspaceDestination,
+  workspaceBulkActionLabel,
   workspaceEntryKey,
   workspaceSectionCount,
 } from './gitWorkbench';
@@ -74,5 +78,57 @@ describe('gitWorkbench helpers', () => {
     };
     expect(branchIdentity(branches.local[0])).toBe('refs/heads/main');
     expect(allGitBranches(branches)).toHaveLength(2);
+  });
+});
+
+describe('gitWorkbench workspace mutations', () => {
+  it('moves tracked workspace items into staged and recounts the summary', () => {
+    const next = applyWorkspaceSectionMutation({
+      repoRootPath: '/workspace/repo',
+      summary: { stagedCount: 0, unstagedCount: 1, untrackedCount: 1, conflictedCount: 0 },
+      staged: [],
+      unstaged: [{ section: 'unstaged', changeType: 'modified', path: 'src/app.ts', displayPath: 'src/app.ts', additions: 2, deletions: 1 }],
+      untracked: [{ section: 'untracked', changeType: 'added', path: 'notes.txt', displayPath: 'notes.txt', additions: 5, deletions: 0 }],
+      conflicted: [],
+    }, {
+      sourceSection: 'unstaged',
+      paths: ['src/app.ts'],
+      destinationSection: 'staged',
+    });
+
+    expect(next?.staged).toHaveLength(1);
+    expect(next?.staged[0]?.section).toBe('staged');
+    expect(next?.unstaged).toHaveLength(0);
+    expect(next?.summary).toEqual({
+      stagedCount: 1,
+      unstagedCount: 0,
+      untrackedCount: 1,
+      conflictedCount: 0,
+    });
+  });
+
+  it('returns newly added staged files back to untracked when unstaging', () => {
+    const next = applyWorkspaceSectionMutation({
+      repoRootPath: '/workspace/repo',
+      summary: { stagedCount: 1, unstagedCount: 0, untrackedCount: 0, conflictedCount: 0 },
+      staged: [{ section: 'staged', changeType: 'added', path: 'notes.txt', displayPath: 'notes.txt', additions: 5, deletions: 0 }],
+      unstaged: [],
+      untracked: [],
+      conflicted: [],
+    }, {
+      sourceSection: 'staged',
+      paths: ['notes.txt'],
+      destinationSection: (item) => unstageWorkspaceDestination(item),
+    });
+
+    expect(next?.staged).toHaveLength(0);
+    expect(next?.untracked).toHaveLength(1);
+    expect(next?.untracked[0]?.section).toBe('untracked');
+  });
+
+  it('maps bulk button labels to the visible section', () => {
+    expect(workspaceBulkActionLabel('unstaged')).toBe('Stage All');
+    expect(workspaceBulkActionLabel('untracked')).toBe('Track All');
+    expect(workspaceBulkActionLabel('staged')).toBe('Unstage All');
   });
 });

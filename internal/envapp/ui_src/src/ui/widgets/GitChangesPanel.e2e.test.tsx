@@ -106,8 +106,48 @@ describe('GitChangesPanel interactions', () => {
 
       expect(document.body.textContent).toContain('Commit staged changes');
       expect(document.body.textContent).toContain('src/app.ts');
+      expect(document.body.textContent).toContain('Files Ready');
+      expect(document.body.textContent).toContain('1 file');
+      expect(document.body.textContent).toContain('+3');
+      expect(document.body.textContent).toContain('-1');
       expect(document.body.textContent).toContain('Message');
       expect(document.querySelector('[role="dialog"]')).toBeTruthy();
+    } finally {
+      dispose();
+    }
+  });
+
+  it('shows the section-specific bulk action button and emits the selected section', () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const onBulkAction = vi.fn();
+
+    const dispose = render(() => (
+      <LayoutProvider>
+        <NotificationProvider>
+          <div class="h-[620px]">
+            <GitChangesPanel
+              workspace={{
+                repoRootPath: '/workspace/repo',
+                summary: { stagedCount: 0, unstagedCount: 0, untrackedCount: 1, conflictedCount: 0 },
+                staged: [],
+                unstaged: [],
+                untracked: [{ section: 'untracked', changeType: 'added', path: 'notes.txt', displayPath: 'notes.txt', additions: 10, deletions: 0 }],
+                conflicted: [],
+              }}
+              selectedSection="untracked"
+              onBulkAction={onBulkAction}
+            />
+          </div>
+        </NotificationProvider>
+      </LayoutProvider>
+    ), host);
+
+    try {
+      const bulkButton = Array.from(host.querySelectorAll('button')).find((node) => node.textContent?.includes('Track All'));
+      expect(bulkButton).toBeTruthy();
+      bulkButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      expect(onBulkAction).toHaveBeenCalledWith('untracked');
     } finally {
       dispose();
     }

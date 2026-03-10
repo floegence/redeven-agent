@@ -4,6 +4,7 @@ import { History, Refresh } from '@floegence/floe-webapp-core/icons';
 import { Button } from '@floegence/floe-webapp-core/ui';
 import type {
   GitBranchSummary,
+  GitCommitSummary,
   GitGetBranchCompareResponse,
   GitListBranchesResponse,
   GitListWorkspaceChangesResponse,
@@ -12,7 +13,7 @@ import type {
   GitWorkspaceChange,
   GitWorkspaceSection,
 } from '../protocol/redeven_v1';
-import { repoDisplayName, summarizePendingWorkspaceCount, summarizeWorkspaceCount, syncStatusLabel, type GitWorkbenchSubview } from '../utils/gitWorkbench';
+import { repoDisplayName, summarizePendingWorkspaceCount, summarizeWorkspaceCount, syncStatusLabel, type GitBranchSubview, type GitWorkbenchSubview } from '../utils/gitWorkbench';
 import { GitChangesPanel } from './GitChangesPanel';
 import { GitBranchesPanel } from './GitBranchesPanel';
 import { GitHistoryBrowser } from './GitHistoryBrowser';
@@ -40,16 +41,26 @@ export interface GitWorkbenchProps {
   branchesLoading?: boolean;
   branchesError?: string;
   selectedBranch?: GitBranchSummary | null;
+  selectedBranchSubview?: GitBranchSubview;
+  onSelectBranchSubview?: (view: GitBranchSubview) => void;
   compare?: GitGetBranchCompareResponse | null;
   compareLoading?: boolean;
   compareError?: string;
+  commits?: GitCommitSummary[];
+  listLoading?: boolean;
+  listLoadingMore?: boolean;
+  listError?: string;
+  hasMore?: boolean;
   selectedCommitHash?: string;
+  onSelectCommit?: (hash: string) => void;
+  onLoadMore?: () => void;
   commitMessage?: string;
   commitBusy?: boolean;
   onCommitMessageChange?: (value: string) => void;
   onCommit?: (message: string) => void;
   onStageSelected?: (item: GitWorkspaceChange) => void;
   onUnstageSelected?: (item: GitWorkspaceChange) => void;
+  onBulkAction?: (section: GitWorkspaceSection) => void;
   showMobileSidebarButton?: boolean;
   onToggleSidebar?: () => void;
   onRefresh?: () => void;
@@ -150,6 +161,7 @@ export function GitWorkbench(props: GitWorkbenchProps) {
             commitBusy={props.commitBusy}
             onStageSelected={props.onStageSelected}
             onUnstageSelected={props.onUnstageSelected}
+            onBulkAction={props.onBulkAction}
           />
         </Show>
 
@@ -157,8 +169,34 @@ export function GitWorkbench(props: GitWorkbenchProps) {
           <GitBranchesPanel
             repoRootPath={props.repoSummary?.repoRootPath}
             selectedBranch={props.selectedBranch}
+            selectedBranchSubview={props.selectedBranchSubview}
+            onSelectBranchSubview={props.onSelectBranchSubview}
             branchesLoading={props.branchesLoading}
             branchesError={props.branchesError}
+            workspace={props.workspace}
+            workspaceLoading={props.workspaceLoading}
+            workspaceError={props.workspaceError}
+            selectedWorkspaceSection={props.selectedWorkspaceSection}
+            onSelectWorkspaceSection={props.onSelectWorkspaceSection}
+            selectedWorkspaceItem={props.selectedWorkspaceItem}
+            onSelectWorkspaceItem={props.onSelectWorkspaceItem}
+            busyWorkspaceKey={props.busyWorkspaceKey}
+            busyWorkspaceAction={props.busyWorkspaceAction}
+            commits={props.commits}
+            listLoading={props.listLoading}
+            listLoadingMore={props.listLoadingMore}
+            listError={props.listError}
+            hasMore={props.hasMore}
+            selectedCommitHash={props.selectedCommitHash}
+            onSelectCommit={props.onSelectCommit}
+            onLoadMore={props.onLoadMore}
+            commitMessage={props.commitMessage}
+            onCommitMessageChange={props.onCommitMessageChange}
+            onCommit={props.onCommit}
+            commitBusy={props.commitBusy}
+            onStageSelected={props.onStageSelected}
+            onUnstageSelected={props.onUnstageSelected}
+            onBulkAction={props.onBulkAction}
             compare={props.compare}
             compareLoading={props.compareLoading}
             compareError={props.compareError}

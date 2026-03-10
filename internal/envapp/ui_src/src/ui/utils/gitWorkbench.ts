@@ -11,6 +11,7 @@ import type {
 } from '../protocol/redeven_v1';
 
 export type GitWorkbenchSubview = 'overview' | 'changes' | 'branches' | 'history';
+export type GitBranchSubview = GitWorkspaceSection | 'history';
 
 export type GitWorkbenchSubviewItem = {
   id: GitWorkbenchSubview;
@@ -20,6 +21,7 @@ export type GitWorkbenchSubviewItem = {
 
 export const WORKSPACE_SECTIONS: GitWorkspaceSection[] = ['staged', 'unstaged', 'untracked', 'conflicted'];
 export const WORKSPACE_REVIEW_SECTIONS: GitWorkspaceSection[] = ['unstaged', 'untracked', 'conflicted', 'staged'];
+export const BRANCH_REVIEW_SECTIONS: GitBranchSubview[] = ['unstaged', 'untracked', 'conflicted', 'staged', 'history'];
 
 export function summarizeWorkspaceCount(summary: GitWorkspaceSummary | null | undefined): number {
   return Number(summary?.stagedCount ?? 0)
@@ -67,6 +69,28 @@ export function workspaceSectionLabel(section: GitWorkspaceSection): string {
     default:
       return section;
   }
+}
+
+export function workspaceBulkActionLabel(section: GitWorkspaceSection): string {
+  switch (section) {
+    case 'staged':
+      return 'Unstage All';
+    case 'untracked':
+      return 'Track All';
+    case 'conflicted':
+    case 'unstaged':
+    default:
+      return 'Stage All';
+  }
+}
+
+export function workspaceSectionActionKey(section: GitWorkspaceSection): string {
+  return `section:${section}`;
+}
+
+export function branchSubviewLabel(section: GitBranchSubview): string {
+  if (section === 'history') return 'History';
+  return workspaceSectionLabel(section);
 }
 
 export function workspaceSectionCount(summary: GitWorkspaceSummary | null | undefined, section: GitWorkspaceSection): number {
@@ -235,4 +259,68 @@ export function workspaceMutationPaths(change: GitWorkspaceChange | null | undef
     .map((item) => String(item ?? '').trim())
     .filter(Boolean);
   return Array.from(new Set(values));
+}
+
+export function recountWorkspaceSummary(workspace: GitListWorkspaceChangesResponse | null | undefined): GitWorkspaceSummary {
+  return {
+    stagedCount: workspace?.staged.length ?? 0,
+    unstagedCount: workspace?.unstaged.length ?? 0,
+    untrackedCount: workspace?.untracked.length ?? 0,
+    conflictedCount: workspace?.conflicted.length ?? 0,
+  };
+}
+
+export function unstageWorkspaceDestination(change: GitWorkspaceChange | null | undefined): GitWorkspaceSection {
+  if (change?.changeType === 'added' && !String(change.oldPath ?? '').trim()) {
+    return 'untracked';
+  }
+  return 'unstaged';
+}
+
+export function applyWorkspaceSectionMutation(
+  workspace: GitListWorkspaceChangesResponse | null | undefined,
+  params: {
+    sourceSection: GitWorkspaceSection;
+    paths: string[];
+    destinationSection: GitWorkspaceSection | ((change: GitWorkspaceChange) => GitWorkspaceSection);
+  },
+): GitListWorkspaceChangesResponse | null {
+  if (!workspace) return null;
+  const wanted = new Set(params.paths.map((item) => String(item ?? '').trim()).filter(Boolean));
+  if (wanted.size === 0) return workspace;
+
+  const next = {
+    staged: [...workspace.staged],
+    unstaged: [...workspace.unstaged],
+    untracked: [...workspace.untracked],
+    conflicted: [...workspace.conflicted],
+  };
+  const sourceItems = next[params.sourceSection];
+  const moved: GitWorkspaceChange[] = [];
+  next[params.sourceSection] = sourceItems.filter((item) => {
+    const match = workspaceMutationPaths(item).some((path) => wanted.has(path));
+    if (!match) return true;
+    const destination = typeof params.destinationSection === 'function'
+      ? params.destinationSection(item)
+      : params.destinationSection;
+    moved.push({ ...item, section: destination });
+    return false;
+  });
+
+  if (moved.length === 0) return workspace;
+
+  for (const item of moved) {
+    next[item.section as GitWorkspaceSection].push(item);
+  }
+
+  const summary = recountWorkspaceSummary({
+    ...workspace,
+    ...next,
+  });
+
+  return {
+    ...workspace,
+    ...next,
+    summary,
+  };
 }

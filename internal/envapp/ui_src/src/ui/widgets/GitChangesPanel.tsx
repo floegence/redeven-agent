@@ -2,17 +2,18 @@ import { For, Show, createEffect, createSignal } from 'solid-js';
 import { Button } from '@floegence/floe-webapp-core/ui';
 import type { GitListWorkspaceChangesResponse, GitRepoSummaryResponse, GitWorkspaceChange, GitWorkspaceSection } from '../protocol/redeven_v1';
 import {
-  changeMetricsText,
   changeSecondaryPath,
   pickDefaultWorkspaceSection,
+  workspaceBulkActionLabel,
   workspaceEntryKey,
+  workspaceSectionActionKey,
   workspaceSectionItems,
   workspaceSectionLabel,
 } from '../utils/gitWorkbench';
 import { gitChangeTone, gitToneDotClass, workspaceSectionTone } from './GitChrome';
 import { GitCommitDialog } from './GitCommitDialog';
 import { GitDiffDialog } from './GitDiffDialog';
-import { GitMetaPill, GitSubtleNote } from './GitWorkbenchPrimitives';
+import { GitChangeMetrics, GitMetaPill, GitSubtleNote } from './GitWorkbenchPrimitives';
 
 export interface GitChangesPanelProps {
   repoSummary?: GitRepoSummaryResponse | null;
@@ -31,6 +32,7 @@ export interface GitChangesPanelProps {
   commitBusy?: boolean;
   onStageSelected?: (item: GitWorkspaceChange) => void;
   onUnstageSelected?: (item: GitWorkspaceChange) => void;
+  onBulkAction?: (section: GitWorkspaceSection) => void;
 }
 
 function itemPath(item: GitWorkspaceChange): string {
@@ -72,7 +74,7 @@ interface WorkspaceTableProps {
 
 function WorkspaceTable(props: WorkspaceTableProps) {
   return (
-    <div class="overflow-hidden rounded-md border border-border/65 bg-card">
+    <div class="flex h-full min-h-0 flex-col overflow-hidden rounded-md border border-border/65 bg-card">
       <Show
         when={props.items.length > 0}
         fallback={(
@@ -81,8 +83,8 @@ function WorkspaceTable(props: WorkspaceTableProps) {
           </div>
         )}
       >
-        <div class="max-h-[32rem] overflow-auto">
-          <table class="w-full min-w-[42rem] text-xs">
+        <div class="min-h-0 flex-1 overflow-auto">
+          <table class="w-full min-w-[42rem] text-xs md:min-w-0">
             <thead class="sticky top-0 z-10 bg-muted/30 backdrop-blur">
               <tr class="border-b border-border/60 text-left text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
                 <th class="px-3 py-2.5 font-medium">Path</th>
@@ -96,7 +98,10 @@ function WorkspaceTable(props: WorkspaceTableProps) {
                 {(item) => {
                   const active = () => props.selectedKey === workspaceEntryKey(item);
                   const action = () => (item.section === 'staged' ? 'unstage' : 'stage');
-                  const busy = () => props.busyWorkspaceKey === workspaceEntryKey(item) && props.busyWorkspaceAction === action();
+                  const busy = () => (
+                    (props.busyWorkspaceKey === workspaceEntryKey(item) || props.busyWorkspaceKey === workspaceSectionActionKey(props.section))
+                    && props.busyWorkspaceAction === action()
+                  );
                   return (
                     <tr
                       aria-selected={active()}
@@ -127,7 +132,7 @@ function WorkspaceTable(props: WorkspaceTableProps) {
                           <span class="capitalize">{item.changeType || 'modified'}</span>
                         </div>
                       </td>
-                      <td class="px-3 py-2.5 align-top text-muted-foreground">{changeMetricsText(item)}</td>
+                      <td class="px-3 py-2.5 align-top"><GitChangeMetrics additions={item.additions} deletions={item.deletions} /></td>
                       <td class={`sticky right-0 z-10 border-l border-border/45 px-3 py-2.5 text-right align-top shadow-[-1px_0_0_rgba(0,0,0,0.03)] ${active() ? 'bg-muted/45' : 'bg-card group-hover:bg-muted/25'}`}>
                         <Button
                           size="xs"
@@ -169,6 +174,9 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
   const diffItem = () => diffDialogItem() ?? props.selectedItem ?? null;
   const selectedKey = () => workspaceEntryKey(diffItem());
   const canCommit = () => stagedCount() > 0 && String(props.commitMessage ?? '').trim().length > 0 && !props.commitBusy;
+  const bulkActionLabel = () => workspaceBulkActionLabel(selectedSection());
+  const bulkAction = () => (selectedSection() === 'staged' ? 'unstage' : 'stage');
+  const bulkActionBusy = () => props.busyWorkspaceKey === workspaceSectionActionKey(selectedSection()) && props.busyWorkspaceAction === bulkAction();
 
   createEffect(() => {
     if (!commitDialogOpen()) return;
@@ -186,11 +194,11 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
 
   return (
     <div class="flex h-full min-h-0 flex-col overflow-hidden">
-      <div class="flex-1 min-h-0 overflow-auto px-3 py-3 sm:px-4 sm:py-4">
-        <Show when={!props.loading} fallback={<div class="text-xs text-muted-foreground">Loading workspace changes...</div>}>
-          <Show when={!props.error} fallback={<div class="text-xs text-error">{props.error}</div>}>
-            <div class="space-y-3">
-              <div class="flex flex-wrap items-start justify-between gap-3">
+      <div class="flex flex-1 min-h-0 flex-col px-3 py-3 sm:px-4 sm:py-4">
+        <Show when={!props.loading} fallback={<div class="flex flex-1 items-center text-xs text-muted-foreground">Loading workspace changes...</div>}>
+          <Show when={!props.error} fallback={<div class="flex flex-1 items-center text-xs text-error">{props.error}</div>}>
+            <div class="flex min-h-0 flex-1 flex-col gap-3">
+              <div class="flex shrink-0 flex-wrap items-start justify-between gap-3">
                 <div class="min-w-0 flex-1">
                   <div class="flex flex-wrap items-center gap-2">
                     <div class="text-sm font-medium text-foreground">{visibleSectionLabel()}</div>
@@ -205,7 +213,17 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
                       : 'Stage the files you want from this table, then commit them from the staged dialog.'}
                   </div>
                 </div>
-                <div class="flex shrink-0 items-center justify-end">
+                <div class="flex shrink-0 items-center justify-end gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    class="rounded-md"
+                    onClick={() => props.onBulkAction?.(selectedSection())}
+                    disabled={visibleItems().length === 0 || bulkActionBusy()}
+                    loading={bulkActionBusy()}
+                  >
+                    {bulkActionLabel()}
+                  </Button>
                   <Button
                     size="sm"
                     variant="default"
@@ -218,23 +236,25 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
                 </div>
               </div>
 
-              <WorkspaceTable
-                section={selectedSection()}
-                items={visibleItems()}
-                selectedKey={selectedKey()}
-                onSelectItem={props.onSelectItem}
-                onOpenDiff={(item) => {
-                  setDiffDialogItem(item);
-                  props.onSelectItem?.(item);
-                  setDiffDialogOpen(true);
-                }}
-                onAction={(item) => {
-                  if (item.section === 'staged') props.onUnstageSelected?.(item);
-                  else props.onStageSelected?.(item);
-                }}
-                busyWorkspaceKey={props.busyWorkspaceKey}
-                busyWorkspaceAction={props.busyWorkspaceAction}
-              />
+              <div class="min-h-0 flex-1">
+                <WorkspaceTable
+                  section={selectedSection()}
+                  items={visibleItems()}
+                  selectedKey={selectedKey()}
+                  onSelectItem={props.onSelectItem}
+                  onOpenDiff={(item) => {
+                    setDiffDialogItem(item);
+                    props.onSelectItem?.(item);
+                    setDiffDialogOpen(true);
+                  }}
+                  onAction={(item) => {
+                    if (item.section === 'staged') props.onUnstageSelected?.(item);
+                    else props.onStageSelected?.(item);
+                  }}
+                  busyWorkspaceKey={props.busyWorkspaceKey}
+                  busyWorkspaceAction={props.busyWorkspaceAction}
+                />
+              </div>
             </div>
           </Show>
         </Show>

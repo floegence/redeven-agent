@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal } from 'solid-js';
-import { cn, useNotification } from '@floegence/floe-webapp-core';
+import { cn, useLayout, useNotification } from '@floegence/floe-webapp-core';
 import { Button } from '@floegence/floe-webapp-core/ui';
 import type { GitCommitFileSummary, GitWorkspaceChange } from '../protocol/redeven_v1';
 import {
@@ -26,6 +26,7 @@ export interface GitPatchViewerProps<T extends GitPatchRenderable> {
 }
 
 export function GitPatchViewer<T extends GitPatchRenderable>(props: GitPatchViewerProps<T>) {
+  const layout = useLayout();
   const notification = useNotification();
   const [patchExpanded, setPatchExpanded] = createSignal(false);
   const [copied, setCopied] = createSignal(false);
@@ -64,13 +65,13 @@ export function GitPatchViewer<T extends GitPatchRenderable>(props: GitPatchView
   };
 
   return (
-    <div class={props.class}>
+    <div class={cn('h-full', props.class)}>
       <Show when={props.item} fallback={<div class="rounded-md border border-border/45 bg-muted/[0.14] px-3 py-2 text-xs leading-5 text-muted-foreground">{props.emptyMessage}</div>}>
         {(fileAccessor) => {
           const file = fileAccessor();
           return (
-            <div class="space-y-3 rounded-md border border-border/55 bg-card p-3">
-              <div class="flex items-start justify-between gap-3">
+            <div class="flex h-full min-h-0 flex-col gap-3 rounded-md border border-border/55 bg-card p-3">
+              <div class="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                 <div class="min-w-0 flex-1 space-y-1">
                   <div class="flex min-w-0 flex-wrap items-center gap-1.5">
                     <span class={cn('inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium', gitChangeClass(file.changeType))}>
@@ -86,7 +87,7 @@ export function GitPatchViewer<T extends GitPatchRenderable>(props: GitPatchView
                   </div>
                 </div>
 
-                <Button size="xs" variant="ghost" class={gitToneActionButtonClass()} onClick={() => void handleCopyPatch()} disabled={!canCopyPatch()}>
+                <Button size="xs" variant="ghost" class={cn('self-start', gitToneActionButtonClass())} onClick={() => void handleCopyPatch()} disabled={!canCopyPatch()}>
                   {copied() ? 'Copied' : 'Copy Patch'}
                 </Button>
               </div>
@@ -99,19 +100,26 @@ export function GitPatchViewer<T extends GitPatchRenderable>(props: GitPatchView
                 </div>
               </Show>
 
+              <Show when={layout.isMobile()}>
+                <div class="text-[11px] leading-5 text-muted-foreground">Swipe horizontally to inspect long diff lines.</div>
+              </Show>
+
               <Show
                 when={!file.isBinary && !unavailableMessage()}
                 fallback={<div class="rounded-md border border-border/45 bg-muted/[0.14] px-3 py-2 text-[11px] leading-5 text-muted-foreground">{unavailableMessage() || 'Binary file changed. Inline text diff is not available.'}</div>}
               >
                 <Show when={visiblePatchLines().length > 0} fallback={<div class="rounded-md border border-border/45 bg-muted/[0.14] px-3 py-2 text-[11px] leading-5 text-muted-foreground">No inline diff lines available for this file.</div>}>
-                  <div class="max-h-[60vh] overflow-auto rounded-md border border-border/55 bg-background p-1 sm:max-h-[28rem]">
-                    <div class="bg-muted/[0.20] p-px">
+                  <div class={cn(
+                    'min-h-0 overflow-auto rounded-md border border-border/55 bg-background p-1 [-webkit-overflow-scrolling:touch] [touch-action:pan-x_pan-y_pinch-zoom]',
+                    layout.isMobile() ? 'flex-1 max-h-none' : 'max-h-[28rem]'
+                  )}>
+                    <div class="inline-block min-w-full bg-muted/[0.20] p-px align-top">
                       <For each={visiblePatchLines()}>
                         {(line) => (
-                          <div class={cn('grid grid-cols-[2.5rem_2.5rem_minmax(0,1fr)] items-stretch overflow-hidden', gitPatchRenderedLineClass(line))}>
+                          <div class={cn('grid w-max min-w-full grid-cols-[2.25rem_2.25rem_minmax(max-content,1fr)] items-stretch sm:grid-cols-[2.5rem_2.5rem_minmax(max-content,1fr)]', gitPatchRenderedLineClass(line))}>
                             <span class="px-1.5 text-right font-mono text-[10.5px] leading-[1.6] text-muted-foreground/60">{formatGitPatchLineNumber(line.oldLine)}</span>
                             <span class="border-r border-border/20 px-1.5 text-right font-mono text-[10.5px] leading-[1.6] text-muted-foreground/60">{formatGitPatchLineNumber(line.newLine)}</span>
-                            <span class={cn('block min-w-0 px-2.5 font-mono text-[11px] leading-[1.6] whitespace-pre', gitPatchPreviewLineClass(line.text))}>{line.text}</span>
+                            <span class={cn('block px-2 pr-3 text-[10.5px] leading-[1.6] whitespace-pre font-mono sm:px-2.5 sm:pr-4 sm:text-[11px]', gitPatchPreviewLineClass(line.text))}>{line.text}</span>
                           </div>
                         )}
                       </For>

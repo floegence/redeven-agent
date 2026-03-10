@@ -100,7 +100,7 @@ describe('GitWorkbench interactions', () => {
       expect(host.textContent).toContain('/workspace/repo');
       expect(host.textContent).toContain('3 changes');
       expect(host.textContent).toContain('2 pending');
-      expect(host.textContent).toContain('Branch Snapshot');
+      expect(host.textContent).toContain('Unstaged');
     } finally {
       dispose();
     }

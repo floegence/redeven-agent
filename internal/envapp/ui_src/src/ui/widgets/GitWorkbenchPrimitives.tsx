@@ -89,3 +89,22 @@ export function GitMetaPill(props: GitMetaPillProps) {
     </span>
   );
 }
+
+export interface GitChangeMetricsProps {
+  additions?: number | null;
+  deletions?: number | null;
+  class?: string;
+}
+
+export function GitChangeMetrics(props: GitChangeMetricsProps) {
+  const additions = Number(props.additions ?? 0);
+  const deletions = Number(props.deletions ?? 0);
+
+  return (
+    <span class={cn('inline-flex items-center gap-1.5 font-medium tabular-nums', props.class)}>
+      <span class="text-success">+{additions}</span>
+      <span class="text-muted-foreground/65">/</span>
+      <span class="text-error">-{deletions}</span>
+    </span>
+  );
+}

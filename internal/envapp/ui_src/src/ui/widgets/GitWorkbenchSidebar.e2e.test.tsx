@@ -115,4 +115,71 @@ describe('GitWorkbenchSidebar interactions', () => {
       dispose();
     }
   });
+
+  it('expands selected branches with workspace section and history shortcuts', () => {
+    let selectedBranch = '';
+    let selectedBranchSubview = '';
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+
+    const dispose = render(() => (
+      <LayoutProvider>
+        <div class="relative h-[520px]">
+          <GitWorkbenchSidebar
+            subview="branches"
+            repoAvailable
+            repoSummary={{
+              repoRootPath: '/workspace/repo',
+              headRef: 'main',
+              headCommit: 'abc1234',
+              aheadCount: 1,
+              behindCount: 0,
+              workspaceSummary: { stagedCount: 1, unstagedCount: 2, untrackedCount: 1, conflictedCount: 0 },
+            }}
+            workspace={{
+              repoRootPath: '/workspace/repo',
+              summary: { stagedCount: 1, unstagedCount: 2, untrackedCount: 1, conflictedCount: 0 },
+              staged: [{ section: 'staged', changeType: 'modified', path: 'src/app.ts', displayPath: 'src/app.ts', additions: 3, deletions: 1 }],
+              unstaged: [{ section: 'unstaged', changeType: 'modified', path: 'src/next.ts', displayPath: 'src/next.ts', additions: 4, deletions: 2 }],
+              untracked: [{ section: 'untracked', changeType: 'added', path: 'notes.txt', displayPath: 'notes.txt', additions: 10, deletions: 0 }],
+              conflicted: [],
+            }}
+            branches={{
+              repoRootPath: '/workspace/repo',
+              currentRef: 'main',
+              local: [
+                { name: 'main', fullName: 'refs/heads/main', kind: 'local', current: true },
+                { name: 'feature/demo', fullName: 'refs/heads/feature/demo', kind: 'local', subject: 'Feature branch' },
+              ],
+              remote: [],
+            }}
+            selectedBranchKey="refs/heads/feature/demo"
+            selectedBranchSubview="unstaged"
+            onSelectBranch={(branch) => {
+              selectedBranch = branch.fullName || branch.name || '';
+            }}
+            onSelectBranchSubview={(view) => {
+              selectedBranchSubview = view;
+            }}
+            commits={[
+              { hash: '1111111111111111', shortHash: '11111111', parents: [], subject: 'Initial commit', authorName: 'Alice', authorTimeMs: Date.now() - 120000 },
+            ]}
+          />
+        </div>
+      </LayoutProvider>
+    ), host);
+
+    try {
+      expect(host.textContent).toContain('History');
+      expect(host.textContent).toContain('Unstaged');
+      const historyButton = Array.from(host.querySelectorAll('button')).find((node) => node.textContent?.includes('History'));
+      expect(historyButton).toBeTruthy();
+      historyButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+      expect(selectedBranch).toBe('');
+      expect(selectedBranchSubview).toBe('history');
+    } finally {
+      dispose();
+    }
+  });
 });

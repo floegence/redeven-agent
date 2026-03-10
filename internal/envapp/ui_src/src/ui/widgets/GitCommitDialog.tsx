@@ -1,7 +1,7 @@
-import { For } from 'solid-js';
+import { For, createMemo } from 'solid-js';
 import { Button, Dialog } from '@floegence/floe-webapp-core/ui';
 import type { GitWorkspaceChange } from '../protocol/redeven_v1';
-import { changeMetricsText } from '../utils/gitWorkbench';
+import { GitChangeMetrics, GitStatStrip } from './GitWorkbenchPrimitives';
 
 export interface GitCommitDialogProps {
   open: boolean;
@@ -19,6 +19,10 @@ function itemPath(item: GitWorkspaceChange): string {
 }
 
 export function GitCommitDialog(props: GitCommitDialogProps) {
+  const fileCount = createMemo(() => props.stagedItems.length);
+  const additions = createMemo(() => props.stagedItems.reduce((sum, item) => sum + Number(item.additions ?? 0), 0));
+  const deletions = createMemo(() => props.stagedItems.reduce((sum, item) => sum + Number(item.deletions ?? 0), 0));
+
   return (
     <Dialog
       open={props.open}
@@ -40,6 +44,15 @@ export function GitCommitDialog(props: GitCommitDialogProps) {
       <div class="space-y-3">
         <div class="text-xs text-muted-foreground">Review the staged files below, then write the commit message for this snapshot.</div>
 
+        <GitStatStrip
+          columnsClass="grid-cols-1 gap-1 sm:grid-cols-3"
+          items={[
+            { label: 'Files Ready', value: `${fileCount()} ${fileCount() === 1 ? 'file' : 'files'}` },
+            { label: 'Added Lines', value: <span class="text-success">+{additions()}</span> },
+            { label: 'Removed Lines', value: <span class="text-error">-{deletions()}</span> },
+          ]}
+        />
+
         <div class="overflow-hidden rounded-md border border-border/65 bg-card">
           <div class="max-h-[16rem] overflow-auto">
             <table class="w-full text-xs">
@@ -58,7 +71,7 @@ export function GitCommitDialog(props: GitCommitDialogProps) {
                         <div class="truncate text-xs font-medium text-foreground" title={itemPath(item)}>{itemPath(item)}</div>
                       </td>
                       <td class="px-3 py-2.5 capitalize text-muted-foreground">{item.changeType || 'modified'}</td>
-                      <td class="px-3 py-2.5 text-muted-foreground">{changeMetricsText(item)}</td>
+                      <td class="px-3 py-2.5"><GitChangeMetrics additions={item.additions} deletions={item.deletions} /></td>
                     </tr>
                   )}
                 </For>

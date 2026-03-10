@@ -27,70 +27,7 @@ afterEach(() => {
 });
 
 describe('GitBranchesPanel interactions', () => {
-  it('renders compare patches inline from the embedded payload', () => {
-    const host = document.createElement('div');
-    document.body.appendChild(host);
-
-    const dispose = render(() => (
-      <LayoutProvider>
-        <NotificationProvider>
-          <div class="h-[640px]">
-            <GitBranchesPanel
-              repoRootPath="/workspace/repo"
-              selectedBranch={{
-                name: 'feature/demo',
-                fullName: 'refs/heads/feature/demo',
-                kind: 'local',
-                headCommit: 'abc1234',
-                subject: 'Feature branch change',
-                authorTimeMs: 1706000000000,
-              }}
-              compare={{
-                repoRootPath: '/workspace/repo',
-                baseRef: 'main',
-                targetRef: 'feature/demo',
-                targetAheadCount: 1,
-                targetBehindCount: 0,
-                commits: [],
-                files: [
-                  {
-                    changeType: 'added',
-                    path: 'feature/branch-only.txt',
-                    displayPath: 'feature/branch-only.txt',
-                    additions: 1,
-                    deletions: 0,
-                    patchText: [
-                      'diff --git a/feature/branch-only.txt b/feature/branch-only.txt',
-                      'new file mode 100644',
-                      '--- /dev/null',
-                      '+++ b/feature/branch-only.txt',
-                      '@@ -0,0 +1 @@',
-                      '+feature branch',
-                    ].join('\n'),
-                  },
-                ],
-              }}
-            />
-          </div>
-        </NotificationProvider>
-      </LayoutProvider>
-    ), host);
-
-    try {
-      const fileButton = Array.from(host.querySelectorAll('button')).find((node) => node.textContent?.includes('feature/branch-only.txt'));
-      expect(fileButton).toBeTruthy();
-      fileButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-
-      expect(document.body.textContent).toContain('Changed Files');
-      expect(document.body.textContent).toContain('Copy Patch');
-      expect(document.body.textContent).toContain('+feature branch');
-      expect(document.body.textContent).not.toContain('No inline diff lines available');
-    } finally {
-      dispose();
-    }
-  });
-
-  it('stacks branch, compare, commit range, and changed files vertically', () => {
+  it('reuses the changes table when a branch section points to workspace changes', () => {
     const host = document.createElement('div');
     document.body.appendChild(host);
 
@@ -105,23 +42,17 @@ describe('GitBranchesPanel interactions', () => {
                 fullName: 'refs/heads/feature/demo',
                 kind: 'local',
                 current: true,
-                upstreamRef: 'origin/feature/demo',
-                headCommit: 'abc1234def5678',
-                subject: 'Feature branch change',
-                authorTimeMs: 1706000000000,
-                aheadCount: 1,
-                behindCount: 0,
               }}
-              compare={{
+              selectedBranchSubview="unstaged"
+              workspace={{
                 repoRootPath: '/workspace/repo',
-                baseRef: 'main',
-                targetRef: 'feature/demo',
-                targetAheadCount: 1,
-                targetBehindCount: 0,
-                mergeBase: 'ff00aa11223344',
-                commits: [{ hash: 'abc1234def5678', shortHash: 'abc1234', parents: ['base123'], subject: 'Feature branch change', authorName: 'Alice', authorTimeMs: 1706000000000 }],
-                files: [],
+                summary: { stagedCount: 1, unstagedCount: 1, untrackedCount: 0, conflictedCount: 0 },
+                staged: [{ section: 'staged', changeType: 'modified', path: 'src/app.ts', displayPath: 'src/app.ts', additions: 3, deletions: 1 }],
+                unstaged: [{ section: 'unstaged', changeType: 'modified', path: 'src/next.ts', displayPath: 'src/next.ts', additions: 4, deletions: 2 }],
+                untracked: [],
+                conflicted: [],
               }}
+              selectedWorkspaceSection="unstaged"
             />
           </div>
         </NotificationProvider>
@@ -129,12 +60,53 @@ describe('GitBranchesPanel interactions', () => {
     ), host);
 
     try {
-      expect(host.querySelectorAll('section')).toHaveLength(5);
-      expect(host.textContent).toContain('Branch Snapshot');
-      expect(host.textContent).toContain('Compare Summary');
-      expect(host.textContent).toContain('Commit Range');
-      expect(host.textContent).toContain('Changed Files');
-      expect(host.textContent).toContain('Diff Inspector');
+      expect(host.textContent).toContain('Unstaged');
+      expect(host.textContent).toContain('Path');
+      expect(host.textContent).toContain('src/next.ts');
+      expect(host.textContent).toContain('+ Stage');
+      expect(host.textContent).not.toContain('Branch Snapshot');
+      expect(host.textContent).not.toContain('Compare Summary');
+    } finally {
+      dispose();
+    }
+  });
+
+  it('shows the full commit history list when branch history is selected', () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+
+    const dispose = render(() => (
+      <LayoutProvider>
+        <NotificationProvider>
+          <div class="h-[640px]">
+            <GitBranchesPanel
+              repoRootPath="/workspace/repo"
+              selectedBranch={{
+                name: 'feature/demo',
+                fullName: 'refs/heads/feature/demo',
+                kind: 'local',
+                current: true,
+                aheadCount: 1,
+                behindCount: 0,
+              }}
+              selectedBranchSubview="history"
+              commits={[
+                { hash: '1111111111111111', shortHash: '11111111', parents: ['0000000000000000'], subject: 'First commit', authorName: 'Alice', authorTimeMs: 1706000000000 },
+                { hash: '2222222222222222', shortHash: '22222222', parents: ['1111111111111111', '9999999999999999'], subject: 'Merge feature', authorName: 'Bob', authorTimeMs: 1706003600000 },
+              ]}
+              selectedCommitHash="2222222222222222"
+            />
+          </div>
+        </NotificationProvider>
+      </LayoutProvider>
+    ), host);
+
+    try {
+      expect(host.textContent).toContain('Commit History');
+      expect(host.textContent).toContain('First commit');
+      expect(host.textContent).toContain('Merge feature');
+      expect(host.textContent).toContain('11111111');
+      expect(host.textContent).not.toContain('Diff Inspector');
     } finally {
       dispose();
     }
@@ -155,8 +127,8 @@ describe('GitBranchesPanel interactions', () => {
     ), host);
 
     try {
-      expect(host.textContent).toContain('Choose a branch from the left rail to inspect compare details.');
-      expect(host.textContent).not.toContain('Select a branch from the sidebar to inspect compare details.');
+      expect(host.textContent).toContain('Choose a branch from the left rail to inspect workspace sections or history.');
+      expect(host.textContent).not.toContain('Choose a branch from the left rail to inspect compare details.');
     } finally {
       dispose();
     }

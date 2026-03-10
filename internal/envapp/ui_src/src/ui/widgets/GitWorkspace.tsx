@@ -9,7 +9,7 @@ import type {
   GitWorkspaceChange,
   GitWorkspaceSection,
 } from '../protocol/redeven_v1';
-import { buildGitWorkbenchSubviewItems, type GitWorkbenchSubview } from '../utils/gitWorkbench';
+import { buildGitWorkbenchSubviewItems, type GitBranchSubview, type GitWorkbenchSubview } from '../utils/gitWorkbench';
 import { BrowserWorkspaceShell } from './BrowserWorkspaceShell';
 import { GitHistoryModeSwitch, type GitHistoryMode } from './GitHistoryModeSwitch';
 import { GitViewNav } from './GitViewNav';
@@ -44,6 +44,7 @@ export interface GitWorkspaceProps {
   onSelectWorkspaceItem?: (item: GitWorkspaceChange) => void;
   onStageWorkspaceItem?: (item: GitWorkspaceChange) => void;
   onUnstageWorkspaceItem?: (item: GitWorkspaceChange) => void;
+  onBulkWorkspaceAction?: (section: GitWorkspaceSection) => void;
   busyWorkspaceKey?: string;
   busyWorkspaceAction?: 'stage' | 'unstage' | '';
   branches?: GitListBranchesResponse | null;
@@ -52,6 +53,8 @@ export interface GitWorkspaceProps {
   selectedBranch?: GitBranchSummary | null;
   selectedBranchKey?: string;
   onSelectBranch?: (branch: GitBranchSummary) => void;
+  selectedBranchSubview?: GitBranchSubview;
+  onSelectBranchSubview?: (view: GitBranchSubview) => void;
   compare?: GitGetBranchCompareResponse | null;
   compareLoading?: boolean;
   compareError?: string;
@@ -110,6 +113,8 @@ export function GitWorkspace(props: GitWorkspaceProps) {
           branchesError={props.branchesError}
           selectedBranchKey={props.selectedBranchKey}
           onSelectBranch={props.onSelectBranch}
+          selectedBranchSubview={props.selectedBranchSubview}
+          onSelectBranchSubview={props.onSelectBranchSubview}
           commits={props.commits}
           listLoading={props.listLoading}
           listLoadingMore={props.listLoadingMore}
@@ -143,16 +148,26 @@ export function GitWorkspace(props: GitWorkspaceProps) {
           branchesLoading={props.branchesLoading}
           branchesError={props.branchesError}
           selectedBranch={props.selectedBranch}
+          selectedBranchSubview={props.selectedBranchSubview}
+          onSelectBranchSubview={props.onSelectBranchSubview}
           compare={props.compare}
           compareLoading={props.compareLoading}
           compareError={props.compareError}
           selectedCommitHash={props.selectedCommitHash}
+          commits={props.commits}
+          listLoading={props.listLoading}
+          listLoadingMore={props.listLoadingMore}
+          listError={props.listError}
+          hasMore={props.hasMore}
+          onSelectCommit={props.onSelectCommit}
+          onLoadMore={props.onLoadMore}
           commitMessage={props.commitMessage}
           commitBusy={props.commitBusy}
           onCommitMessageChange={props.onCommitMessageChange}
           onCommit={props.onCommit}
           onStageSelected={props.onStageWorkspaceItem}
           onUnstageSelected={props.onUnstageWorkspaceItem}
+          onBulkAction={props.onBulkWorkspaceAction}
           showMobileSidebarButton={props.showMobileSidebarButton}
           onToggleSidebar={props.onToggleSidebar}
           onRefresh={props.onRefresh}
