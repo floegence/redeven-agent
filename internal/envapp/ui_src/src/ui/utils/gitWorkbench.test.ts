@@ -47,9 +47,9 @@ describe('gitWorkbench helpers', () => {
     expect(branchStatusSummary({ current: true, upstreamRef: 'origin/main', aheadCount: 2, behindCount: 1, worktreePath: '/wt' }))
       .toContain('Current');
     expect(compareHeadline({ repoRootPath: '/', baseRef: 'main', targetRef: 'feature', targetAheadCount: 3, targetBehindCount: 0, commits: [], files: [] }))
-      .toContain('ahead by 3');
+      .toContain('Compared branch is ahead by 3');
     expect(compareHeadline({ repoRootPath: '/', baseRef: 'main', targetRef: 'feature', targetAheadCount: 0, targetBehindCount: 0, commits: [], files: [] }))
-      .toContain('matches');
+      .toContain('matches the reference branch');
   });
 
   it('formats rename path fallback and repo display name', () => {

@@ -192,6 +192,15 @@ func (s *Service) getBranchCompare(ctx context.Context, repo repoContext, baseRe
 	for _, entry := range entries {
 		files = append(files, entry.toCommitFileSummary())
 	}
+
+	var linkedWorktree *gitLinkedWorktreeSnapshot
+	if bindings, err := readWorktreeBindings(ctx, repo.repoRootReal); err == nil {
+		if binding, ok := findWorktreeBinding(bindings, targetRef); ok {
+			if snapshot, err := s.readLinkedWorktreeSnapshot(ctx, binding.Path); err == nil {
+				linkedWorktree = snapshot
+			}
+		}
+	}
 	return &getBranchCompareResp{
 		RepoRootPath:      repo.repoRootVirtual,
 		BaseRef:           baseRef,
@@ -201,6 +210,42 @@ func (s *Service) getBranchCompare(ctx context.Context, repo repoContext, baseRe
 		TargetBehindCount: targetBehind,
 		Commits:           commits,
 		Files:             files,
+		LinkedWorktree:    linkedWorktree,
+	}, nil
+}
+
+func findWorktreeBinding(bindings map[string]worktreeBinding, targetRef string) (worktreeBinding, bool) {
+	candidates := []string{targetRef}
+	if !strings.HasPrefix(targetRef, "refs/") {
+		candidates = append(candidates,
+			"refs/heads/"+targetRef,
+			"refs/remotes/"+targetRef,
+		)
+	}
+	for _, candidate := range candidates {
+		if binding, ok := bindings[candidate]; ok {
+			return binding, true
+		}
+	}
+	return worktreeBinding{}, false
+}
+
+func (s *Service) readLinkedWorktreeSnapshot(ctx context.Context, worktreePath string) (*gitLinkedWorktreeSnapshot, error) {
+	repo, err := s.loadRepoContext(ctx, worktreePath, worktreePath)
+	if err != nil {
+		return nil, err
+	}
+	workspace, err := s.listWorkspaceChanges(ctx, repo)
+	if err != nil {
+		return nil, err
+	}
+	return &gitLinkedWorktreeSnapshot{
+		WorktreePath: worktreePath,
+		Summary:      workspace.Summary,
+		Staged:       workspace.Staged,
+		Unstaged:     workspace.Unstaged,
+		Untracked:    workspace.Untracked,
+		Conflicted:   workspace.Conflicted,
 	}, nil
 }
 

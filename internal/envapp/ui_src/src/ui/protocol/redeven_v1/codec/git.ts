@@ -9,6 +9,7 @@ import type {
   GitGetBranchCompareResponse,
   GitGetCommitDetailRequest,
   GitGetCommitDetailResponse,
+  GitLinkedWorktreeSnapshot,
   GitListBranchesRequest,
   GitListBranchesResponse,
   GitListCommitsRequest,
@@ -39,6 +40,7 @@ import type {
   wire_git_get_commit_detail_resp,
   wire_git_get_repo_summary_req,
   wire_git_get_repo_summary_resp,
+  wire_git_linked_worktree_snapshot,
   wire_git_list_branches_req,
   wire_git_list_branches_resp,
   wire_git_list_commits_req,
@@ -145,6 +147,18 @@ function fromWireGitCommitFileSummary(resp: wire_git_commit_file_summary): GitCo
     additions: typeof resp?.additions === 'number' ? resp.additions : undefined,
     deletions: typeof resp?.deletions === 'number' ? resp.deletions : undefined,
     isBinary: typeof resp?.is_binary === 'boolean' ? resp.is_binary : undefined,
+  };
+}
+
+function fromWireGitLinkedWorktreeSnapshot(resp: wire_git_linked_worktree_snapshot | undefined): GitLinkedWorktreeSnapshot | undefined {
+  if (!resp) return undefined;
+  return {
+    worktreePath: typeof resp?.worktree_path === 'string' ? resp.worktree_path : undefined,
+    summary: fromWireGitWorkspaceSummary(resp?.summary),
+    staged: Array.isArray(resp?.staged) ? resp.staged.map(fromWireGitWorkspaceChange) : [],
+    unstaged: Array.isArray(resp?.unstaged) ? resp.unstaged.map(fromWireGitWorkspaceChange) : [],
+    untracked: Array.isArray(resp?.untracked) ? resp.untracked.map(fromWireGitWorkspaceChange) : [],
+    conflicted: Array.isArray(resp?.conflicted) ? resp.conflicted.map(fromWireGitWorkspaceChange) : [],
   };
 }
 
@@ -297,6 +311,7 @@ export function fromWireGitGetBranchCompareResponse(resp: wire_git_get_branch_co
     targetBehindCount: typeof resp?.target_behind_count === 'number' ? resp.target_behind_count : undefined,
     commits: Array.isArray(resp?.commits) ? resp.commits.map(fromWireGitCommitSummary) : [],
     files: Array.isArray(resp?.files) ? resp.files.map(fromWireGitCommitFileSummary) : [],
+    linkedWorktree: fromWireGitLinkedWorktreeSnapshot(resp?.linked_worktree),
   };
 }
 

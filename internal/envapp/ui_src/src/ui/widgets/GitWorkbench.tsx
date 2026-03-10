@@ -5,7 +5,6 @@ import { Button } from '@floegence/floe-webapp-core/ui';
 import type {
   GitBranchSummary,
   GitCommitSummary,
-  GitGetBranchCompareResponse,
   GitListBranchesResponse,
   GitListWorkspaceChangesResponse,
   GitRepoSummaryResponse,
@@ -43,9 +42,6 @@ export interface GitWorkbenchProps {
   selectedBranch?: GitBranchSummary | null;
   selectedBranchSubview?: GitBranchSubview;
   onSelectBranchSubview?: (view: GitBranchSubview) => void;
-  compare?: GitGetBranchCompareResponse | null;
-  compareLoading?: boolean;
-  compareError?: string;
   commits?: GitCommitSummary[];
   listLoading?: boolean;
   listLoadingMore?: boolean;
@@ -90,7 +86,7 @@ export function GitWorkbench(props: GitWorkbenchProps) {
   const changeCount = () => summarizeWorkspaceCount(props.workspace?.summary ?? props.repoSummary?.workspaceSummary);
   const pendingCount = () => summarizePendingWorkspaceCount(props.workspace?.summary ?? props.repoSummary?.workspaceSummary);
   const headRef = () => String(props.repoSummary?.headRef || props.repoInfo?.headRef || '').trim();
-  const loadingBusy = () => Boolean(props.repoInfoLoading || props.repoSummaryLoading || props.workspaceLoading || props.branchesLoading || props.compareLoading);
+  const loadingBusy = () => Boolean(props.repoInfoLoading || props.repoSummaryLoading || props.workspaceLoading || props.branchesLoading);
   const activeSubview = () => normalizeSubview(props.subview);
   const subviewTone = () => gitSubviewTone(activeSubview());
 
@@ -168,20 +164,16 @@ export function GitWorkbench(props: GitWorkbenchProps) {
         <Show when={activeSubview() === 'branches'}>
           <GitBranchesPanel
             repoRootPath={props.repoSummary?.repoRootPath}
+            repoSummary={props.repoSummary}
+            workspace={props.workspace}
             selectedBranch={props.selectedBranch}
             selectedBranchSubview={props.selectedBranchSubview}
             onSelectBranchSubview={props.onSelectBranchSubview}
+            branches={props.branches}
             branchesLoading={props.branchesLoading}
             branchesError={props.branchesError}
-            workspace={props.workspace}
             workspaceLoading={props.workspaceLoading}
             workspaceError={props.workspaceError}
-            selectedWorkspaceSection={props.selectedWorkspaceSection}
-            onSelectWorkspaceSection={props.onSelectWorkspaceSection}
-            selectedWorkspaceItem={props.selectedWorkspaceItem}
-            onSelectWorkspaceItem={props.onSelectWorkspaceItem}
-            busyWorkspaceKey={props.busyWorkspaceKey}
-            busyWorkspaceAction={props.busyWorkspaceAction}
             commits={props.commits}
             listLoading={props.listLoading}
             listLoadingMore={props.listLoadingMore}
@@ -190,16 +182,6 @@ export function GitWorkbench(props: GitWorkbenchProps) {
             selectedCommitHash={props.selectedCommitHash}
             onSelectCommit={props.onSelectCommit}
             onLoadMore={props.onLoadMore}
-            commitMessage={props.commitMessage}
-            onCommitMessageChange={props.onCommitMessageChange}
-            onCommit={props.onCommit}
-            commitBusy={props.commitBusy}
-            onStageSelected={props.onStageSelected}
-            onUnstageSelected={props.onUnstageSelected}
-            onBulkAction={props.onBulkAction}
-            compare={props.compare}
-            compareLoading={props.compareLoading}
-            compareError={props.compareError}
           />
         </Show>
 

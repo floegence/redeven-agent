@@ -74,17 +74,16 @@ describe('GitChrome semantic tone helpers', () => {
   it('uses a strong sidebar-accent selection style for selectable git items', () => {
     expect(gitToneSelectableCardClass('brand', true)).toContain('bg-sidebar-accent');
     expect(gitToneSelectableCardClass('brand', true)).toContain('text-sidebar-accent-foreground');
-    expect(gitToneSelectableCardClass('brand', true)).toContain('border-sidebar-accent/70');
-    expect(gitToneSelectableCardClass('brand', true)).toContain('shadow-sm');
-    expect(gitToneSelectableCardClass('brand', true)).toContain('font-medium');
+    expect(gitToneSelectableCardClass('brand', true)).toContain('border-sidebar-accent/80');
+    expect(gitToneSelectableCardClass('brand', true)).toContain('shadow-[inset_0_1px_0_rgba(255,255,255,0.05),0_1px_2px_rgba(15,23,42,0.08)]');
     expect(gitToneSelectableCardClass('brand', true)).toContain('cursor-pointer');
     expect(gitToneSelectableCardClass('brand', true)).toContain('focus-visible:ring-2');
 
-    expect(gitToneSelectableCardClass('info', false)).toContain('border border-transparent');
+    expect(gitToneSelectableCardClass('info', false)).toContain('border-border/45');
     expect(gitToneSelectableCardClass('info', false)).toContain('hover:bg-sidebar-accent/70');
     expect(gitToneSelectableCardClass('info', false)).toContain('hover:text-sidebar-accent-foreground');
     expect(gitToneSelectableCardClass('info', false)).toContain('cursor-pointer');
-    expect(gitToneSelectableCardClass('neutral', false)).toContain('border-transparent');
+    expect(gitToneSelectableCardClass('neutral', false)).toContain('hover:border-sidebar-accent/55');
     expect(gitToneSelectableCardClass('neutral', false)).not.toContain('hover:-translate-y-px');
   });
 

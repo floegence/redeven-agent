@@ -11,7 +11,7 @@ import type {
 } from '../protocol/redeven_v1';
 
 export type GitWorkbenchSubview = 'overview' | 'changes' | 'branches' | 'history';
-export type GitBranchSubview = GitWorkspaceSection | 'history';
+export type GitBranchSubview = 'status' | 'history';
 
 export type GitWorkbenchSubviewItem = {
   id: GitWorkbenchSubview;
@@ -21,7 +21,6 @@ export type GitWorkbenchSubviewItem = {
 
 export const WORKSPACE_SECTIONS: GitWorkspaceSection[] = ['staged', 'unstaged', 'untracked', 'conflicted'];
 export const WORKSPACE_REVIEW_SECTIONS: GitWorkspaceSection[] = ['unstaged', 'untracked', 'conflicted', 'staged'];
-export const BRANCH_REVIEW_SECTIONS: GitBranchSubview[] = ['unstaged', 'untracked', 'conflicted', 'staged', 'history'];
 
 export function summarizeWorkspaceCount(summary: GitWorkspaceSummary | null | undefined): number {
   return Number(summary?.stagedCount ?? 0)
@@ -89,8 +88,14 @@ export function workspaceSectionActionKey(section: GitWorkspaceSection): string 
 }
 
 export function branchSubviewLabel(section: GitBranchSubview): string {
-  if (section === 'history') return 'History';
-  return workspaceSectionLabel(section);
+  switch (section) {
+    case 'status':
+      return 'Status';
+    case 'history':
+      return 'History';
+    default:
+      return 'Status';
+  }
 }
 
 export function workspaceSectionCount(summary: GitWorkspaceSummary | null | undefined, section: GitWorkspaceSection): number {
@@ -209,13 +214,13 @@ export function branchStatusSummary(branch: GitBranchSummary | null | undefined)
 }
 
 export function compareHeadline(compare: GitGetBranchCompareResponse | null | undefined): string {
-  if (!compare) return 'Select a branch to inspect compare details.';
+  if (!compare) return 'Select branches to inspect compare details.';
   const ahead = Number(compare.targetAheadCount ?? 0);
   const behind = Number(compare.targetBehindCount ?? 0);
-  if (ahead <= 0 && behind <= 0) return 'Selected branch matches the base branch.';
-  if (ahead > 0 && behind <= 0) return `Target branch is ahead by ${ahead} commit${ahead === 1 ? '' : 's'}.`;
-  if (behind > 0 && ahead <= 0) return `Target branch is behind by ${behind} commit${behind === 1 ? '' : 's'}.`;
-  return `Target branch is ahead by ${ahead} and behind by ${behind} commits.`;
+  if (ahead <= 0 && behind <= 0) return 'Compared branch matches the reference branch.';
+  if (ahead > 0 && behind <= 0) return `Compared branch is ahead by ${ahead} commit${ahead === 1 ? '' : 's'}.`;
+  if (behind > 0 && ahead <= 0) return `Compared branch is behind by ${behind} commit${behind === 1 ? '' : 's'}.`;
+  return `Compared branch is ahead by ${ahead} and behind by ${behind} commits.`;
 }
 
 export function syncStatusLabel(ahead?: number, behind?: number): string {

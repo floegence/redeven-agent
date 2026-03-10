@@ -62,6 +62,15 @@ export type wire_git_list_workspace_changes_resp = {
   conflicted: wire_git_workspace_change[];
 };
 
+export type wire_git_linked_worktree_snapshot = {
+  worktree_path?: string;
+  summary: wire_git_workspace_summary;
+  staged: wire_git_workspace_change[];
+  unstaged: wire_git_workspace_change[];
+  untracked: wire_git_workspace_change[];
+  conflicted: wire_git_workspace_change[];
+};
+
 export type wire_git_stage_workspace_req = {
   repo_root_path: string;
   paths?: string[];
@@ -195,4 +204,5 @@ export type wire_git_get_branch_compare_resp = {
   target_behind_count?: number;
   commits: wire_git_commit_summary[];
   files: wire_git_commit_file_summary[];
+  linked_worktree?: wire_git_linked_worktree_snapshot;
 };

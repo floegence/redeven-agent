@@ -1,7 +1,6 @@
 import type {
   GitBranchSummary,
   GitCommitSummary,
-  GitGetBranchCompareResponse,
   GitListBranchesResponse,
   GitListWorkspaceChangesResponse,
   GitRepoSummaryResponse,
@@ -55,9 +54,6 @@ export interface GitWorkspaceProps {
   onSelectBranch?: (branch: GitBranchSummary) => void;
   selectedBranchSubview?: GitBranchSubview;
   onSelectBranchSubview?: (view: GitBranchSubview) => void;
-  compare?: GitGetBranchCompareResponse | null;
-  compareLoading?: boolean;
-  compareError?: string;
   commits?: GitCommitSummary[];
   listLoading?: boolean;
   listLoadingMore?: boolean;
@@ -113,8 +109,6 @@ export function GitWorkspace(props: GitWorkspaceProps) {
           branchesError={props.branchesError}
           selectedBranchKey={props.selectedBranchKey}
           onSelectBranch={props.onSelectBranch}
-          selectedBranchSubview={props.selectedBranchSubview}
-          onSelectBranchSubview={props.onSelectBranchSubview}
           commits={props.commits}
           listLoading={props.listLoading}
           listLoadingMore={props.listLoadingMore}
@@ -150,9 +144,6 @@ export function GitWorkspace(props: GitWorkspaceProps) {
           selectedBranch={props.selectedBranch}
           selectedBranchSubview={props.selectedBranchSubview}
           onSelectBranchSubview={props.onSelectBranchSubview}
-          compare={props.compare}
-          compareLoading={props.compareLoading}
-          compareError={props.compareError}
           selectedCommitHash={props.selectedCommitHash}
           commits={props.commits}
           listLoading={props.listLoading}

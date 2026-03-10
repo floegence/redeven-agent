@@ -51,6 +51,15 @@ export type GitWorkspaceChange = {
   isBinary?: boolean;
 };
 
+export type GitLinkedWorktreeSnapshot = {
+  worktreePath?: string;
+  summary: GitWorkspaceSummary;
+  staged: GitWorkspaceChange[];
+  unstaged: GitWorkspaceChange[];
+  untracked: GitWorkspaceChange[];
+  conflicted: GitWorkspaceChange[];
+};
+
 export type GitListWorkspaceChangesRequest = {
   repoRootPath: string;
 };
@@ -197,4 +206,5 @@ export type GitGetBranchCompareResponse = {
   targetBehindCount?: number;
   commits: GitCommitSummary[];
   files: GitCommitFileSummary[];
+  linkedWorktree?: GitLinkedWorktreeSnapshot;
 };

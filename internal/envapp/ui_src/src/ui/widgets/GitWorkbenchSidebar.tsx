@@ -11,23 +11,20 @@ import type {
   GitWorkspaceSection,
 } from '../protocol/redeven_v1';
 import {
-  BRANCH_REVIEW_SECTIONS,
   WORKSPACE_REVIEW_SECTIONS,
-  branchSubviewLabel,
   branchDisplayName,
   branchIdentity,
   branchStatusSummary,
   summarizeWorkspaceCount,
-  workspaceSectionCount,
   workspaceHealthLabel,
+  workspaceSectionCount,
   workspaceSectionLabel,
-  type GitBranchSubview,
   type GitWorkbenchSubview,
 } from '../utils/gitWorkbench';
 import {
   gitBranchTone,
-  gitToneBadgeClass,
   gitToneActionButtonClass,
+  gitToneBadgeClass,
   gitToneSelectableCardClass,
   workspaceSectionTone,
 } from './GitChrome';
@@ -51,8 +48,6 @@ export interface GitWorkbenchSidebarProps {
   branchesError?: string;
   selectedBranchKey?: string;
   onSelectBranch?: (branch: GitBranchSummary) => void;
-  selectedBranchSubview?: GitBranchSubview;
-  onSelectBranchSubview?: (view: GitBranchSubview) => void;
   commits?: GitCommitSummary[];
   listLoading?: boolean;
   listLoadingMore?: boolean;
@@ -83,7 +78,7 @@ function selectorLabel(view: GitWorkbenchSubview): string {
 function selectorDescription(view: GitWorkbenchSubview): string {
   switch (normalizeSubview(view)) {
     case 'branches':
-      return 'Pick a branch, then open workspace sections or history in the main pane.';
+      return 'Pick a branch to inspect its status or history in the main pane.';
     case 'history':
       return 'Pick a commit to inspect it on the right.';
     case 'changes':
@@ -190,50 +185,22 @@ export function GitWorkbenchSidebar(props: GitWorkbenchSidebarProps) {
                               const tone = () => gitBranchTone(branch);
                               const active = () => props.selectedBranchKey === branchIdentity(branch);
                               return (
-                                <div class="space-y-1">
-                                  <button
-                                    type="button"
-                                    class={cn('w-full rounded-lg px-3 py-2.5 text-left', gitToneSelectableCardClass(tone(), active()))}
-                                    onClick={() => {
-                                      props.onSelectBranch?.(branch);
-                                    }}
-                                  >
-                                    <div class="flex items-center gap-2">
-                                      <span class="min-w-0 flex-1 truncate text-[11.5px] font-medium text-current">{branchDisplayName(branch)}</span>
-                                      <Show when={branch.current}>
-                                        <span class="rounded bg-primary/[0.12] px-1.5 py-0.5 text-[10px] font-medium text-primary">Current</span>
-                                      </Show>
-                                    </div>
-                                    <div class="mt-0.5 truncate text-[10px] text-muted-foreground">{branchStatusSummary(branch)}</div>
-                                  </button>
-                                  <Show when={active()}>
-                                    <div class="ml-2 space-y-1 border-l border-border/45 pl-2">
-                                      <For each={BRANCH_REVIEW_SECTIONS}>
-                                        {(view) => {
-                                          const viewActive = () => props.selectedBranchSubview === view;
-                                          const count = () => view === 'history'
-                                            ? commitCount()
-                                            : workspaceSectionCount(props.workspace?.summary ?? props.repoSummary?.workspaceSummary, view);
-                                          return (
-                                            <button
-                                              type="button"
-                                              class={cn('flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-[11px]', gitToneSelectableCardClass(view === 'history' ? 'brand' : workspaceSectionTone(view), viewActive()))}
-                                              onClick={() => {
-                                                props.onSelectBranchSubview?.(view);
-                                                closeAfterPick();
-                                              }}
-                                            >
-                                              <span class="truncate font-medium text-current">{branchSubviewLabel(view)}</span>
-                                              <span class={cn('inline-flex min-w-[1.5rem] items-center justify-center rounded px-1.5 py-0.5 text-[10px] font-semibold', viewActive() ? 'bg-background/15 text-sidebar-accent-foreground' : (view === 'history' ? gitToneBadgeClass('brand') : gitToneBadgeClass(workspaceSectionTone(view))))}>
-                                                {count()}
-                                              </span>
-                                            </button>
-                                          );
-                                        }}
-                                      </For>
-                                    </div>
-                                  </Show>
-                                </div>
+                                <button
+                                  type="button"
+                                  class={cn('w-full rounded-lg px-3 py-2.5 text-left', gitToneSelectableCardClass(tone(), active()))}
+                                  onClick={() => {
+                                    props.onSelectBranch?.(branch);
+                                    closeAfterPick();
+                                  }}
+                                >
+                                  <div class="flex items-center gap-2">
+                                    <span class="min-w-0 flex-1 truncate text-[11.5px] font-medium text-current">{branchDisplayName(branch)}</span>
+                                    <Show when={branch.current}>
+                                      <span class="rounded bg-primary/[0.12] px-1.5 py-0.5 text-[10px] font-medium text-primary">Current</span>
+                                    </Show>
+                                  </div>
+                                  <div class="mt-0.5 truncate text-[10px] text-muted-foreground">{branchStatusSummary(branch)}</div>
+                                </button>
                               );
                             }}
                           </For>
@@ -248,45 +215,17 @@ export function GitWorkbenchSidebar(props: GitWorkbenchSidebarProps) {
                             {(branch) => {
                               const active = () => props.selectedBranchKey === branchIdentity(branch);
                               return (
-                                <div class="space-y-1">
-                                  <button
-                                    type="button"
-                                    class={cn('w-full rounded-lg px-3 py-2.5 text-left', gitToneSelectableCardClass('violet', active()))}
-                                    onClick={() => {
-                                      props.onSelectBranch?.(branch);
-                                    }}
-                                  >
-                                    <div class="truncate text-[11.5px] font-medium text-current">{branchDisplayName(branch)}</div>
-                                    <div class="mt-0.5 truncate text-[10px] text-muted-foreground">{branch.subject || branchStatusSummary(branch)}</div>
-                                  </button>
-                                  <Show when={active()}>
-                                    <div class="ml-2 space-y-1 border-l border-border/45 pl-2">
-                                      <For each={BRANCH_REVIEW_SECTIONS}>
-                                        {(view) => {
-                                          const viewActive = () => props.selectedBranchSubview === view;
-                                          const count = () => view === 'history'
-                                            ? commitCount()
-                                            : workspaceSectionCount(props.workspace?.summary ?? props.repoSummary?.workspaceSummary, view);
-                                          return (
-                                            <button
-                                              type="button"
-                                              class={cn('flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-[11px]', gitToneSelectableCardClass(view === 'history' ? 'brand' : workspaceSectionTone(view), viewActive()))}
-                                              onClick={() => {
-                                                props.onSelectBranchSubview?.(view);
-                                                closeAfterPick();
-                                              }}
-                                            >
-                                              <span class="truncate font-medium text-current">{branchSubviewLabel(view)}</span>
-                                              <span class={cn('inline-flex min-w-[1.5rem] items-center justify-center rounded px-1.5 py-0.5 text-[10px] font-semibold', viewActive() ? 'bg-background/15 text-sidebar-accent-foreground' : (view === 'history' ? gitToneBadgeClass('brand') : gitToneBadgeClass(workspaceSectionTone(view))))}>
-                                                {count()}
-                                              </span>
-                                            </button>
-                                          );
-                                        }}
-                                      </For>
-                                    </div>
-                                  </Show>
-                                </div>
+                                <button
+                                  type="button"
+                                  class={cn('w-full rounded-lg px-3 py-2.5 text-left', gitToneSelectableCardClass('violet', active()))}
+                                  onClick={() => {
+                                    props.onSelectBranch?.(branch);
+                                    closeAfterPick();
+                                  }}
+                                >
+                                  <div class="truncate text-[11.5px] font-medium text-current">{branchDisplayName(branch)}</div>
+                                  <div class="mt-0.5 truncate text-[10px] text-muted-foreground">{branch.subject || branchStatusSummary(branch)}</div>
+                                </button>
                               );
                             }}
                           </For>

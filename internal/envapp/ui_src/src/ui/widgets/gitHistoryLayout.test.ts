@@ -115,15 +115,14 @@ describe('browser workspace layout wiring', () => {
     expect(navSrc).not.toContain('gitToneSelectableCardClass');
   });
 
-  it('keeps changes on a dialog-based diff flow while branches route through changes and history views', () => {
+  it('keeps changes and branch compare on dialog-based diff flows while history stays patch-driven', () => {
     const changesSrc = read('./GitChangesPanel.tsx');
     const branchesSrc = read('./GitBranchesPanel.tsx');
     const historySrc = read('./GitHistoryBrowser.tsx');
 
     expect(changesSrc).toContain("import { GitDiffDialog } from './GitDiffDialog';");
-    expect(branchesSrc).toContain("import { GitChangesPanel } from './GitChangesPanel';");
+    expect(branchesSrc).toContain("import { GitDiffDialog } from './GitDiffDialog';");
     expect(historySrc).toContain("import { GitPatchViewer } from './GitPatchViewer';");
-    expect(branchesSrc).not.toContain("import { GitDiffDialog } from './GitDiffDialog';");
     expect(historySrc).not.toContain("import { GitDiffDialog } from './GitDiffDialog';");
   });
 
@@ -142,16 +141,18 @@ describe('browser workspace layout wiring', () => {
     expect(historySrc).toContain('aria-expanded={commitBodyExpanded()}');
   });
 
-  it('routes branch review through workspace sections and a history list', () => {
+  it('routes branch review through status and history views with compare in a dialog', () => {
     const branchesSrc = read('./GitBranchesPanel.tsx');
 
     expect(branchesSrc).toContain("selectedBranchSubview?: GitBranchSubview;");
-    expect(branchesSrc).toContain('GitChangesPanel');
-    expect(branchesSrc).toContain('Commit History');
+    expect(branchesSrc).toContain('compactBranchContext');
+    expect(branchesSrc).toContain('Using the current workspace status.');
+    expect(branchesSrc).toContain('Compare branches');
+    expect(branchesSrc).toContain('Changed Files');
     expect(branchesSrc).toContain('Load More');
-    expect(branchesSrc).not.toContain('Branch Snapshot');
-    expect(branchesSrc).not.toContain('Compare Summary');
-    expect(branchesSrc).not.toContain('Diff Inspector');
+    expect(branchesSrc).toContain('View Diff');
+    expect(branchesSrc).not.toContain('Subject');
+    expect(branchesSrc).not.toContain('Checkout');
   });
 
 
@@ -197,12 +198,10 @@ describe('browser workspace layout wiring', () => {
     expect(src).toContain('Commit Graph');
     expect(src).toContain('Local');
     expect(src).toContain('Remote');
-    expect(src).toContain('Pick a branch, then open workspace sections or history in the main pane.');
+    expect(src).toContain('Pick a branch to inspect its status or history in the main pane.');
     expect(src).toContain('Recent history with merge structure.');
     expect(src).toContain('space-y-1.5 sm:space-y-2');
     expect(src).toContain('WORKSPACE_REVIEW_SECTIONS');
-    expect(src).toContain('BRANCH_REVIEW_SECTIONS');
-    expect(src).toContain('branchSubviewLabel(view)');
     expect(src).toContain('No files in this section.');
     expect(src).toContain('gitToneSelectableCardClass(tone(), active())');
     expect(src).toContain('text-sidebar-accent-foreground/75');
@@ -286,9 +285,10 @@ describe('browser workspace layout wiring', () => {
     expect(overviewSrc).toContain('Choose a branch from the sidebar to load compare context.');
     expect(overviewSrc).toContain('Branch compare details appear here after you pick a branch from the sidebar.');
 
-    expect(branchesSrc).toContain('Choose a branch from the left rail to inspect workspace sections or history.');
-    expect(branchesSrc).not.toContain('Choose a branch from the left rail to inspect compare details.');
-    expect(branchesSrc).not.toContain('Choose a branch from the left rail to load compare data.');
+    expect(branchesSrc).toContain('Choose a branch from the sidebar to inspect its status or history.');
+    expect(branchesSrc).toContain('Choose two branches to inspect file changes.');
+    expect(branchesSrc).toContain('Remote branch is not checked out');
+    expect(branchesSrc).toContain('Status unavailable');
 
     expect(historySrc).toContain('Choose a commit from the left rail to load its details.');
     expect(historySrc).toContain('Commit details are unavailable.');

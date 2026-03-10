@@ -87,13 +87,23 @@ type getBranchCompareReq struct {
 	Limit        int    `json:"limit,omitempty"`
 }
 
+type gitLinkedWorktreeSnapshot struct {
+	WorktreePath string               `json:"worktree_path,omitempty"`
+	Summary      gitWorkspaceSummary  `json:"summary"`
+	Staged       []gitWorkspaceChange `json:"staged,omitempty"`
+	Unstaged     []gitWorkspaceChange `json:"unstaged,omitempty"`
+	Untracked    []gitWorkspaceChange `json:"untracked,omitempty"`
+	Conflicted   []gitWorkspaceChange `json:"conflicted,omitempty"`
+}
+
 type getBranchCompareResp struct {
-	RepoRootPath      string                 `json:"repo_root_path"`
-	BaseRef           string                 `json:"base_ref"`
-	TargetRef         string                 `json:"target_ref"`
-	MergeBase         string                 `json:"merge_base,omitempty"`
-	TargetAheadCount  int                    `json:"target_ahead_count,omitempty"`
-	TargetBehindCount int                    `json:"target_behind_count,omitempty"`
-	Commits           []gitCommitSummary     `json:"commits,omitempty"`
-	Files             []gitCommitFileSummary `json:"files,omitempty"`
+	RepoRootPath      string                     `json:"repo_root_path"`
+	BaseRef           string                     `json:"base_ref"`
+	TargetRef         string                     `json:"target_ref"`
+	MergeBase         string                     `json:"merge_base,omitempty"`
+	TargetAheadCount  int                        `json:"target_ahead_count,omitempty"`
+	TargetBehindCount int                        `json:"target_behind_count,omitempty"`
+	Commits           []gitCommitSummary         `json:"commits,omitempty"`
+	Files             []gitCommitFileSummary     `json:"files,omitempty"`
+	LinkedWorktree    *gitLinkedWorktreeSnapshot `json:"linked_worktree,omitempty"`
 }

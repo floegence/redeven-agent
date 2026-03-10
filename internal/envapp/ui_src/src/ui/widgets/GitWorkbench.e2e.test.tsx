@@ -68,15 +68,6 @@ describe('GitWorkbench interactions', () => {
                   remote: [],
                 }}
                 selectedBranch={{ name: 'feature/demo', fullName: 'refs/heads/feature/demo', kind: 'local', authorTimeMs: Date.now() }}
-                compare={{
-                  repoRootPath: '/workspace/repo',
-                  baseRef: 'main',
-                  targetRef: 'feature/demo',
-                  targetAheadCount: 1,
-                  targetBehindCount: 0,
-                  commits: [],
-                  files: [],
-                }}
                 onRefresh={() => {
                   refreshCount += 1;
                 }}
@@ -100,7 +91,9 @@ describe('GitWorkbench interactions', () => {
       expect(host.textContent).toContain('/workspace/repo');
       expect(host.textContent).toContain('3 changes');
       expect(host.textContent).toContain('2 pending');
-      expect(host.textContent).toContain('Unstaged');
+      expect(host.textContent).toContain('Status');
+      expect(host.textContent).toContain('Branch is not checked out');
+      expect(host.textContent).toContain('Status is only available for checked-out local worktrees.');
     } finally {
       dispose();
     }

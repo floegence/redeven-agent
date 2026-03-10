@@ -2,6 +2,7 @@ package gitrepo
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -411,5 +412,47 @@ func TestGetBranchCompare(t *testing.T) {
 	}
 	if !foundFile {
 		t.Fatalf("expected compare file %q in diff files: %+v", compare.FilePath, resp.Files)
+	}
+}
+
+func TestGetBranchCompare_EmbedsLinkedWorktreeSnapshot(t *testing.T) {
+	t.Parallel()
+	fixture := createTestRepoFixture(t)
+	compare := createComparisonBranchFixture(t, fixture.Root, fixture.UpdateCommit)
+	worktree := filepath.Join(t.TempDir(), "compare-wt")
+	runGitFixture(t, fixture.Root, "worktree", "add", worktree, compare.Branch)
+	if err := os.WriteFile(filepath.Join(worktree, "scratch.txt"), []byte("pending worktree file\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(scratch.txt): %v", err)
+	}
+
+	svc := NewService(fixture.Root)
+	repo, err := svc.resolveExplicitRepo(context.Background(), "/")
+	if err != nil {
+		t.Fatalf("resolveExplicitRepo: %v", err)
+	}
+
+	resp, err := svc.getBranchCompare(context.Background(), repo, compare.BaseBranch, compare.Branch, 10)
+	if err != nil {
+		t.Fatalf("getBranchCompare: %v", err)
+	}
+	if resp.LinkedWorktree == nil {
+		t.Fatalf("expected linked worktree snapshot in compare response")
+	}
+	gotWorktree, err := filepath.EvalSymlinks(resp.LinkedWorktree.WorktreePath)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(resp.LinkedWorktree.WorktreePath): %v", err)
+	}
+	wantWorktree, err := filepath.EvalSymlinks(worktree)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(worktree): %v", err)
+	}
+	if filepath.Clean(gotWorktree) != filepath.Clean(wantWorktree) {
+		t.Fatalf("LinkedWorktree.WorktreePath=%q, want %q", gotWorktree, wantWorktree)
+	}
+	if resp.LinkedWorktree.Summary.UntrackedCount != 1 {
+		t.Fatalf("LinkedWorktree.Summary.UntrackedCount=%d, want 1", resp.LinkedWorktree.Summary.UntrackedCount)
+	}
+	if len(resp.LinkedWorktree.Untracked) != 1 || resp.LinkedWorktree.Untracked[0].Path != "scratch.txt" {
+		t.Fatalf("unexpected linked worktree untracked files: %+v", resp.LinkedWorktree.Untracked)
 	}
 }

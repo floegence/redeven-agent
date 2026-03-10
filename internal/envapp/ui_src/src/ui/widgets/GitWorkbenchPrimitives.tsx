@@ -22,7 +22,7 @@ export function GitSection(props: GitSectionProps) {
             <div class="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground/75">{props.label}</div>
           </div>
           <Show when={props.description}>
-            <div class="text-xs leading-relaxed text-muted-foreground">{props.description}</div>
+            <div class="pl-3.5 text-xs leading-relaxed text-muted-foreground">{props.description}</div>
           </Show>
         </div>
         <Show when={props.aside}>
@@ -31,7 +31,7 @@ export function GitSection(props: GitSectionProps) {
       </div>
 
       <Show when={props.children}>
-        <div class={cn('mt-3', props.bodyClass)}>{props.children}</div>
+        <div class={cn('mt-3 pl-3.5', props.bodyClass)}>{props.children}</div>
       </Show>
     </section>
   );
