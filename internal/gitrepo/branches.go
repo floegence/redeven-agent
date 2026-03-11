@@ -21,6 +21,7 @@ type worktreeBinding struct {
 
 func (s *Service) listBranches(ctx context.Context, repo repoContext) (*listBranchesResp, error) {
 	bindings, _ := readWorktreeBindings(ctx, repo.repoRootReal)
+	bindings = s.filterAccessibleWorktreeBindings(ctx, bindings)
 	format := strings.Join([]string{
 		"%(refname)",
 		"%(refname:short)",
@@ -43,12 +44,27 @@ func (s *Service) listBranches(ctx context.Context, repo repoContext) (*listBran
 	}
 	local, remote := parseBranchListOutput(out, repo, bindings)
 	return &listBranchesResp{
-		RepoRootPath: repo.repoRootVirtual,
+		RepoRootPath: repo.repoRootReal,
 		CurrentRef:   repo.headRef,
 		Detached:     repo.headRef == "HEAD" || repo.headRef == "",
 		Local:        local,
 		Remote:       remote,
 	}, nil
+}
+
+func (s *Service) filterAccessibleWorktreeBindings(ctx context.Context, bindings map[string]worktreeBinding) map[string]worktreeBinding {
+	if len(bindings) == 0 {
+		return nil
+	}
+	filtered := make(map[string]worktreeBinding, len(bindings))
+	for ref, binding := range bindings {
+		repoRootReal, err := s.validateRepoRootPath(ctx, binding.Path)
+		if err != nil {
+			continue
+		}
+		filtered[ref] = worktreeBinding{Ref: binding.Ref, Path: repoRootReal}
+	}
+	return filtered
 }
 
 func readWorktreeBindings(ctx context.Context, repoRoot string) (map[string]worktreeBinding, error) {
@@ -195,6 +211,7 @@ func (s *Service) getBranchCompare(ctx context.Context, repo repoContext, baseRe
 
 	var linkedWorktree *gitLinkedWorktreeSnapshot
 	if bindings, err := readWorktreeBindings(ctx, repo.repoRootReal); err == nil {
+		bindings = s.filterAccessibleWorktreeBindings(ctx, bindings)
 		if binding, ok := findWorktreeBinding(bindings, targetRef); ok {
 			if snapshot, err := s.readLinkedWorktreeSnapshot(ctx, binding.Path); err == nil {
 				linkedWorktree = snapshot
@@ -202,7 +219,7 @@ func (s *Service) getBranchCompare(ctx context.Context, repo repoContext, baseRe
 		}
 	}
 	return &getBranchCompareResp{
-		RepoRootPath:      repo.repoRootVirtual,
+		RepoRootPath:      repo.repoRootReal,
 		BaseRef:           baseRef,
 		TargetRef:         targetRef,
 		MergeBase:         mergeBase,
@@ -231,7 +248,11 @@ func findWorktreeBinding(bindings map[string]worktreeBinding, targetRef string) 
 }
 
 func (s *Service) readLinkedWorktreeSnapshot(ctx context.Context, worktreePath string) (*gitLinkedWorktreeSnapshot, error) {
-	repo, err := s.loadRepoContext(ctx, worktreePath, worktreePath)
+	repoRootReal, err := s.validateRepoRootPath(ctx, worktreePath)
+	if err != nil {
+		return nil, err
+	}
+	repo, err := s.loadRepoContext(ctx, repoRootReal)
 	if err != nil {
 		return nil, err
 	}
@@ -240,7 +261,7 @@ func (s *Service) readLinkedWorktreeSnapshot(ctx context.Context, worktreePath s
 		return nil, err
 	}
 	return &gitLinkedWorktreeSnapshot{
-		WorktreePath: worktreePath,
+		WorktreePath: repo.repoRootReal,
 		Summary:      workspace.Summary,
 		Staged:       workspace.Staged,
 		Unstaged:     workspace.Unstaged,

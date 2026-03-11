@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +12,24 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/rpc"
 	"github.com/floegence/redeven-agent/internal/session"
 )
+
+func mustMarshalJSON(t *testing.T, value any) []byte {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("json.Marshal(%T): %v", value, err)
+	}
+	return data
+}
+
+func mustEvalPathE2E(t *testing.T, value string) string {
+	t.Helper()
+	resolved, err := filepath.EvalSymlinks(value)
+	if err != nil {
+		t.Fatalf("filepath.EvalSymlinks(%q): %v", value, err)
+	}
+	return filepath.Clean(resolved)
+}
 
 func TestE2E_GitRepoRPC_ResolveListDetail(t *testing.T) {
 	t.Parallel()
@@ -46,11 +65,14 @@ func TestE2E_GitRepoRPC_ResolveListDetail(t *testing.T) {
 	if err := json.Unmarshal(resolvePayload, &resolveResp); err != nil {
 		t.Fatalf("unmarshal resolve: %v", err)
 	}
-	if !resolveResp.Available || resolveResp.RepoRootPath != "/" {
+	if !resolveResp.Available || mustEvalPathE2E(t, resolveResp.RepoRootPath) != mustEvalPathE2E(t, fixture.Root) {
 		t.Fatalf("unexpected resolve response: %+v", resolveResp)
 	}
 
-	listPayload, rpcErr, err := client.Call(context.Background(), TypeID_GIT_LIST_COMMITS, []byte(`{"repo_root_path":"/","limit":2}`))
+	listPayload, rpcErr, err := client.Call(context.Background(), TypeID_GIT_LIST_COMMITS, mustMarshalJSON(t, listCommitsReq{
+		RepoRootPath: fixture.Root,
+		Limit:        2,
+	}))
 	if err != nil {
 		t.Fatalf("list commits call: %v", err)
 	}
@@ -65,8 +87,8 @@ func TestE2E_GitRepoRPC_ResolveListDetail(t *testing.T) {
 		t.Fatalf("unexpected list response: %+v", listResp)
 	}
 
-	detailReq := getCommitDetailReq{RepoRootPath: "/", Commit: fixture.RenameCommit}
-	detailReqBytes, _ := json.Marshal(detailReq)
+	detailReq := getCommitDetailReq{RepoRootPath: fixture.Root, Commit: fixture.RenameCommit}
+	detailReqBytes := mustMarshalJSON(t, detailReq)
 	detailPayload, rpcErr, err := client.Call(context.Background(), TypeID_GIT_GET_COMMIT_DETAIL, detailReqBytes)
 	if err != nil {
 		t.Fatalf("get detail call: %v", err)
@@ -120,7 +142,11 @@ func TestE2E_GitRepoRPC_ListCommitsPagination(t *testing.T) {
 
 	client := rpc.NewClient(clientConn)
 
-	page1Payload, rpcErr, err := client.Call(context.Background(), TypeID_GIT_LIST_COMMITS, []byte(`{"repo_root_path":"/","offset":0,"limit":2}`))
+	page1Payload, rpcErr, err := client.Call(context.Background(), TypeID_GIT_LIST_COMMITS, mustMarshalJSON(t, listCommitsReq{
+		RepoRootPath: fixture.Root,
+		Offset:       0,
+		Limit:        2,
+	}))
 	if err != nil {
 		t.Fatalf("list commits page1 call: %v", err)
 	}
@@ -138,7 +164,11 @@ func TestE2E_GitRepoRPC_ListCommitsPagination(t *testing.T) {
 		t.Fatalf("unexpected page1 commits: %+v", page1.Commits)
 	}
 
-	page2Payload, rpcErr, err := client.Call(context.Background(), TypeID_GIT_LIST_COMMITS, []byte(`{"repo_root_path":"/","offset":2,"limit":2}`))
+	page2Payload, rpcErr, err := client.Call(context.Background(), TypeID_GIT_LIST_COMMITS, mustMarshalJSON(t, listCommitsReq{
+		RepoRootPath: fixture.Root,
+		Offset:       2,
+		Limit:        2,
+	}))
 	if err != nil {
 		t.Fatalf("list commits page2 call: %v", err)
 	}
@@ -174,7 +204,9 @@ func TestE2E_GitRepoRPC_WorkbenchEndpoints(t *testing.T) {
 	client, closeServer := startGitRepoRPCSession(t, svc)
 	defer closeServer()
 
-	summaryPayload, rpcErr, err := client.Call(context.Background(), TypeID_GIT_GET_REPO_SUMMARY, []byte(`{"repo_root_path":"/"}`))
+	summaryPayload, rpcErr, err := client.Call(context.Background(), TypeID_GIT_GET_REPO_SUMMARY, mustMarshalJSON(t, getRepoSummaryReq{
+		RepoRootPath: fixture.Root,
+	}))
 	if err != nil {
 		t.Fatalf("get repo summary call: %v", err)
 	}
@@ -185,8 +217,8 @@ func TestE2E_GitRepoRPC_WorkbenchEndpoints(t *testing.T) {
 	if err := json.Unmarshal(summaryPayload, &summaryResp); err != nil {
 		t.Fatalf("unmarshal get repo summary: %v", err)
 	}
-	if summaryResp.RepoRootPath != "/" {
-		t.Fatalf("summary repo_root_path=%q, want /", summaryResp.RepoRootPath)
+	if mustEvalPathE2E(t, summaryResp.RepoRootPath) != mustEvalPathE2E(t, fixture.Root) {
+		t.Fatalf("summary repo_root_path=%q, want %q", summaryResp.RepoRootPath, fixture.Root)
 	}
 	if summaryResp.HeadRef != compare.BaseBranch {
 		t.Fatalf("summary head_ref=%q, want %q", summaryResp.HeadRef, compare.BaseBranch)
@@ -195,7 +227,9 @@ func TestE2E_GitRepoRPC_WorkbenchEndpoints(t *testing.T) {
 		t.Fatalf("unexpected workspace summary: %+v", summaryResp.WorkspaceSummary)
 	}
 
-	workspacePayload, rpcErr, err := client.Call(context.Background(), TypeID_GIT_LIST_WORKSPACE, []byte(`{"repo_root_path":"/"}`))
+	workspacePayload, rpcErr, err := client.Call(context.Background(), TypeID_GIT_LIST_WORKSPACE, mustMarshalJSON(t, listWorkspaceChangesReq{
+		RepoRootPath: fixture.Root,
+	}))
 	if err != nil {
 		t.Fatalf("list workspace call: %v", err)
 	}
@@ -222,7 +256,9 @@ func TestE2E_GitRepoRPC_WorkbenchEndpoints(t *testing.T) {
 		t.Fatalf("untracked entry should not include patch text: %+v", workspaceResp.Untracked[0])
 	}
 
-	branchesPayload, rpcErr, err := client.Call(context.Background(), TypeID_GIT_LIST_BRANCHES, []byte(`{"repo_root_path":"/"}`))
+	branchesPayload, rpcErr, err := client.Call(context.Background(), TypeID_GIT_LIST_BRANCHES, mustMarshalJSON(t, listBranchesReq{
+		RepoRootPath: fixture.Root,
+	}))
 	if err != nil {
 		t.Fatalf("list branches call: %v", err)
 	}
@@ -248,12 +284,12 @@ func TestE2E_GitRepoRPC_WorkbenchEndpoints(t *testing.T) {
 	}
 
 	compareReq := getBranchCompareReq{
-		RepoRootPath: "/",
+		RepoRootPath: fixture.Root,
 		BaseRef:      compare.BaseBranch,
 		TargetRef:    compare.Branch,
 		Limit:        20,
 	}
-	compareReqBytes, _ := json.Marshal(compareReq)
+	compareReqBytes := mustMarshalJSON(t, compareReq)
 	comparePayload, rpcErr, err := client.Call(context.Background(), TypeID_GIT_GET_BRANCH_DIFF, compareReqBytes)
 	if err != nil {
 		t.Fatalf("get branch compare call: %v", err)
