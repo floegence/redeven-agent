@@ -141,6 +141,65 @@ func TestListWorkspaceChanges_EmbedsPatchText(t *testing.T) {
 	if resp.Staged[0].DisplayPath != workspace.TrackedPath || resp.Unstaged[0].DisplayPath != workspace.TrackedPath {
 		t.Fatalf("workspace display path mismatch: staged=%+v unstaged=%+v", resp.Staged[0], resp.Unstaged[0])
 	}
+	if len(resp.Conflicted) != 0 || resp.Summary.ConflictedCount != 0 {
+		t.Fatalf("ordinary unstaged changes must not be classified as conflicted: %+v", resp)
+	}
+}
+
+func TestListWorkspaceChanges_DoesNotClassifyOrdinaryDiffAsConflicted(t *testing.T) {
+	t.Parallel()
+	fixture := createTestRepoFixture(t)
+	createWorkspaceChangesFixture(t, fixture.Root)
+	svc := NewService(fixture.Root)
+	repo, err := svc.resolveExplicitRepo(context.Background(), "/")
+	if err != nil {
+		t.Fatalf("resolveExplicitRepo: %v", err)
+	}
+
+	resp, err := svc.listWorkspaceChanges(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("listWorkspaceChanges: %v", err)
+	}
+	if len(resp.Unstaged) != 1 {
+		t.Fatalf("unstaged=%d, want 1", len(resp.Unstaged))
+	}
+	if len(resp.Conflicted) != 0 {
+		t.Fatalf("conflicted=%d, want 0; resp=%+v", len(resp.Conflicted), resp.Conflicted)
+	}
+	if resp.Summary.ConflictedCount != 0 {
+		t.Fatalf("conflicted_count=%d, want 0", resp.Summary.ConflictedCount)
+	}
+}
+
+func TestListWorkspaceChanges_ReportsOnlyRealConflictsInConflictedSection(t *testing.T) {
+	t.Parallel()
+	fixture := createTestRepoFixture(t)
+	conflict := createWorkspaceConflictFixture(t, fixture.Root)
+	svc := NewService(fixture.Root)
+	repo, err := svc.resolveExplicitRepo(context.Background(), "/")
+	if err != nil {
+		t.Fatalf("resolveExplicitRepo: %v", err)
+	}
+
+	resp, err := svc.listWorkspaceChanges(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("listWorkspaceChanges: %v", err)
+	}
+	if len(resp.Conflicted) != 1 || resp.Summary.ConflictedCount != 1 {
+		t.Fatalf("unexpected conflicted payload: summary=%+v conflicted=%+v", resp.Summary, resp.Conflicted)
+	}
+	if resp.Conflicted[0].Path != conflict.ConflictPath || resp.Conflicted[0].DisplayPath != conflict.ConflictPath {
+		t.Fatalf("unexpected conflicted path: %+v", resp.Conflicted[0])
+	}
+	if resp.Conflicted[0].ChangeType != "conflicted" {
+		t.Fatalf("changeType=%q, want conflicted", resp.Conflicted[0].ChangeType)
+	}
+	if !strings.Contains(resp.Conflicted[0].PatchText, "diff --cc") {
+		t.Fatalf("expected combined diff patch text, got: %q", resp.Conflicted[0].PatchText)
+	}
+	if len(resp.Unstaged) != 0 {
+		t.Fatalf("conflicted file must not also leak into unstaged: %+v", resp.Unstaged)
+	}
 }
 
 func TestStageAndUnstageWorkspacePaths(t *testing.T) {

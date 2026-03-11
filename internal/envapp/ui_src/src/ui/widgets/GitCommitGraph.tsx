@@ -307,8 +307,8 @@ export function GitCommitGraph(props: GitCommitGraphProps) {
                   data-graph-columns={row.columns}
                   style={{ 'grid-template-columns': `${width()}px minmax(0, 1fr)` }}
                   class={cn(
-                    'grid w-full appearance-none items-stretch bg-transparent text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70 focus-visible:ring-offset-1',
-                    selected() ? 'bg-sidebar-accent/18' : 'hover:bg-muted/[0.18]',
+                    'grid w-full cursor-pointer appearance-none items-stretch bg-transparent text-left transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70 focus-visible:ring-offset-1',
+                    selected() ? 'bg-sidebar-accent text-sidebar-accent-foreground' : 'hover:bg-muted/[0.28]',
                   )}
                   onClick={() => props.onSelect?.(row.commit.hash)}
                 >
@@ -322,23 +322,34 @@ export function GitCommitGraph(props: GitCommitGraphProps) {
                     )}
                   >
                     <div class="flex items-center gap-2 leading-tight">
-                      <span class="min-w-0 flex-1 truncate text-[11px] font-medium text-foreground">{row.commit.subject || '(no subject)'}</span>
-                      <span class="rounded bg-muted/[0.26] px-1.5 py-0.5 font-mono text-[9px] text-muted-foreground">{row.commit.shortHash}</span>
+                      <span class={cn('min-w-0 flex-1 truncate text-[11px] font-medium', selected() ? 'text-sidebar-accent-foreground' : 'text-foreground')}>
+                        {row.commit.subject || '(no subject)'}
+                      </span>
+                      <span
+                        class={cn(
+                          'rounded px-1.5 py-0.5 font-mono text-[9px]',
+                          selected()
+                            ? 'bg-background/18 text-sidebar-accent-foreground/82'
+                            : 'bg-muted/[0.26] text-muted-foreground',
+                        )}
+                      >
+                        {row.commit.shortHash}
+                      </span>
                     </div>
-                    <div class="mt-0.5 flex flex-wrap items-center gap-1 text-[9px] leading-tight text-muted-foreground">
+                    <div class={cn('mt-0.5 flex flex-wrap items-center gap-1 text-[9px] leading-tight', selected() ? 'text-sidebar-accent-foreground/72' : 'text-muted-foreground')}>
                       <span class="truncate">{row.commit.authorName || 'Unknown author'}</span>
                       <span aria-hidden="true">·</span>
                       <span>{formatRelativeTime(row.commit.authorTimeMs)}</span>
                       <Show when={Boolean(mergeLabel())}>
                         <>
                           <span aria-hidden="true">·</span>
-                          <span class="text-violet-700 dark:text-violet-300">{mergeLabel()}</span>
+                          <span class={selected() ? 'text-sidebar-accent-foreground/86' : 'text-violet-700 dark:text-violet-300'}>{mergeLabel()}</span>
                         </>
                       </Show>
                       <Show when={selected()}>
                         <>
                           <span aria-hidden="true">·</span>
-                          <span class="text-primary">Selected</span>
+                          <span class="text-sidebar-accent-foreground">Selected</span>
                         </>
                       </Show>
                     </div>

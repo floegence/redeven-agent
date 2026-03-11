@@ -89,8 +89,6 @@ describe('GitWorkbench interactions', () => {
       expect(refreshCount).toBe(1);
       expect(host.textContent).toContain('Branches');
       expect(host.textContent).toContain('/workspace/repo');
-      expect(host.textContent).toContain('3 changes');
-      expect(host.textContent).toContain('2 pending');
       expect(host.textContent).toContain('Status');
       expect(host.textContent).toContain('Branch is not checked out');
       expect(host.textContent).toContain('Status is only available for checked-out local worktrees.');

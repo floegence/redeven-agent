@@ -13,7 +13,7 @@ import {
 import { gitChangeTone, gitToneDotClass, workspaceSectionTone } from './GitChrome';
 import { GitCommitDialog } from './GitCommitDialog';
 import { GitDiffDialog } from './GitDiffDialog';
-import { GitChangeMetrics, GitMetaPill, GitSubtleNote } from './GitWorkbenchPrimitives';
+import { GitChangeMetrics, GitLabelBlock, GitMetaPill, GitPrimaryTitle, GitSubtleNote } from './GitWorkbenchPrimitives';
 
 export interface GitChangesPanelProps {
   repoSummary?: GitRepoSummaryResponse | null;
@@ -198,41 +198,43 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
         <Show when={!props.loading} fallback={<div class="flex flex-1 items-center text-xs text-muted-foreground">Loading workspace changes...</div>}>
           <Show when={!props.error} fallback={<div class="flex flex-1 items-center text-xs text-error">{props.error}</div>}>
             <div class="flex min-h-0 flex-1 flex-col gap-3">
-              <div class="flex shrink-0 flex-wrap items-start justify-between gap-3">
-                <div class="min-w-0 flex-1">
-                  <div class="flex flex-wrap items-center gap-2">
-                    <div class="text-sm font-medium text-foreground">{visibleSectionLabel()}</div>
-                    <GitMetaPill tone={selectedTone()}>{visibleItems().length} file{visibleItems().length === 1 ? '' : 's'}</GitMetaPill>
-                    <Show when={stagedCount() > 0}>
-                      <GitMetaPill tone="success">{stagedCount()} staged</GitMetaPill>
-                    </Show>
+              <div class="shrink-0 rounded-md border border-border/70 bg-card px-3 py-2.5 shadow-sm shadow-black/5 ring-1 ring-black/[0.02]">
+                <div class="flex flex-wrap items-start justify-between gap-3">
+                  <GitLabelBlock class="min-w-0 flex-1" label="Workspace" tone={selectedTone()}>
+                    <div class="flex flex-wrap items-center gap-2">
+                      <GitPrimaryTitle>{visibleSectionLabel()}</GitPrimaryTitle>
+                      <GitMetaPill tone={selectedTone()}>{visibleItems().length} file{visibleItems().length === 1 ? '' : 's'}</GitMetaPill>
+                      <Show when={stagedCount() > 0}>
+                        <GitMetaPill tone="success">{stagedCount()} staged</GitMetaPill>
+                      </Show>
+                    </div>
+                    <div class="text-[11px] leading-relaxed text-muted-foreground">
+                      {selectedSection() === 'staged'
+                        ? 'Review the staged snapshot, then commit it from the dialog.'
+                        : 'Stage the files you want from this table, then commit them from the staged dialog.'}
+                    </div>
+                  </GitLabelBlock>
+                  <div class="flex shrink-0 items-center justify-end gap-2 self-start">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      class="rounded-md"
+                      onClick={() => props.onBulkAction?.(selectedSection())}
+                      disabled={visibleItems().length === 0 || bulkActionBusy()}
+                      loading={bulkActionBusy()}
+                    >
+                      {bulkActionLabel()}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="default"
+                      class="rounded-md"
+                      onClick={() => setCommitDialogOpen(true)}
+                      disabled={stagedCount() === 0}
+                    >
+                      Commit...
+                    </Button>
                   </div>
-                  <div class="mt-1 text-xs text-muted-foreground">
-                    {selectedSection() === 'staged'
-                      ? 'Review the staged snapshot, then commit it from the dialog.'
-                      : 'Stage the files you want from this table, then commit them from the staged dialog.'}
-                  </div>
-                </div>
-                <div class="flex shrink-0 items-center justify-end gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    class="rounded-md"
-                    onClick={() => props.onBulkAction?.(selectedSection())}
-                    disabled={visibleItems().length === 0 || bulkActionBusy()}
-                    loading={bulkActionBusy()}
-                  >
-                    {bulkActionLabel()}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="default"
-                    class="rounded-md"
-                    onClick={() => setCommitDialogOpen(true)}
-                    disabled={stagedCount() === 0}
-                  >
-                    Commit...
-                  </Button>
                 </div>
               </div>
 

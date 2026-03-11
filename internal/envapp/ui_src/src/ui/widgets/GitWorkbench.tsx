@@ -12,12 +12,12 @@ import type {
   GitWorkspaceChange,
   GitWorkspaceSection,
 } from '../protocol/redeven_v1';
-import { repoDisplayName, summarizePendingWorkspaceCount, summarizeWorkspaceCount, syncStatusLabel, type GitBranchSubview, type GitWorkbenchSubview } from '../utils/gitWorkbench';
+import { repoDisplayName, syncStatusLabel, type GitBranchSubview, type GitWorkbenchSubview } from '../utils/gitWorkbench';
 import { GitChangesPanel } from './GitChangesPanel';
 import { GitBranchesPanel } from './GitBranchesPanel';
 import { GitHistoryBrowser } from './GitHistoryBrowser';
-import { gitSubviewTone, gitToneActionButtonClass, gitToneDotClass } from './GitChrome';
-import { GitMetaPill } from './GitWorkbenchPrimitives';
+import { gitSubviewTone, gitToneActionButtonClass } from './GitChrome';
+import { GitLabelBlock, GitMetaPill, GitPrimaryTitle } from './GitWorkbenchPrimitives';
 
 export interface GitWorkbenchProps {
   repoInfo?: GitResolveRepoResponse | null;
@@ -83,8 +83,6 @@ function normalizeSubview(view: GitWorkbenchSubview): GitWorkbenchSubview {
 export function GitWorkbench(props: GitWorkbenchProps) {
   const repoLabel = () => repoDisplayName(props.repoSummary?.repoRootPath || props.repoInfo?.repoRootPath || props.currentPath);
   const repoPath = () => String(props.repoSummary?.repoRootPath || props.repoInfo?.repoRootPath || props.currentPath || '/').trim() || '/';
-  const changeCount = () => summarizeWorkspaceCount(props.workspace?.summary ?? props.repoSummary?.workspaceSummary);
-  const pendingCount = () => summarizePendingWorkspaceCount(props.workspace?.summary ?? props.repoSummary?.workspaceSummary);
   const headRef = () => String(props.repoSummary?.headRef || props.repoInfo?.headRef || '').trim();
   const loadingBusy = () => Boolean(props.repoInfoLoading || props.repoSummaryLoading || props.workspaceLoading || props.branchesLoading);
   const activeSubview = () => normalizeSubview(props.subview);
@@ -92,31 +90,33 @@ export function GitWorkbench(props: GitWorkbenchProps) {
 
   return (
     <div class={cn('relative flex h-full min-h-0 flex-col bg-background', props.class)}>
-      <div class="shrink-0 border-b border-border/45 bg-background/95 px-3 py-2.5 shadow-[0_1px_0_rgba(255,255,255,0.04)_inset] backdrop-blur">
+      <div class="shrink-0 border-b border-border/50 bg-background/92 px-3 py-2 backdrop-blur-sm">
         <div class="flex flex-wrap items-start justify-between gap-3">
-          <div class="min-w-0 flex-1">
-            <div class="flex flex-wrap items-center gap-2">
-              <span class={cn('h-2 w-2 shrink-0 rounded-full', gitToneDotClass(subviewTone()))} aria-hidden="true" />
-              <div class="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground/70">{subviewLabel(activeSubview())}</div>
-              <GitMetaPill tone={subviewTone()}>{headRef() || 'Detached HEAD'}</GitMetaPill>
-              <GitMetaPill tone={changeCount() > 0 ? 'warning' : 'success'}>
-                {changeCount() > 0 ? `${changeCount()} changes` : 'Clean workspace'}
-              </GitMetaPill>
-              <Show when={pendingCount() > 0}>
-                <GitMetaPill tone="warning">{pendingCount()} pending</GitMetaPill>
+          <GitLabelBlock
+            class="min-w-0 flex-1"
+            label={subviewLabel(activeSubview())}
+            tone={subviewTone()}
+            meta={
+              <>
+                <GitMetaPill tone={subviewTone()}>{headRef() || 'Detached HEAD'}</GitMetaPill>
+                <Show when={loadingBusy()}>
+                  <GitMetaPill tone="neutral">Refreshing…</GitMetaPill>
+                </Show>
+              </>
+            }
+          >
+            <div class="flex flex-wrap items-center gap-2.5">
+              <GitPrimaryTitle class="min-w-0 max-w-full truncate">
+                {repoLabel()}
+              </GitPrimaryTitle>
+              <Show when={props.repoSummary && (props.repoSummary.aheadCount || props.repoSummary.behindCount)}>
+                <GitMetaPill tone="info">{syncStatusLabel(props.repoSummary?.aheadCount, props.repoSummary?.behindCount)}</GitMetaPill>
               </Show>
             </div>
-            <div class="mt-2 max-w-full truncate text-base font-semibold tracking-tight text-foreground">{repoLabel()}</div>
-            <div class="mt-1 max-w-full truncate text-[11px] text-muted-foreground">{repoPath()}</div>
-          </div>
+            <div class="min-w-0 max-w-full truncate text-[11px] text-muted-foreground">{repoPath()}</div>
+          </GitLabelBlock>
 
-          <div class="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
-            <Show when={props.repoSummary && (props.repoSummary.aheadCount || props.repoSummary.behindCount)}>
-              <GitMetaPill tone="info">{syncStatusLabel(props.repoSummary?.aheadCount, props.repoSummary?.behindCount)}</GitMetaPill>
-            </Show>
-            <Show when={loadingBusy()}>
-              <GitMetaPill tone="neutral">Refreshing…</GitMetaPill>
-            </Show>
+          <div class="flex shrink-0 flex-wrap items-center justify-end gap-1.5 self-start">
             <Show when={props.showMobileSidebarButton && props.onToggleSidebar}>
               <Button
                 size="xs"

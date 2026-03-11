@@ -6,7 +6,7 @@ import { useRedevenRpc, type GitCommitDetail, type GitCommitFileSummary, type Gi
 import { changeSecondaryPath, gitDiffEntryIdentity } from '../utils/gitWorkbench';
 import { gitChangeTone, gitToneDotClass } from './GitChrome';
 import { GitDiffDialog } from './GitDiffDialog';
-import { GitChangeMetrics, GitMetaPill, GitSection, GitSubtleNote } from './GitWorkbenchPrimitives';
+import { GitChangeMetrics, GitLabelBlock, GitMetaPill, GitPrimaryTitle, GitSubtleNote } from './GitWorkbenchPrimitives';
 
 const COMMIT_BODY_PREVIEW_LINES = 2;
 const COMMIT_BODY_PREVIEW_CHARS = 160;
@@ -153,54 +153,64 @@ export function GitHistoryBrowser(props: GitHistoryBrowserProps) {
                   return (
                     <div class="flex-1 min-h-0 overflow-auto px-3 py-3 sm:px-4 sm:py-4">
                       <div class="space-y-3">
-                        <GitSection label="Commit Overview" aside={detail.shortHash} tone="brand">
-                          <div class="space-y-2">
-                            <div class="space-y-1">
-                              <div class="text-sm font-medium leading-snug text-foreground">{detail.subject || '(no subject)'}</div>
-                              <div class="flex flex-wrap items-center gap-1.5">
+                        <section class="rounded-md border border-border/70 bg-card px-3 py-2.5 shadow-sm shadow-black/5 ring-1 ring-black/[0.02]">
+                          <div class="flex flex-wrap items-start justify-between gap-3">
+                            <GitLabelBlock
+                              class="min-w-0 flex-1"
+                              label="Commit Overview"
+                              tone="brand"
+                              meta={<GitMetaPill tone="neutral">{detail.shortHash}</GitMetaPill>}
+                            >
+                              <GitPrimaryTitle class="max-w-3xl">
+                                {detail.subject || '(no subject)'}
+                              </GitPrimaryTitle>
+                              <div class="flex flex-wrap items-center gap-1 pt-0.5">
                                 <GitMetaPill tone="info">{detail.authorName || 'Unknown author'}</GitMetaPill>
                                 <GitMetaPill tone="neutral">{formatDetailTime(detail.authorTimeMs)}</GitMetaPill>
                                 <GitMetaPill tone="neutral">{commitFiles().length} file{commitFiles().length === 1 ? '' : 's'}</GitMetaPill>
                                 <GitMetaPill tone="neutral">{detail.parents.length > 0 ? `${detail.parents.length} parent${detail.parents.length === 1 ? '' : 's'}` : 'Root commit'}</GitMetaPill>
                               </div>
-                            </div>
-                            <Show when={commitBodyText()}>
-                              <div class="space-y-1.5">
-                                <GitSubtleNote>
-                                  <div
-                                    class="whitespace-pre-wrap break-words text-foreground"
-                                    style={commitBodyExpanded()
-                                      ? undefined
-                                      : {
-                                          display: '-webkit-box',
-                                          '-webkit-box-orient': 'vertical',
-                                          '-webkit-line-clamp': String(COMMIT_BODY_PREVIEW_LINES),
-                                          overflow: 'hidden',
-                                        }}
-                                  >
-                                    {commitBodyText()}
-                                  </div>
-                                </GitSubtleNote>
-                                <Show when={hasExpandableCommitBody()}>
-                                  <div class="flex justify-end">
-                                    <button
-                                      type="button"
-                                      aria-expanded={commitBodyExpanded()}
-                                      class="cursor-pointer text-[11px] text-muted-foreground transition-colors duration-150 hover:text-foreground"
-                                      onClick={() => setCommitBodyExpanded((value) => !value)}
+                              <Show when={commitBodyText()}>
+                                <div class="space-y-1 pt-0.5">
+                                  <GitSubtleNote>
+                                    <div
+                                      class="whitespace-pre-wrap break-words text-foreground"
+                                      style={commitBodyExpanded()
+                                        ? undefined
+                                        : {
+                                            display: '-webkit-box',
+                                            '-webkit-box-orient': 'vertical',
+                                            '-webkit-line-clamp': String(COMMIT_BODY_PREVIEW_LINES),
+                                            overflow: 'hidden',
+                                          }}
                                     >
-                                      {commitBodyExpanded() ? 'Show less' : 'Show more'}
-                                    </button>
-                                  </div>
-                                </Show>
-                              </div>
-                            </Show>
+                                      {commitBodyText()}
+                                    </div>
+                                  </GitSubtleNote>
+                                  <Show when={hasExpandableCommitBody()}>
+                                    <div class="flex justify-end">
+                                      <button
+                                        type="button"
+                                        aria-expanded={commitBodyExpanded()}
+                                        class="cursor-pointer text-[11px] text-muted-foreground transition-colors duration-150 hover:text-foreground"
+                                        onClick={() => setCommitBodyExpanded((value) => !value)}
+                                      >
+                                        {commitBodyExpanded() ? 'Show less' : 'Show more'}
+                                      </button>
+                                    </div>
+                                  </Show>
+                                </div>
+                              </Show>
+                            </GitLabelBlock>
                           </div>
-                        </GitSection>
+                        </section>
 
-                        <GitSection label="Files in Commit" description="Click a file to inspect its diff in a dialog." aside={String(commitFiles().length)} tone="info">
+                        <section class="rounded-md border border-border/70 bg-card px-3 py-2.5 shadow-sm shadow-black/5 ring-1 ring-black/[0.02]">
+                          <GitLabelBlock class="min-w-0" label="Files in Commit" tone="info" meta={<GitMetaPill tone="neutral">{String(commitFiles().length)}</GitMetaPill>}>
+                            <div class="text-xs leading-relaxed text-muted-foreground">Click a file to inspect its diff in a dialog.</div>
+                          </GitLabelBlock>
                           <Show when={commitFiles().length > 0} fallback={<GitSubtleNote>No changed files are available for this commit.</GitSubtleNote>}>
-                            <div class="overflow-hidden rounded-md border border-border/65 bg-card">
+                            <div class="mt-2.5 overflow-hidden rounded-md border border-border/65 bg-card">
                               <div class="min-h-0 overflow-auto">
                                 <table class="w-full min-w-[42rem] text-xs md:min-w-0">
                                   <thead class="sticky top-0 z-10 bg-muted/30 backdrop-blur">
@@ -266,7 +276,7 @@ export function GitHistoryBrowser(props: GitHistoryBrowserProps) {
                               </div>
                             </div>
                           </Show>
-                        </GitSection>
+                        </section>
                       </div>
                     </div>
                   );

@@ -56,15 +56,15 @@ func (s *Service) listWorkspaceChanges(ctx context.Context, repo repoContext) (*
 	if err != nil {
 		return nil, err
 	}
-	staged, err := s.readWorkspaceDiffSection(ctx, repo.repoRootReal, "staged")
+	staged, err := s.readWorkspaceSectionChanges(ctx, repo.repoRootReal, "staged", status.Staged)
 	if err != nil {
 		return nil, err
 	}
-	unstaged, err := s.readWorkspaceDiffSection(ctx, repo.repoRootReal, "unstaged")
+	unstaged, err := s.readWorkspaceSectionChanges(ctx, repo.repoRootReal, "unstaged", status.Unstaged)
 	if err != nil {
 		return nil, err
 	}
-	conflicted, err := s.readWorkspaceDiffSection(ctx, repo.repoRootReal, "conflicted")
+	conflicted, err := s.readWorkspaceSectionChanges(ctx, repo.repoRootReal, "conflicted", status.Conflicted)
 	if err != nil {
 		return nil, err
 	}
@@ -99,7 +99,10 @@ func workspacePatchArgs(section string) ([]string, error) {
 	return base, nil
 }
 
-func (s *Service) readWorkspaceDiffSection(ctx context.Context, repoRoot string, section string) ([]gitWorkspaceChange, error) {
+func (s *Service) readWorkspaceSectionChanges(ctx context.Context, repoRoot string, section string, statusItems []gitWorkspaceChange) ([]gitWorkspaceChange, error) {
+	if len(statusItems) == 0 {
+		return nil, nil
+	}
 	args, err := workspacePatchArgs(section)
 	if err != nil {
 		return nil, err
@@ -108,15 +111,55 @@ func (s *Service) readWorkspaceDiffSection(ctx context.Context, repoRoot string,
 	if err != nil {
 		return nil, err
 	}
-	changes := make([]gitWorkspaceChange, 0, len(entries))
+
+	patchByPath := make(map[string]gitDiffEntryData, len(entries))
 	for _, entry := range entries {
-		change := entry.toWorkspaceChange(section)
+		for _, key := range workspaceSectionMatchKeys(entry.toWorkspaceChange(section)) {
+			if key == "" {
+				continue
+			}
+			patchByPath[key] = entry
+		}
+	}
+
+	changes := make([]gitWorkspaceChange, 0, len(statusItems))
+	for _, item := range statusItems {
+		change := item
+		change.Section = section
 		if section == "conflicted" {
 			change.ChangeType = "conflicted"
+		}
+		for _, key := range workspaceSectionMatchKeys(change) {
+			if key == "" {
+				continue
+			}
+			entry, ok := patchByPath[key]
+			if !ok {
+				continue
+			}
+			change.Path = firstNonEmptyPath(change.Path, entry.Path)
+			change.OldPath = firstNonEmptyPath(change.OldPath, entry.OldPath)
+			change.NewPath = firstNonEmptyPath(change.NewPath, entry.NewPath)
+			change.DisplayPath = firstNonEmptyPath(change.DisplayPath, entry.DisplayPath, entry.Path, entry.NewPath, entry.OldPath)
+			change.Additions = entry.Additions
+			change.Deletions = entry.Deletions
+			change.IsBinary = entry.IsBinary
+			change.PatchText = entry.PatchText
+			change.PatchTruncated = entry.PatchTruncated
+			break
 		}
 		changes = append(changes, change)
 	}
 	return changes, nil
+}
+
+func workspaceSectionMatchKeys(item gitWorkspaceChange) []string {
+	return []string{
+		firstNonEmptyPath(item.DisplayPath),
+		firstNonEmptyPath(item.Path),
+		firstNonEmptyPath(item.NewPath),
+		firstNonEmptyPath(item.OldPath),
+	}
 }
 
 func decorateUntrackedWorkspaceChanges(items []gitWorkspaceChange) []gitWorkspaceChange {

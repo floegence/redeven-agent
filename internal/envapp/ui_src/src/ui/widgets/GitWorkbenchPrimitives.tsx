@@ -18,11 +18,11 @@ export function GitSection(props: GitSectionProps) {
       <div class="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-1.5">
         <div class="min-w-0 space-y-1">
           <div class="flex items-center gap-2">
-            <span class={cn('h-1.5 w-1.5 shrink-0 rounded-full', gitToneDotClass(props.tone))} aria-hidden="true" />
+            <span class={cn('h-2 w-2 shrink-0 rounded-full shadow-[0_0_0_3px_rgba(255,255,255,0.04)]', gitToneDotClass(props.tone))} aria-hidden="true" />
             <div class="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground/75">{props.label}</div>
           </div>
           <Show when={props.description}>
-            <div class="pl-3.5 text-xs leading-relaxed text-muted-foreground">{props.description}</div>
+            <div class="pl-4 text-xs leading-relaxed text-muted-foreground">{props.description}</div>
           </Show>
         </div>
         <Show when={props.aside}>
@@ -31,9 +31,35 @@ export function GitSection(props: GitSectionProps) {
       </div>
 
       <Show when={props.children}>
-        <div class={cn('mt-3 pl-3.5', props.bodyClass)}>{props.children}</div>
+        <div class={cn('mt-2.5 pl-4', props.bodyClass)}>{props.children}</div>
       </Show>
     </section>
+  );
+}
+
+export interface GitLabelBlockProps {
+  label: string;
+  tone?: GitChromeTone;
+  meta?: JSX.Element;
+  class?: string;
+  bodyClass?: string;
+  children?: JSX.Element;
+}
+
+export function GitLabelBlock(props: GitLabelBlockProps) {
+  return (
+    <div class={cn('space-y-1', props.class)}>
+      <div class="flex flex-wrap items-center gap-2">
+        <span class={cn('h-2 w-2 shrink-0 rounded-full shadow-[0_0_0_3px_rgba(255,255,255,0.04)]', gitToneDotClass(props.tone))} aria-hidden="true" />
+        <div class="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground/75">{props.label}</div>
+        <Show when={props.meta}>
+          <div class="flex min-w-0 flex-wrap items-center gap-1.5">{props.meta}</div>
+        </Show>
+      </div>
+      <Show when={props.children}>
+        <div class={cn('space-y-1 pl-4', props.bodyClass)}>{props.children}</div>
+      </Show>
+    </div>
   );
 }
 
@@ -88,6 +114,15 @@ export function GitMetaPill(props: GitMetaPillProps) {
       <span class="truncate">{props.children}</span>
     </span>
   );
+}
+
+export interface GitPrimaryTitleProps {
+  class?: string;
+  children: JSX.Element;
+}
+
+export function GitPrimaryTitle(props: GitPrimaryTitleProps) {
+  return <div class={cn('text-[13px] font-bold leading-5 tracking-tight text-foreground', props.class)}>{props.children}</div>;
 }
 
 export interface GitChangeMetricsProps {

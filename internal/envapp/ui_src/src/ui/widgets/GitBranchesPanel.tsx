@@ -22,7 +22,7 @@ import {
 } from '../utils/gitWorkbench';
 import { gitBranchTone, gitChangeTone, gitCompareTone, gitToneActionButtonClass, gitToneBadgeClass, gitToneDotClass, gitToneSelectableCardClass, workspaceSectionTone } from './GitChrome';
 import { GitDiffDialog } from './GitDiffDialog';
-import { GitChangeMetrics, GitMetaPill, GitSubtleNote } from './GitWorkbenchPrimitives';
+import { GitChangeMetrics, GitLabelBlock, GitMetaPill, GitPrimaryTitle, GitSubtleNote } from './GitWorkbenchPrimitives';
 
 export interface GitBranchesPanelProps {
   repoRootPath?: string;
@@ -793,12 +793,7 @@ export function GitBranchesPanel(props: GitBranchesPanelProps) {
           <div class="flex min-h-0 flex-1 flex-col gap-3">
             <section class="rounded-md border border-border/65 bg-card px-3 py-2.5">
               <div class="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-1.5">
-                <div class="min-w-0 space-y-1">
-                  <div class="flex items-center gap-2">
-                    <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/35" aria-hidden="true" />
-                    <div class="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground/75">Status</div>
-                  </div>
-                </div>
+                <GitLabelBlock class="min-w-0" label="Status" tone="neutral" />
 
                 <div class="flex min-w-fit items-start justify-end">
                   <Button size="sm" variant="outline" class="rounded-md bg-background/80" onClick={() => setCompareDialogOpen(true)}>
@@ -807,7 +802,7 @@ export function GitBranchesPanel(props: GitBranchesPanelProps) {
                 </div>
               </div>
 
-              <div class="mt-3 pl-3.5">
+              <div class="mt-2.5 pl-4">
                 <Show
                   when={!visibleStatusLoading()}
                   fallback={(
@@ -905,41 +900,49 @@ export function GitBranchesPanel(props: GitBranchesPanelProps) {
         <Show when={!props.branchesError} fallback={<div class="flex-1 px-3 py-4 text-xs break-words text-error">{props.branchesError}</div>}>
           <Show when={props.selectedBranch} fallback={<div class="flex-1 px-3 py-4 text-xs text-muted-foreground">Choose a branch from the sidebar to inspect its status or history.</div>}>
             <div class="flex h-full min-h-0 flex-col overflow-hidden">
-              <div class="shrink-0 border-b border-border/45 px-3 py-3 sm:px-4">
-                <div class="flex flex-wrap items-start justify-between gap-3">
-                  <div class="min-w-0 flex-1">
-                    <div class="flex flex-wrap items-center gap-2">
-                      <div class="text-sm font-medium text-foreground">{branchDisplayName(props.selectedBranch)}</div>
-                      <Show when={props.selectedBranch?.current}>
-                        <GitMetaPill tone="success">Current</GitMetaPill>
-                      </Show>
-                      <Show when={props.selectedBranch?.kind === 'remote'}>
-                        <GitMetaPill tone="violet">Remote</GitMetaPill>
-                      </Show>
-                    </div>
-                    <div class="mt-1 text-xs text-muted-foreground">{branchStatusSummary(props.selectedBranch)}</div>
-                  </div>
+              <div class="shrink-0 px-3 py-3 sm:px-4 sm:py-4">
+                <div class="rounded-md border border-border/70 bg-card px-3 py-2.5 shadow-sm shadow-black/5 ring-1 ring-black/[0.02]">
+                  <div class="flex flex-wrap items-start justify-between gap-3">
+                    <GitLabelBlock
+                      class="min-w-0 flex-1"
+                      label="Branch"
+                      tone={gitBranchTone(props.selectedBranch)}
+                      meta={
+                        <>
+                          <Show when={props.selectedBranch?.current}>
+                            <GitMetaPill tone="success">Current</GitMetaPill>
+                          </Show>
+                          <Show when={props.selectedBranch?.kind === 'remote'}>
+                            <GitMetaPill tone="violet">Remote</GitMetaPill>
+                          </Show>
+                        </>
+                      }
+                    >
+                      <GitPrimaryTitle>{branchDisplayName(props.selectedBranch)}</GitPrimaryTitle>
+                      <div class="text-[11px] leading-relaxed text-muted-foreground">{branchStatusSummary(props.selectedBranch)}</div>
+                    </GitLabelBlock>
 
-                  <div class="inline-flex rounded-md border border-border/65 bg-muted/[0.14] p-0.5" role="tablist" aria-label="Branch detail tabs">
-                    <For each={(['status', 'history'] as GitBranchSubview[])}>
-                      {(view) => {
-                        const active = () => branchSubview() === view;
-                        return (
-                          <button
-                            type="button"
-                            role="tab"
-                            aria-selected={active()}
-                            class={cn(
-                              'rounded px-3 py-1.5 text-xs font-medium transition-colors duration-150',
-                              active() ? 'bg-sidebar-accent text-sidebar-accent-foreground shadow-sm' : 'text-muted-foreground hover:bg-background/80 hover:text-foreground'
-                            )}
-                            onClick={() => props.onSelectBranchSubview?.(view)}
-                          >
-                            {branchSubviewLabel(view)}
-                          </button>
-                        );
-                      }}
-                    </For>
+                    <div class="inline-flex rounded-md border border-border/65 bg-muted/[0.14] p-0.5" role="tablist" aria-label="Branch detail tabs">
+                      <For each={(['status', 'history'] as GitBranchSubview[])}>
+                        {(view) => {
+                          const active = () => branchSubview() === view;
+                          return (
+                            <button
+                              type="button"
+                              role="tab"
+                              aria-selected={active()}
+                              class={cn(
+                                'rounded px-3 py-1.5 text-xs font-medium transition-colors duration-150',
+                                active() ? 'bg-sidebar-accent text-sidebar-accent-foreground shadow-sm' : 'text-muted-foreground hover:bg-background/80 hover:text-foreground'
+                              )}
+                              onClick={() => props.onSelectBranchSubview?.(view)}
+                            >
+                              {branchSubviewLabel(view)}
+                            </button>
+                          );
+                        }}
+                      </For>
+                    </div>
                   </div>
                 </div>
               </div>

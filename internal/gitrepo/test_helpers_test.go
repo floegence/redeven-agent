@@ -93,6 +93,10 @@ type workspaceChangesFixture struct {
 	UntrackedPath string
 }
 
+type workspaceConflictFixture struct {
+	ConflictPath string
+}
+
 func createComparisonBranchFixture(t *testing.T, root string, startPoint string) comparisonBranchFixture {
 	t.Helper()
 	baseBranch := runGitFixture(t, root, "rev-parse", "--abbrev-ref", "HEAD")
@@ -128,4 +132,37 @@ func createWorkspaceChangesFixture(t *testing.T, root string) workspaceChangesFi
 		TrackedPath:   trackedPath,
 		UntrackedPath: untrackedPath,
 	}
+}
+
+func createWorkspaceConflictFixture(t *testing.T, root string) workspaceConflictFixture {
+	t.Helper()
+	conflictPath := "src/conflict.txt"
+
+	writeFixtureFile(t, root, conflictPath, []byte("base\n"))
+	runGitFixture(t, root, "add", conflictPath)
+	runGitFixture(t, root, "commit", "-m", "add conflict base")
+
+	runGitFixture(t, root, "checkout", "-b", "feature/conflict")
+	writeFixtureFile(t, root, conflictPath, []byte("feature\n"))
+	runGitFixture(t, root, "add", conflictPath)
+	runGitFixture(t, root, "commit", "-m", "feature conflict change")
+
+	runGitFixture(t, root, "checkout", "master")
+	writeFixtureFile(t, root, conflictPath, []byte("main\n"))
+	runGitFixture(t, root, "add", conflictPath)
+	runGitFixture(t, root, "commit", "-m", "main conflict change")
+
+	cmd := exec.Command("git", "-C", root, "merge", "feature/conflict")
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=Tester",
+		"GIT_AUTHOR_EMAIL=tester@example.com",
+		"GIT_COMMITTER_NAME=Tester",
+		"GIT_COMMITTER_EMAIL=tester@example.com",
+	)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected merge conflict, got success\n%s", string(out))
+	}
+
+	return workspaceConflictFixture{ConflictPath: conflictPath}
 }

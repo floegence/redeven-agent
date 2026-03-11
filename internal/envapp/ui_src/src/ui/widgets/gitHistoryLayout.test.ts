@@ -236,13 +236,13 @@ describe('browser workspace layout wiring', () => {
     expect(src).toContain('showMobileSidebarButton');
     expect(src).toContain('onToggleSidebar');
     expect(src).toContain('Toggle browser sidebar');
-    expect(src).toContain('Clean workspace');
     expect(src).not.toContain('Compact repo signals and actions for the current view.');
-    expect(src).toContain('pending');
+    expect(src).not.toContain('Clean workspace');
     expect(src).toContain('GitMetaPill');
+    expect(src).toContain('GitLabelBlock');
     expect(src).toContain('gitToneActionButtonClass()');
     expect(src).toContain('variant="ghost"');
-    expect(src).toContain('bg-background/95');
+    expect(src).toContain('bg-background/92');
     expect(src).not.toContain("gitToneSurfaceClass(subviewTone())");
     expect(src).not.toContain('variant="outline"');
     expect(src).not.toContain('GitHistoryModeSwitch');
