@@ -37,8 +37,8 @@ func (s *Service) getRepoSummary(ctx context.Context, repo repoContext) (*getRep
 	}
 	stashCount := readStashCount(ctx, repo.repoRootReal)
 	return &getRepoSummaryResp{
-		RepoRootPath:     repo.repoRootVirtual,
-		WorktreePath:     repo.repoRootVirtual,
+		RepoRootPath:     repo.repoRootReal,
+		WorktreePath:     repo.repoRootReal,
 		IsWorktree:       detectLinkedWorktree(ctx, repo.repoRootReal),
 		HeadRef:          repo.headRef,
 		HeadCommit:       repo.headCommit,
@@ -76,7 +76,7 @@ func (s *Service) listWorkspaceChanges(ctx context.Context, repo repoContext) (*
 		ConflictedCount: len(conflicted),
 	}
 	return &listWorkspaceChangesResp{
-		RepoRootPath: repo.repoRootVirtual,
+		RepoRootPath: repo.repoRootReal,
 		Summary:      summary,
 		Staged:       staged,
 		Unstaged:     unstaged,

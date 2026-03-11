@@ -8,6 +8,15 @@ import (
 	"testing"
 )
 
+func mustEvalPath(t *testing.T, value string) string {
+	t.Helper()
+	resolved, err := filepath.EvalSymlinks(value)
+	if err != nil {
+		t.Fatalf("filepath.EvalSymlinks(%q): %v", value, err)
+	}
+	return filepath.Clean(resolved)
+}
+
 func TestResolveRepoForPath(t *testing.T) {
 	t.Parallel()
 	fixture := createTestRepoFixture(t)
@@ -20,10 +29,7 @@ func TestResolveRepoForPath(t *testing.T) {
 	if !available {
 		t.Fatalf("expected repository to be available")
 	}
-	if repo.repoRootVirtual != "/" {
-		t.Fatalf("repoRootVirtual=%q, want /", repo.repoRootVirtual)
-	}
-	if filepath.Clean(repo.repoRootReal) != filepath.Clean(fixture.Root) {
+	if mustEvalPath(t, repo.repoRootReal) != mustEvalPath(t, fixture.Root) {
 		t.Fatalf("repoRootReal=%q, want %q", repo.repoRootReal, fixture.Root)
 	}
 	if repo.headCommit != fixture.BinaryCommit {
@@ -59,7 +65,7 @@ func TestResolveRepoForPath_Worktree(t *testing.T) {
 	if !available {
 		t.Fatalf("expected worktree repository to be available")
 	}
-	if filepath.Clean(repo.repoRootReal) != filepath.Clean(worktree) {
+	if mustEvalPath(t, repo.repoRootReal) != mustEvalPath(t, worktree) {
 		t.Fatalf("repoRootReal=%q, want %q", repo.repoRootReal, worktree)
 	}
 }
@@ -68,7 +74,7 @@ func TestGetCommitDetail_RenameAndBinary(t *testing.T) {
 	t.Parallel()
 	fixture := createTestRepoFixture(t)
 	svc := NewService(fixture.Root)
-	repo, err := svc.resolveExplicitRepo(context.Background(), "/")
+	repo, err := svc.resolveExplicitRepo(context.Background(), fixture.Root)
 	if err != nil {
 		t.Fatalf("resolveExplicitRepo: %v", err)
 	}
@@ -120,7 +126,7 @@ func TestListWorkspaceChanges_EmbedsPatchText(t *testing.T) {
 	fixture := createTestRepoFixture(t)
 	workspace := createWorkspaceChangesFixture(t, fixture.Root)
 	svc := NewService(fixture.Root)
-	repo, err := svc.resolveExplicitRepo(context.Background(), "/")
+	repo, err := svc.resolveExplicitRepo(context.Background(), fixture.Root)
 	if err != nil {
 		t.Fatalf("resolveExplicitRepo: %v", err)
 	}
@@ -151,7 +157,7 @@ func TestListWorkspaceChanges_DoesNotClassifyOrdinaryDiffAsConflicted(t *testing
 	fixture := createTestRepoFixture(t)
 	createWorkspaceChangesFixture(t, fixture.Root)
 	svc := NewService(fixture.Root)
-	repo, err := svc.resolveExplicitRepo(context.Background(), "/")
+	repo, err := svc.resolveExplicitRepo(context.Background(), fixture.Root)
 	if err != nil {
 		t.Fatalf("resolveExplicitRepo: %v", err)
 	}
@@ -176,7 +182,7 @@ func TestListWorkspaceChanges_ReportsOnlyRealConflictsInConflictedSection(t *tes
 	fixture := createTestRepoFixture(t)
 	conflict := createWorkspaceConflictFixture(t, fixture.Root)
 	svc := NewService(fixture.Root)
-	repo, err := svc.resolveExplicitRepo(context.Background(), "/")
+	repo, err := svc.resolveExplicitRepo(context.Background(), fixture.Root)
 	if err != nil {
 		t.Fatalf("resolveExplicitRepo: %v", err)
 	}
@@ -207,7 +213,7 @@ func TestStageAndUnstageWorkspacePaths(t *testing.T) {
 	fixture := createTestRepoFixture(t)
 	workspace := createWorkspaceChangesFixture(t, fixture.Root)
 	svc := NewService(fixture.Root)
-	repo, err := svc.resolveExplicitRepo(context.Background(), "/")
+	repo, err := svc.resolveExplicitRepo(context.Background(), fixture.Root)
 	if err != nil {
 		t.Fatalf("resolveExplicitRepo: %v", err)
 	}
@@ -240,7 +246,7 @@ func TestCommitWorkspace_UsesStagedChanges(t *testing.T) {
 	fixture := createTestRepoFixture(t)
 	workspace := createWorkspaceChangesFixture(t, fixture.Root)
 	svc := NewService(fixture.Root)
-	repo, err := svc.resolveExplicitRepo(context.Background(), "/")
+	repo, err := svc.resolveExplicitRepo(context.Background(), fixture.Root)
 	if err != nil {
 		t.Fatalf("resolveExplicitRepo: %v", err)
 	}
@@ -256,7 +262,7 @@ func TestCommitWorkspace_UsesStagedChanges(t *testing.T) {
 		t.Fatalf("expected head commit after commit")
 	}
 
-	updatedRepo, err := svc.resolveExplicitRepo(context.Background(), "/")
+	updatedRepo, err := svc.resolveExplicitRepo(context.Background(), fixture.Root)
 	if err != nil {
 		t.Fatalf("resolveExplicitRepo(after commit): %v", err)
 	}
@@ -282,7 +288,7 @@ func TestFetchRepo_UpdatesRemoteTrackingRefs(t *testing.T) {
 	fixture := createTestRepoFixture(t)
 	remote := createRemoteSyncFixture(t, fixture.Root)
 	svc := NewService(fixture.Root)
-	repo, err := svc.resolveExplicitRepo(context.Background(), "/")
+	repo, err := svc.resolveExplicitRepo(context.Background(), fixture.Root)
 	if err != nil {
 		t.Fatalf("resolveExplicitRepo: %v", err)
 	}
@@ -305,7 +311,7 @@ func TestPullRepo_FastForwardsCurrentBranch(t *testing.T) {
 	fixture := createTestRepoFixture(t)
 	remote := createRemoteSyncFixture(t, fixture.Root)
 	svc := NewService(fixture.Root)
-	repo, err := svc.resolveExplicitRepo(context.Background(), "/")
+	repo, err := svc.resolveExplicitRepo(context.Background(), fixture.Root)
 	if err != nil {
 		t.Fatalf("resolveExplicitRepo: %v", err)
 	}
@@ -328,7 +334,7 @@ func TestPushRepo_PushesCurrentBranch(t *testing.T) {
 	fixture := createTestRepoFixture(t)
 	remote := createRemoteSyncFixture(t, fixture.Root)
 	svc := NewService(fixture.Root)
-	repo, err := svc.resolveExplicitRepo(context.Background(), "/")
+	repo, err := svc.resolveExplicitRepo(context.Background(), fixture.Root)
 	if err != nil {
 		t.Fatalf("resolveExplicitRepo: %v", err)
 	}
@@ -340,7 +346,7 @@ func TestPushRepo_PushesCurrentBranch(t *testing.T) {
 	runGitFixture(t, fixture.Root, "add", "src/pushed.txt")
 	runGitFixture(t, fixture.Root, "commit", "-m", "push local change")
 
-	updatedRepo, err := svc.resolveExplicitRepo(context.Background(), "/")
+	updatedRepo, err := svc.resolveExplicitRepo(context.Background(), fixture.Root)
 	if err != nil {
 		t.Fatalf("resolveExplicitRepo(after commit): %v", err)
 	}
@@ -363,7 +369,7 @@ func TestCheckoutBranch_ChecksOutLocalBranch(t *testing.T) {
 	fixture := createTestRepoFixture(t)
 	compare := createComparisonBranchFixture(t, fixture.Root, fixture.UpdateCommit)
 	svc := NewService(fixture.Root)
-	repo, err := svc.resolveExplicitRepo(context.Background(), "/")
+	repo, err := svc.resolveExplicitRepo(context.Background(), fixture.Root)
 	if err != nil {
 		t.Fatalf("resolveExplicitRepo: %v", err)
 	}
@@ -386,14 +392,14 @@ func TestCheckoutBranch_RemoteCreatesTrackingBranch(t *testing.T) {
 	fixture := createTestRepoFixture(t)
 	remote := createRemoteSyncFixture(t, fixture.Root)
 	svc := NewService(fixture.Root)
-	repo, err := svc.resolveExplicitRepo(context.Background(), "/")
+	repo, err := svc.resolveExplicitRepo(context.Background(), fixture.Root)
 	if err != nil {
 		t.Fatalf("resolveExplicitRepo: %v", err)
 	}
 	if _, err := svc.fetchRepo(context.Background(), repo); err != nil {
 		t.Fatalf("fetchRepo: %v", err)
 	}
-	repo, err = svc.resolveExplicitRepo(context.Background(), "/")
+	repo, err = svc.resolveExplicitRepo(context.Background(), fixture.Root)
 	if err != nil {
 		t.Fatalf("resolveExplicitRepo(after fetch): %v", err)
 	}
@@ -424,7 +430,7 @@ func TestListCommits_PaginatesNewestFirst(t *testing.T) {
 	t.Parallel()
 	fixture := createTestRepoFixture(t)
 	svc := NewService(fixture.Root)
-	repo, err := svc.resolveExplicitRepo(context.Background(), "/")
+	repo, err := svc.resolveExplicitRepo(context.Background(), fixture.Root)
 	if err != nil {
 		t.Fatalf("resolveExplicitRepo: %v", err)
 	}
@@ -540,11 +546,12 @@ func TestListBranches_ReportsWorktreeBinding(t *testing.T) {
 	t.Parallel()
 	fixture := createTestRepoFixture(t)
 	compare := createComparisonBranchFixture(t, fixture.Root, fixture.UpdateCommit)
-	worktree := filepath.Join(t.TempDir(), "compare-wt")
+	serviceRoot := filepath.Dir(fixture.Root)
+	worktree := filepath.Join(serviceRoot, "compare-wt")
 	runGitFixture(t, fixture.Root, "worktree", "add", worktree, compare.Branch)
 
-	svc := NewService(fixture.Root)
-	repo, err := svc.resolveExplicitRepo(context.Background(), "/")
+	svc := NewService(serviceRoot)
+	repo, err := svc.resolveExplicitRepo(context.Background(), fixture.Root)
 	if err != nil {
 		t.Fatalf("resolveExplicitRepo: %v", err)
 	}
@@ -582,12 +589,63 @@ func TestListBranches_ReportsWorktreeBinding(t *testing.T) {
 	}
 }
 
+func TestListWorkspaceChanges_UsesBranchWorktreePath(t *testing.T) {
+	t.Parallel()
+	fixture := createTestRepoFixture(t)
+	compare := createComparisonBranchFixture(t, fixture.Root, fixture.UpdateCommit)
+	serviceRoot := filepath.Dir(fixture.Root)
+	worktree := filepath.Join(serviceRoot, "compare-wt")
+	runGitFixture(t, fixture.Root, "worktree", "add", worktree, compare.Branch)
+	if err := os.WriteFile(filepath.Join(worktree, "scratch.txt"), []byte("pending worktree file\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(scratch.txt): %v", err)
+	}
+
+	svc := NewService(serviceRoot)
+	repo, err := svc.resolveExplicitRepo(context.Background(), fixture.Root)
+	if err != nil {
+		t.Fatalf("resolveExplicitRepo(main): %v", err)
+	}
+	branches, err := svc.listBranches(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("listBranches: %v", err)
+	}
+
+	var branchWorktreePath string
+	for _, branch := range branches.Local {
+		if branch.Name == compare.Branch {
+			branchWorktreePath = branch.WorktreePath
+			break
+		}
+	}
+	if mustEvalPath(t, branchWorktreePath) != mustEvalPath(t, worktree) {
+		t.Fatalf("branchWorktreePath=%q, want %q", branchWorktreePath, worktree)
+	}
+
+	worktreeRepo, err := svc.resolveExplicitRepo(context.Background(), branchWorktreePath)
+	if err != nil {
+		t.Fatalf("resolveExplicitRepo(worktree): %v", err)
+	}
+	workspace, err := svc.listWorkspaceChanges(context.Background(), worktreeRepo)
+	if err != nil {
+		t.Fatalf("listWorkspaceChanges(worktree): %v", err)
+	}
+	if mustEvalPath(t, workspace.RepoRootPath) != mustEvalPath(t, worktree) {
+		t.Fatalf("workspace.RepoRootPath=%q, want %q", workspace.RepoRootPath, worktree)
+	}
+	if workspace.Summary.UntrackedCount != 1 {
+		t.Fatalf("workspace.Summary.UntrackedCount=%d, want 1", workspace.Summary.UntrackedCount)
+	}
+	if len(workspace.Untracked) != 1 || workspace.Untracked[0].Path != "scratch.txt" {
+		t.Fatalf("unexpected worktree untracked files: %+v", workspace.Untracked)
+	}
+}
+
 func TestGetBranchCompare(t *testing.T) {
 	t.Parallel()
 	fixture := createTestRepoFixture(t)
 	compare := createComparisonBranchFixture(t, fixture.Root, fixture.UpdateCommit)
 	svc := NewService(fixture.Root)
-	repo, err := svc.resolveExplicitRepo(context.Background(), "/")
+	repo, err := svc.resolveExplicitRepo(context.Background(), fixture.Root)
 	if err != nil {
 		t.Fatalf("resolveExplicitRepo: %v", err)
 	}
@@ -621,14 +679,15 @@ func TestGetBranchCompare_EmbedsLinkedWorktreeSnapshot(t *testing.T) {
 	t.Parallel()
 	fixture := createTestRepoFixture(t)
 	compare := createComparisonBranchFixture(t, fixture.Root, fixture.UpdateCommit)
-	worktree := filepath.Join(t.TempDir(), "compare-wt")
+	serviceRoot := filepath.Dir(fixture.Root)
+	worktree := filepath.Join(serviceRoot, "compare-wt")
 	runGitFixture(t, fixture.Root, "worktree", "add", worktree, compare.Branch)
 	if err := os.WriteFile(filepath.Join(worktree, "scratch.txt"), []byte("pending worktree file\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile(scratch.txt): %v", err)
 	}
 
-	svc := NewService(fixture.Root)
-	repo, err := svc.resolveExplicitRepo(context.Background(), "/")
+	svc := NewService(serviceRoot)
+	repo, err := svc.resolveExplicitRepo(context.Background(), fixture.Root)
 	if err != nil {
 		t.Fatalf("resolveExplicitRepo: %v", err)
 	}

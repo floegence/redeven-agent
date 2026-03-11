@@ -93,12 +93,12 @@ func (s *Service) commitWorkspace(ctx context.Context, repo repoContext, message
 	if err != nil {
 		return nil, err
 	}
-	updatedRepo, err := s.loadRepoContext(ctx, repo.repoRootReal, repo.repoRootVirtual)
+	updatedRepo, err := s.loadRepoContext(ctx, repo.repoRootReal)
 	if err != nil {
 		return nil, err
 	}
 	return &commitWorkspaceResp{
-		RepoRootPath: updatedRepo.repoRootVirtual,
+		RepoRootPath: updatedRepo.repoRootReal,
 		HeadRef:      updatedRepo.headRef,
 		HeadCommit:   updatedRepo.headCommit,
 	}, nil
@@ -108,12 +108,12 @@ func (s *Service) fetchRepo(ctx context.Context, repo repoContext) (*fetchRepoRe
 	if _, err := gitutil.RunCombinedOutput(ctx, repo.repoRootReal, nil, "fetch", "--all", "--prune"); err != nil {
 		return nil, err
 	}
-	updatedRepo, err := s.loadRepoContext(ctx, repo.repoRootReal, repo.repoRootVirtual)
+	updatedRepo, err := s.loadRepoContext(ctx, repo.repoRootReal)
 	if err != nil {
 		return nil, err
 	}
 	return &fetchRepoResp{
-		RepoRootPath: updatedRepo.repoRootVirtual,
+		RepoRootPath: updatedRepo.repoRootReal,
 		HeadRef:      updatedRepo.headRef,
 		HeadCommit:   updatedRepo.headCommit,
 	}, nil
@@ -126,12 +126,12 @@ func (s *Service) pullRepo(ctx context.Context, repo repoContext) (*pullRepoResp
 	if _, err := gitutil.RunCombinedOutput(ctx, repo.repoRootReal, nil, "pull", "--ff-only"); err != nil {
 		return nil, err
 	}
-	updatedRepo, err := s.loadRepoContext(ctx, repo.repoRootReal, repo.repoRootVirtual)
+	updatedRepo, err := s.loadRepoContext(ctx, repo.repoRootReal)
 	if err != nil {
 		return nil, err
 	}
 	return &pullRepoResp{
-		RepoRootPath: updatedRepo.repoRootVirtual,
+		RepoRootPath: updatedRepo.repoRootReal,
 		HeadRef:      updatedRepo.headRef,
 		HeadCommit:   updatedRepo.headCommit,
 	}, nil
@@ -144,12 +144,12 @@ func (s *Service) pushRepo(ctx context.Context, repo repoContext) (*pushRepoResp
 	if _, err := gitutil.RunCombinedOutput(ctx, repo.repoRootReal, nil, "push"); err != nil {
 		return nil, err
 	}
-	updatedRepo, err := s.loadRepoContext(ctx, repo.repoRootReal, repo.repoRootVirtual)
+	updatedRepo, err := s.loadRepoContext(ctx, repo.repoRootReal)
 	if err != nil {
 		return nil, err
 	}
 	return &pushRepoResp{
-		RepoRootPath: updatedRepo.repoRootVirtual,
+		RepoRootPath: updatedRepo.repoRootReal,
 		HeadRef:      updatedRepo.headRef,
 		HeadCommit:   updatedRepo.headCommit,
 	}, nil
@@ -184,12 +184,12 @@ func (s *Service) checkoutBranch(ctx context.Context, repo repoContext, name str
 	if _, err := gitutil.RunCombinedOutput(ctx, repo.repoRootReal, nil, args...); err != nil {
 		return nil, err
 	}
-	updatedRepo, err := s.loadRepoContext(ctx, repo.repoRootReal, repo.repoRootVirtual)
+	updatedRepo, err := s.loadRepoContext(ctx, repo.repoRootReal)
 	if err != nil {
 		return nil, err
 	}
 	return &checkoutBranchResp{
-		RepoRootPath: updatedRepo.repoRootVirtual,
+		RepoRootPath: updatedRepo.repoRootReal,
 		HeadRef:      updatedRepo.headRef,
 		HeadCommit:   updatedRepo.headCommit,
 	}, nil

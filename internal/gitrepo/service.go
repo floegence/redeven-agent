@@ -47,6 +47,9 @@ func NewService(root string) *Service {
 	if abs, err := filepath.Abs(root); err == nil {
 		root = abs
 	}
+	if eval, err := filepath.EvalSymlinks(root); err == nil {
+		root = eval
+	}
 	root = filepath.Clean(root)
 	return &Service{root: root}
 }
@@ -79,7 +82,7 @@ func (s *Service) RegisterWithAccessGate(r *rpc.Router, meta *session.Meta, gate
 		}
 		return &resolveRepoResp{
 			Available:    true,
-			RepoRootPath: repo.repoRootVirtual,
+			RepoRootPath: repo.repoRootReal,
 			HeadRef:      repo.headRef,
 			HeadCommit:   repo.headCommit,
 			Dirty:        repo.dirty,
@@ -116,7 +119,7 @@ func (s *Service) RegisterWithAccessGate(r *rpc.Router, meta *session.Meta, gate
 			return nil, classifyGitRPCError(err)
 		}
 		return &listCommitsResp{
-			RepoRootPath: repo.repoRootVirtual,
+			RepoRootPath: repo.repoRootReal,
 			Commits:      commits,
 			NextOffset:   nextOffset,
 			HasMore:      hasMore,
@@ -143,7 +146,7 @@ func (s *Service) RegisterWithAccessGate(r *rpc.Router, meta *session.Meta, gate
 			return nil, classifyGitRPCError(err)
 		}
 		return &getCommitDetailResp{
-			RepoRootPath: repo.repoRootVirtual,
+			RepoRootPath: repo.repoRootReal,
 			Commit:       detail,
 			Files:        files,
 		}, nil
@@ -235,7 +238,7 @@ func (s *Service) RegisterWithAccessGate(r *rpc.Router, meta *session.Meta, gate
 		if err := s.stageWorkspacePaths(ctx, repo, req.Paths); err != nil {
 			return nil, classifyGitMutationRPCError(err)
 		}
-		return &stageWorkspaceResp{RepoRootPath: repo.repoRootVirtual}, nil
+		return &stageWorkspaceResp{RepoRootPath: repo.repoRootReal}, nil
 	})
 
 	accessgate.RegisterTyped[unstageWorkspaceReq, unstageWorkspaceResp](r, TypeID_GIT_UNSTAGE_WORKSPACE, gate, meta, accessgate.RPCAccessProtected, func(ctx context.Context, req *unstageWorkspaceReq) (*unstageWorkspaceResp, error) {
@@ -252,7 +255,7 @@ func (s *Service) RegisterWithAccessGate(r *rpc.Router, meta *session.Meta, gate
 		if err := s.unstageWorkspacePaths(ctx, repo, req.Paths); err != nil {
 			return nil, classifyGitMutationRPCError(err)
 		}
-		return &unstageWorkspaceResp{RepoRootPath: repo.repoRootVirtual}, nil
+		return &unstageWorkspaceResp{RepoRootPath: repo.repoRootReal}, nil
 	})
 
 	accessgate.RegisterTyped[commitWorkspaceReq, commitWorkspaceResp](r, TypeID_GIT_COMMIT_WORKSPACE, gate, meta, accessgate.RPCAccessProtected, func(ctx context.Context, req *commitWorkspaceReq) (*commitWorkspaceResp, error) {
@@ -347,11 +350,10 @@ func (s *Service) RegisterWithAccessGate(r *rpc.Router, meta *session.Meta, gate
 }
 
 type repoContext struct {
-	repoRootReal    string
-	repoRootVirtual string
-	headRef         string
-	headCommit      string
-	dirty           bool
+	repoRootReal string
+	headRef      string
+	headCommit   string
+	dirty        bool
 }
 
 func (s *Service) resolveRepoForPath(ctx context.Context, virtualPath string) (repoContext, bool, error) {
@@ -371,6 +373,9 @@ func (s *Service) resolveRepoForPath(ctx context.Context, virtualPath string) (r
 	if !ok {
 		return repoContext{}, false, nil
 	}
+	if eval, err := filepath.EvalSymlinks(repoRootReal); err == nil {
+		repoRootReal = filepath.Clean(eval)
+	}
 	withinRoot, err := pathutil.IsWithinRoot(repoRootReal, s.root)
 	if err != nil {
 		return repoContext{}, false, err
@@ -378,11 +383,7 @@ func (s *Service) resolveRepoForPath(ctx context.Context, virtualPath string) (r
 	if !withinRoot {
 		return repoContext{}, false, nil
 	}
-	repoRootVirtual, err := pathutil.RealPathToVirtual(s.root, repoRootReal)
-	if err != nil {
-		return repoContext{}, false, err
-	}
-	repo, err := s.loadRepoContext(ctx, repoRootReal, repoRootVirtual)
+	repo, err := s.loadRepoContext(ctx, repoRootReal)
 	if err != nil {
 		return repoContext{}, false, err
 	}
@@ -390,28 +391,46 @@ func (s *Service) resolveRepoForPath(ctx context.Context, virtualPath string) (r
 }
 
 func (s *Service) resolveExplicitRepo(ctx context.Context, repoRootPath string) (repoContext, error) {
-	resolved, err := pathutil.ResolveVirtualPath(s.root, repoRootPath)
+	repoRootReal, err := s.validateRepoRootPath(ctx, repoRootPath)
 	if err != nil {
 		return repoContext{}, err
 	}
-	stat, err := os.Stat(resolved.Real)
-	if err != nil {
-		return repoContext{}, err
-	}
-	if !stat.IsDir() {
-		return repoContext{}, errors.New("repo root must be a directory")
-	}
-	repoRootReal, ok := gitutil.ShowTopLevel(ctx, resolved.Real)
-	if !ok {
-		return repoContext{}, errors.New("not a git repository")
-	}
-	if filepath.Clean(repoRootReal) != filepath.Clean(resolved.Real) {
-		return repoContext{}, errors.New("repo_root_path must match worktree root")
-	}
-	return s.loadRepoContext(ctx, repoRootReal, resolved.Virtual)
+	return s.loadRepoContext(ctx, repoRootReal)
 }
 
-func (s *Service) loadRepoContext(ctx context.Context, repoRootReal string, repoRootVirtual string) (repoContext, error) {
+func (s *Service) validateRepoRootPath(ctx context.Context, repoRootPath string) (string, error) {
+	repoRootReal := filepath.Clean(strings.TrimSpace(repoRootPath))
+	if repoRootReal == "" {
+		return "", errors.New("missing repo_root_path")
+	}
+	stat, err := os.Stat(repoRootReal)
+	if err != nil {
+		return "", err
+	}
+	if !stat.IsDir() {
+		return "", errors.New("repo root must be a directory")
+	}
+	if eval, err := filepath.EvalSymlinks(repoRootReal); err == nil {
+		repoRootReal = filepath.Clean(eval)
+	}
+	withinRoot, err := pathutil.IsWithinRoot(repoRootReal, s.root)
+	if err != nil {
+		return "", err
+	}
+	if !withinRoot {
+		return "", errors.New("path escapes root")
+	}
+	topLevel, ok := gitutil.ShowTopLevel(ctx, repoRootReal)
+	if !ok {
+		return "", errors.New("not a git repository")
+	}
+	if filepath.Clean(topLevel) != filepath.Clean(repoRootReal) {
+		return "", errors.New("repo_root_path must match worktree root")
+	}
+	return repoRootReal, nil
+}
+
+func (s *Service) loadRepoContext(ctx context.Context, repoRootReal string) (repoContext, error) {
 	headRef := strings.TrimSpace(readGitOptional(ctx, repoRootReal, "symbolic-ref", "--quiet", "--short", "HEAD"))
 	if headRef == "" {
 		headRef = strings.TrimSpace(readGitOptional(ctx, repoRootReal, "rev-parse", "--abbrev-ref", "HEAD"))
@@ -419,11 +438,10 @@ func (s *Service) loadRepoContext(ctx context.Context, repoRootReal string, repo
 	headCommit := strings.TrimSpace(readGitOptional(ctx, repoRootReal, "rev-parse", "--verify", "HEAD"))
 	dirtyRaw := readGitOptional(ctx, repoRootReal, "status", "--porcelain", "--untracked-files=normal")
 	return repoContext{
-		repoRootReal:    repoRootReal,
-		repoRootVirtual: repoRootVirtual,
-		headRef:         headRef,
-		headCommit:      headCommit,
-		dirty:           strings.TrimSpace(dirtyRaw) != "",
+		repoRootReal: repoRootReal,
+		headRef:      headRef,
+		headCommit:   headCommit,
+		dirty:        strings.TrimSpace(dirtyRaw) != "",
 	}, nil
 }
 
