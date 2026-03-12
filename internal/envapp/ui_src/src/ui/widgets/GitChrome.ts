@@ -101,6 +101,7 @@ export function gitChangePathClass(change: string | undefined): string {
   switch (String(change ?? '').trim()) {
     case 'added':
       return 'text-emerald-700 dark:text-emerald-300';
+    case 'conflicted':
     case 'deleted':
       return 'text-red-700 dark:text-red-300';
     case 'renamed':
@@ -163,6 +164,7 @@ export function gitChangeTone(change: string | undefined): GitChromeTone {
   switch (String(change ?? '').trim()) {
     case 'added':
       return 'success';
+    case 'conflicted':
     case 'deleted':
       return 'danger';
     case 'renamed':
@@ -172,6 +174,26 @@ export function gitChangeTone(change: string | undefined): GitChromeTone {
     case 'modified':
     default:
       return 'info';
+  }
+}
+
+export function gitChangeLabel(change: string | undefined): string {
+  const normalized = String(change ?? '').trim().toLowerCase();
+  switch (normalized) {
+    case 'added':
+      return 'Added';
+    case 'conflicted':
+      return 'Conflicted';
+    case 'deleted':
+      return 'Deleted';
+    case 'renamed':
+      return 'Renamed';
+    case 'copied':
+      return 'Copied';
+    case 'modified':
+      return 'Modified';
+    default:
+      return normalized ? normalized.charAt(0).toUpperCase() + normalized.slice(1) : 'Modified';
   }
 }
 

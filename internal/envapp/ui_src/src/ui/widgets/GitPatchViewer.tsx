@@ -5,8 +5,6 @@ import type { GitCommitFileSummary, GitWorkspaceChange } from '../protocol/redev
 import {
   GIT_PATCH_PREVIEW_LINES,
   formatGitPatchLineNumber,
-  gitChangeClass,
-  gitChangeLabel,
   gitPatchPreviewLineClass,
   gitPatchRenderedLineClass,
   parseGitPatchRenderedLines,
@@ -14,7 +12,7 @@ import {
 import { hasMeaningfulGitPatchText } from '../utils/gitPatchText';
 import { changeDisplayPath, changeMetricsText } from '../utils/gitWorkbench';
 import { gitToneActionButtonClass } from './GitChrome';
-import { GitMetaPill } from './GitWorkbenchPrimitives';
+import { GitChangeStatusPill, GitMetaPill } from './GitWorkbenchPrimitives';
 
 export type GitPatchRenderable = GitCommitFileSummary | GitWorkspaceChange;
 
@@ -74,9 +72,7 @@ export function GitPatchViewer<T extends GitPatchRenderable>(props: GitPatchView
               <div class="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                 <div class="min-w-0 flex-1 space-y-1">
                   <div class="flex min-w-0 flex-wrap items-center gap-1.5">
-                    <span class={cn('inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium', gitChangeClass(file.changeType))}>
-                      {gitChangeLabel(file.changeType)}
-                    </span>
+                    <GitChangeStatusPill change={file.changeType} />
                     <GitMetaPill tone="neutral">{changeMetricsText(file)}</GitMetaPill>
                     <span class="min-w-0 max-w-full truncate font-mono text-[11px] text-foreground/90" title={changeDisplayPath(file)}>
                       {changeDisplayPath(file)}

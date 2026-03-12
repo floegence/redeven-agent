@@ -20,9 +20,24 @@ import {
   workspaceSectionLabel,
   type GitBranchSubview,
 } from '../utils/gitWorkbench';
-import { gitBranchTone, gitChangePathClass, gitChangeTone, gitCompareTone, gitToneActionButtonClass, gitToneBadgeClass, gitToneDotClass, gitToneSelectableCardClass, workspaceSectionTone } from './GitChrome';
+import { gitBranchTone, gitChangePathClass, gitCompareTone, gitToneActionButtonClass, gitToneBadgeClass, gitToneSelectableCardClass, workspaceSectionTone } from './GitChrome';
 import { GitDiffDialog } from './GitDiffDialog';
-import { GitChangeMetrics, GitLabelBlock, GitMetaPill, GitPrimaryTitle, GitSubtleNote } from './GitWorkbenchPrimitives';
+import {
+  GIT_CHANGED_FILES_CELL_CLASS,
+  GIT_CHANGED_FILES_HEADER_CELL_CLASS,
+  GIT_CHANGED_FILES_HEAD_CLASS,
+  GIT_CHANGED_FILES_HEADER_ROW_CLASS,
+  GIT_CHANGED_FILES_STICKY_HEADER_CELL_CLASS,
+  GIT_CHANGED_FILES_TABLE_CLASS,
+  GitChangeMetrics,
+  GitChangeStatusPill,
+  GitLabelBlock,
+  GitMetaPill,
+  GitPrimaryTitle,
+  GitSubtleNote,
+  gitChangedFilesRowClass,
+  gitChangedFilesStickyCellClass,
+} from './GitWorkbenchPrimitives';
 
 export interface GitBranchesPanelProps {
   repoRootPath?: string;
@@ -151,13 +166,13 @@ function BranchCompareFilesTable(props: BranchCompareFilesTableProps) {
         )}
       >
         <div class="min-h-0 flex-1 overflow-auto">
-          <table class="w-full min-w-[46rem] text-xs md:min-w-0">
-            <thead class="sticky top-0 z-10 bg-muted/30 backdrop-blur">
-              <tr class="border-b border-border/60 text-left text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-                <th class="px-3 py-2.5 font-medium">Path</th>
-                <th class="px-3 py-2.5 font-medium">Status</th>
-                <th class="px-3 py-2.5 font-medium">Changes</th>
-                <th class="sticky right-0 z-20 border-l border-border/50 bg-muted/30 px-3 py-2.5 text-right font-medium">Action</th>
+          <table class={`${GIT_CHANGED_FILES_TABLE_CLASS} min-w-[46rem] md:min-w-0`}>
+            <thead class={GIT_CHANGED_FILES_HEAD_CLASS}>
+              <tr class={GIT_CHANGED_FILES_HEADER_ROW_CLASS}>
+                <th class={GIT_CHANGED_FILES_HEADER_CELL_CLASS}>Path</th>
+                <th class={GIT_CHANGED_FILES_HEADER_CELL_CLASS}>Status</th>
+                <th class={GIT_CHANGED_FILES_HEADER_CELL_CLASS}>Changes</th>
+                <th class={GIT_CHANGED_FILES_STICKY_HEADER_CELL_CLASS}>Action</th>
               </tr>
             </thead>
             <tbody>
@@ -167,13 +182,13 @@ function BranchCompareFilesTable(props: BranchCompareFilesTableProps) {
                   return (
                     <tr
                       aria-selected={active()}
-                      class={`group border-b border-border/45 last:border-b-0 ${active() ? 'bg-muted/45' : 'bg-transparent hover:bg-muted/25'}`}
+                      class={gitChangedFilesRowClass(active())}
                     >
-                      <td class="px-3 py-2.5 align-top">
+                      <td class={GIT_CHANGED_FILES_CELL_CLASS}>
                         <div class="min-w-0">
                           <button
                             type="button"
-                            class={`block max-w-full cursor-pointer truncate text-left text-xs font-medium underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70 ${gitChangePathClass(item.changeType)}`}
+                            class={`block max-w-full cursor-pointer truncate text-left text-[11px] font-medium underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70 ${gitChangePathClass(item.changeType)}`}
                             title={changeSecondaryPath(item)}
                             onClick={() => props.onOpenDiff?.(item)}
                           >
@@ -184,14 +199,11 @@ function BranchCompareFilesTable(props: BranchCompareFilesTableProps) {
                           </Show>
                         </div>
                       </td>
-                      <td class="px-3 py-2.5 align-top">
-                        <div class="inline-flex items-center gap-1.5 text-xs text-foreground">
-                          <span class={`h-1.5 w-1.5 rounded-full ${gitToneDotClass(gitChangeTone(item.changeType))}`} aria-hidden="true" />
-                          <span class="capitalize">{item.changeType || 'modified'}</span>
-                        </div>
+                      <td class={GIT_CHANGED_FILES_CELL_CLASS}>
+                        <GitChangeStatusPill change={item.changeType} />
                       </td>
-                      <td class="px-3 py-2.5 align-top"><GitChangeMetrics additions={item.additions} deletions={item.deletions} /></td>
-                      <td class={`sticky right-0 z-10 border-l border-border/45 px-3 py-2.5 text-right align-top shadow-[-1px_0_0_rgba(0,0,0,0.03)] ${active() ? 'bg-muted/45' : 'bg-card group-hover:bg-muted/25'}`}>
+                      <td class={GIT_CHANGED_FILES_CELL_CLASS}><GitChangeMetrics additions={item.additions} deletions={item.deletions} /></td>
+                      <td class={gitChangedFilesStickyCellClass(active())}>
                         <Button size="xs" variant="outline" class="min-w-[5.5rem] justify-center rounded-sm" onClick={() => props.onOpenDiff?.(item)}>
                           View Diff
                         </Button>
@@ -226,14 +238,14 @@ function BranchStatusTable(props: BranchStatusTableProps) {
         )}
       >
         <div class="min-h-0 flex-1 overflow-auto">
-          <table class="w-full min-w-[52rem] text-xs md:min-w-0">
-            <thead class="sticky top-0 z-10 bg-muted/30 backdrop-blur">
-              <tr class="border-b border-border/60 text-left text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-                <th class="px-3 py-2.5 font-medium">Path</th>
-                <th class="px-3 py-2.5 font-medium">Section</th>
-                <th class="px-3 py-2.5 font-medium">Status</th>
-                <th class="px-3 py-2.5 font-medium">Changes</th>
-                <th class="sticky right-0 z-20 border-l border-border/50 bg-muted/30 px-3 py-2.5 text-right font-medium">Action</th>
+          <table class={`${GIT_CHANGED_FILES_TABLE_CLASS} min-w-[52rem] md:min-w-0`}>
+            <thead class={GIT_CHANGED_FILES_HEAD_CLASS}>
+              <tr class={GIT_CHANGED_FILES_HEADER_ROW_CLASS}>
+                <th class={GIT_CHANGED_FILES_HEADER_CELL_CLASS}>Path</th>
+                <th class={GIT_CHANGED_FILES_HEADER_CELL_CLASS}>Section</th>
+                <th class={GIT_CHANGED_FILES_HEADER_CELL_CLASS}>Status</th>
+                <th class={GIT_CHANGED_FILES_HEADER_CELL_CLASS}>Changes</th>
+                <th class={GIT_CHANGED_FILES_STICKY_HEADER_CELL_CLASS}>Action</th>
               </tr>
             </thead>
             <tbody>
@@ -243,13 +255,13 @@ function BranchStatusTable(props: BranchStatusTableProps) {
                   return (
                     <tr
                       aria-selected={active()}
-                      class={`group border-b border-border/45 last:border-b-0 ${active() ? 'bg-muted/45' : 'bg-transparent hover:bg-muted/25'}`}
+                      class={gitChangedFilesRowClass(active())}
                     >
-                      <td class="px-3 py-2.5 align-top">
+                      <td class={GIT_CHANGED_FILES_CELL_CLASS}>
                         <div class="min-w-0">
                           <button
                             type="button"
-                            class={`block max-w-full cursor-pointer truncate text-left text-xs font-medium underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70 ${gitChangePathClass(item.changeType)}`}
+                            class={`block max-w-full cursor-pointer truncate text-left text-[11px] font-medium underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70 ${gitChangePathClass(item.changeType)}`}
                             title={changeSecondaryPath(item)}
                             onClick={() => props.onOpenDiff?.(item)}
                           >
@@ -260,15 +272,12 @@ function BranchStatusTable(props: BranchStatusTableProps) {
                           </Show>
                         </div>
                       </td>
-                      <td class="px-3 py-2.5 align-top text-muted-foreground">{workspaceSectionLabel((item.section as GitWorkspaceSection | undefined) ?? 'unstaged')}</td>
-                      <td class="px-3 py-2.5 align-top">
-                        <div class="inline-flex items-center gap-1.5 text-xs text-foreground">
-                          <span class={`h-1.5 w-1.5 rounded-full ${gitToneDotClass(gitChangeTone(item.changeType))}`} aria-hidden="true" />
-                          <span class="capitalize">{item.changeType || 'modified'}</span>
-                        </div>
+                      <td class={`${GIT_CHANGED_FILES_CELL_CLASS} text-muted-foreground`}>{workspaceSectionLabel((item.section as GitWorkspaceSection | undefined) ?? 'unstaged')}</td>
+                      <td class={GIT_CHANGED_FILES_CELL_CLASS}>
+                        <GitChangeStatusPill change={item.changeType} />
                       </td>
-                      <td class="px-3 py-2.5 align-top"><GitChangeMetrics additions={item.additions} deletions={item.deletions} /></td>
-                      <td class={`sticky right-0 z-10 border-l border-border/45 px-3 py-2.5 text-right align-top shadow-[-1px_0_0_rgba(0,0,0,0.03)] ${active() ? 'bg-muted/45' : 'bg-card group-hover:bg-muted/25'}`}>
+                      <td class={GIT_CHANGED_FILES_CELL_CLASS}><GitChangeMetrics additions={item.additions} deletions={item.deletions} /></td>
+                      <td class={gitChangedFilesStickyCellClass(active())}>
                         <Button size="xs" variant="outline" class="min-w-[5.5rem] justify-center rounded-sm" onClick={() => props.onOpenDiff?.(item)}>
                           View Diff
                         </Button>
