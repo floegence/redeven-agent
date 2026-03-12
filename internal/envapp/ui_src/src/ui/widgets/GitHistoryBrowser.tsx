@@ -4,9 +4,24 @@ import { SnakeLoader } from '@floegence/floe-webapp-core/loading';
 import { useProtocol } from '@floegence/floe-webapp-protocol';
 import { useRedevenRpc, type GitCommitDetail, type GitCommitFileSummary, type GitResolveRepoResponse } from '../protocol/redeven_v1';
 import { changeSecondaryPath, gitDiffEntryIdentity } from '../utils/gitWorkbench';
-import { gitChangePathClass, gitChangeTone, gitToneDotClass } from './GitChrome';
+import { gitChangePathClass } from './GitChrome';
 import { GitDiffDialog } from './GitDiffDialog';
-import { GitChangeMetrics, GitLabelBlock, GitMetaPill, GitPrimaryTitle, GitSubtleNote } from './GitWorkbenchPrimitives';
+import {
+  GIT_CHANGED_FILES_CELL_CLASS,
+  GIT_CHANGED_FILES_HEADER_CELL_CLASS,
+  GIT_CHANGED_FILES_HEAD_CLASS,
+  GIT_CHANGED_FILES_HEADER_ROW_CLASS,
+  GIT_CHANGED_FILES_STICKY_HEADER_CELL_CLASS,
+  GIT_CHANGED_FILES_TABLE_CLASS,
+  GitChangeMetrics,
+  GitChangeStatusPill,
+  GitLabelBlock,
+  GitMetaPill,
+  GitPrimaryTitle,
+  GitSubtleNote,
+  gitChangedFilesRowClass,
+  gitChangedFilesStickyCellClass,
+} from './GitWorkbenchPrimitives';
 
 const COMMIT_BODY_PREVIEW_LINES = 2;
 const COMMIT_BODY_PREVIEW_CHARS = 160;
@@ -212,30 +227,29 @@ export function GitHistoryBrowser(props: GitHistoryBrowserProps) {
                           <Show when={commitFiles().length > 0} fallback={<GitSubtleNote>No changed files are available for this commit.</GitSubtleNote>}>
                             <div class="mt-2.5 overflow-hidden rounded-md border border-border/65 bg-card">
                               <div class="min-h-0 overflow-auto">
-                                <table class="w-full min-w-[42rem] text-xs md:min-w-0">
-                                  <thead class="sticky top-0 z-10 bg-muted/30 backdrop-blur">
-                                    <tr class="border-b border-border/60 text-left text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-                                      <th class="px-3 py-2.5 font-medium">Path</th>
-                                      <th class="px-3 py-2.5 font-medium">Status</th>
-                                      <th class="px-3 py-2.5 font-medium">Changes</th>
-                                      <th class="sticky right-0 z-20 border-l border-border/50 bg-muted/30 px-3 py-2.5 text-right font-medium">Action</th>
+                                <table class={`${GIT_CHANGED_FILES_TABLE_CLASS} min-w-[42rem] md:min-w-0`}>
+                                  <thead class={GIT_CHANGED_FILES_HEAD_CLASS}>
+                                    <tr class={GIT_CHANGED_FILES_HEADER_ROW_CLASS}>
+                                      <th class={GIT_CHANGED_FILES_HEADER_CELL_CLASS}>Path</th>
+                                      <th class={GIT_CHANGED_FILES_HEADER_CELL_CLASS}>Status</th>
+                                      <th class={GIT_CHANGED_FILES_HEADER_CELL_CLASS}>Changes</th>
+                                      <th class={GIT_CHANGED_FILES_STICKY_HEADER_CELL_CLASS}>Action</th>
                                     </tr>
                                   </thead>
                                   <tbody>
                                     <For each={commitFiles()}>
                                       {(file) => {
-                                        const tone = () => gitChangeTone(file.changeType);
                                         const active = () => selectedFileIdentity(diffDialogItem()) === selectedFileIdentity(file) && diffDialogOpen();
                                         return (
                                           <tr
                                             aria-selected={active()}
-                                            class={`group border-b border-border/45 last:border-b-0 ${active() ? 'bg-muted/45' : 'bg-transparent hover:bg-muted/25'}`}
+                                            class={gitChangedFilesRowClass(active())}
                                           >
-                                            <td class="px-3 py-2.5 align-top">
+                                            <td class={GIT_CHANGED_FILES_CELL_CLASS}>
                                               <div class="min-w-0">
                                                 <button
                                                   type="button"
-                                                  class={`block max-w-full cursor-pointer truncate text-left text-xs font-medium underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70 ${gitChangePathClass(file.changeType)}`}
+                                                  class={`block max-w-full cursor-pointer truncate text-left text-[11px] font-medium underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70 ${gitChangePathClass(file.changeType)}`}
                                                   title={changeSecondaryPath(file)}
                                                   onClick={() => {
                                                     setDiffDialogItem(file);
@@ -246,16 +260,9 @@ export function GitHistoryBrowser(props: GitHistoryBrowserProps) {
                                                 </button>
                                               </div>
                                             </td>
-                                            <td class="px-3 py-2.5 align-top">
-                                              <div class="inline-flex items-center gap-1.5 text-xs text-foreground">
-                                                <span class={cn('h-1.5 w-1.5 rounded-full', gitToneDotClass(tone()))} aria-hidden="true" />
-                                                <GitMetaPill tone={tone()} class="capitalize">{file.changeType || 'modified'}</GitMetaPill>
-                                              </div>
-                                            </td>
-                                            <td class="px-3 py-2.5 align-top">
-                                              <GitChangeMetrics additions={file.additions} deletions={file.deletions} />
-                                            </td>
-                                            <td class={`sticky right-0 z-10 border-l border-border/45 px-3 py-2.5 text-right align-top shadow-[-1px_0_0_rgba(0,0,0,0.03)] ${active() ? 'bg-muted/45' : 'bg-card group-hover:bg-muted/25'}`}>
+                                            <td class={GIT_CHANGED_FILES_CELL_CLASS}><GitChangeStatusPill change={file.changeType} /></td>
+                                            <td class={GIT_CHANGED_FILES_CELL_CLASS}><GitChangeMetrics additions={file.additions} deletions={file.deletions} /></td>
+                                            <td class={gitChangedFilesStickyCellClass(active())}>
                                               <button
                                                 type="button"
                                                 class="inline-flex min-w-[5.5rem] items-center justify-center rounded-sm border border-input bg-background px-2.5 py-1.5 text-[11px] font-medium text-foreground shadow-sm transition-colors duration-150 hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70"

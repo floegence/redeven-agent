@@ -135,6 +135,10 @@ describe('browser workspace layout wiring', () => {
     expect(branchesSrc).toContain('gitChangePathClass(item.changeType)');
     expect(historySrc).toContain('gitChangePathClass(file.changeType)');
     expect(commitDialogSrc).toContain('gitChangePathClass(item.changeType)');
+    expect(changesSrc).toContain('GitChangeStatusPill');
+    expect(branchesSrc).toContain('GitChangeStatusPill');
+    expect(historySrc).toContain('GitChangeStatusPill');
+    expect(commitDialogSrc).toContain('GitChangeStatusPill');
   });
 
 
@@ -182,6 +186,7 @@ describe('browser workspace layout wiring', () => {
   it('keeps overview and changes panels on the same compact vertical rhythm', () => {
     const overviewSrc = read('./GitOverviewPanel.tsx');
     const changesSrc = read('./GitChangesPanel.tsx');
+    const primitivesSrc = read('./GitWorkbenchPrimitives.tsx');
 
     expect(overviewSrc).toContain('Workspace Summary');
     expect(overviewSrc).toContain('Selected Branch');
@@ -198,9 +203,10 @@ describe('browser workspace layout wiring', () => {
     expect(changesSrc).toContain('Status');
     expect(changesSrc).toContain('GitCommitDialog');
     expect(changesSrc).toContain('GitDiffDialog');
-    expect(changesSrc).toContain('bg-muted/30');
+    expect(changesSrc).toContain('GIT_CHANGED_FILES_TABLE_CLASS');
+    expect(primitivesSrc).toContain("export const GIT_CHANGED_FILES_HEAD_CLASS = 'sticky top-0 z-10 bg-muted/30 backdrop-blur';");
     expect(changesSrc).toContain('variant={item.section === \'staged\' ? \'outline\' : \'default\'}');
-    expect(changesSrc).toContain('sticky right-0');
+    expect(primitivesSrc).toContain('sticky right-0 z-10 border-l border-border/45');
     expect(changesSrc).not.toContain('border-b border-border/70 px-3 py-2');
     expect(changesSrc).not.toContain('text-[24px] font-semibold tracking-tight');
   });
@@ -346,6 +352,7 @@ describe('browser workspace layout wiring', () => {
     expect(commitSrc).toContain("label: 'Added Lines'");
     expect(commitSrc).toContain("label: 'Removed Lines'");
     expect(commitSrc).toContain('props.stagedItems.reduce');
+    expect(commitSrc).toContain('Status');
   });
 
 });

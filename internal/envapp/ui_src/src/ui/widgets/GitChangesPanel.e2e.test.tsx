@@ -60,10 +60,12 @@ describe('GitChangesPanel interactions', () => {
       expect(host.textContent).toContain('Unstaged');
       expect(host.textContent).toContain('Path');
       expect(host.textContent).toContain('Status');
+      expect(host.textContent).toContain('Modified');
       expect(host.textContent).toContain('src/next.ts');
       expect(host.textContent).toContain('+ Stage');
       expect(host.textContent).not.toContain('Patch');
       expect(host.textContent).not.toContain('Ready to Commit');
+      expect(host.querySelector('tbody tr td:nth-child(2) .rounded-full')).toBeNull();
     } finally {
       dispose();
     }
@@ -107,6 +109,8 @@ describe('GitChangesPanel interactions', () => {
       expect(document.body.textContent).toContain('Commit staged changes');
       expect(document.body.textContent).toContain('src/app.ts');
       expect(document.body.textContent).toContain('Files Ready');
+      expect(document.body.textContent).toContain('Status');
+      expect(document.body.textContent).toContain('Modified');
       expect(document.body.textContent).toContain('1 file');
       expect(document.body.textContent).toContain('+3');
       expect(document.body.textContent).toContain('-1');

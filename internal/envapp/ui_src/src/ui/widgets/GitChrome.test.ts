@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   gitBranchTone,
+  gitChangeLabel,
   gitChangePathClass,
   gitChangeTone,
   gitCompareTone,
@@ -31,10 +32,16 @@ describe('GitChrome semantic tone helpers', () => {
 
   it('maps file changes, compare states, and branches to consistent tones', () => {
     expect(gitChangeTone('added')).toBe('success');
+    expect(gitChangeTone('conflicted')).toBe('danger');
     expect(gitChangeTone('deleted')).toBe('danger');
     expect(gitChangeTone('renamed')).toBe('violet');
     expect(gitChangeTone('copied')).toBe('brand');
     expect(gitChangeTone('modified')).toBe('info');
+
+    expect(gitChangeLabel('added')).toBe('Added');
+    expect(gitChangeLabel('conflicted')).toBe('Conflicted');
+    expect(gitChangeLabel('modified')).toBe('Modified');
+    expect(gitChangeLabel('unknown')).toBe('Unknown');
 
     expect(gitCompareTone(0, 0)).toBe('success');
     expect(gitCompareTone(2, 0)).toBe('brand');
@@ -46,6 +53,7 @@ describe('GitChrome semantic tone helpers', () => {
     expect(gitBranchTone({ current: false, kind: 'local' } as any)).toBe('neutral');
 
     expect(gitChangePathClass('modified')).toBe('text-sky-700 dark:text-sky-300');
+    expect(gitChangePathClass('conflicted')).toBe('text-red-700 dark:text-red-300');
     expect(gitChangePathClass('deleted')).toBe('text-red-700 dark:text-red-300');
     expect(gitChangePathClass('added')).toBe('text-emerald-700 dark:text-emerald-300');
     expect(gitChangePathClass('renamed')).toBe('text-violet-700 dark:text-violet-300');

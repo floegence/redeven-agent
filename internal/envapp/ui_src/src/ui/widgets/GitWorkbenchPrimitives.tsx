@@ -1,6 +1,6 @@
 import { For, Show, type JSX } from 'solid-js';
 import { cn } from '@floegence/floe-webapp-core';
-import { gitToneBadgeClass, gitToneDotClass, gitToneSurfaceClass, type GitChromeTone } from './GitChrome';
+import { gitChangeLabel, gitChangeTone, gitToneBadgeClass, gitToneDotClass, gitToneSurfaceClass, type GitChromeTone } from './GitChrome';
 
 export interface GitSectionProps {
   label: string;
@@ -102,6 +102,25 @@ export function GitSubtleNote(props: GitSubtleNoteProps) {
   return <div class={cn('rounded-md border border-border/45 bg-muted/[0.16] px-2.5 py-2 text-xs leading-relaxed text-muted-foreground', props.class)}>{props.children}</div>;
 }
 
+export const GIT_CHANGED_FILES_TABLE_CLASS = 'w-full text-[11px] leading-4';
+export const GIT_CHANGED_FILES_HEAD_CLASS = 'sticky top-0 z-10 bg-muted/30 backdrop-blur';
+export const GIT_CHANGED_FILES_HEADER_ROW_CLASS = 'border-b border-border/60 text-left text-[10px] uppercase tracking-[0.14em] text-muted-foreground';
+export const GIT_CHANGED_FILES_HEADER_CELL_CLASS = 'px-3 py-2 font-medium';
+export const GIT_CHANGED_FILES_CELL_CLASS = 'px-3 py-2 align-top';
+export const GIT_CHANGED_FILES_STICKY_HEADER_CELL_CLASS = 'sticky right-0 z-20 border-l border-border/50 bg-muted/30 px-3 py-2 text-right font-medium';
+
+export function gitChangedFilesRowClass(active: boolean): string {
+  return active
+    ? 'group border-b border-border/45 bg-muted/40 last:border-b-0'
+    : 'group border-b border-border/45 bg-transparent hover:bg-muted/20 last:border-b-0';
+}
+
+export function gitChangedFilesStickyCellClass(active: boolean): string {
+  return active
+    ? 'sticky right-0 z-10 border-l border-border/45 bg-muted/40 px-3 py-2 text-right align-top shadow-[-1px_0_0_rgba(0,0,0,0.03)]'
+    : 'sticky right-0 z-10 border-l border-border/45 bg-card px-3 py-2 text-right align-top shadow-[-1px_0_0_rgba(0,0,0,0.03)] group-hover:bg-muted/20';
+}
+
 export interface GitMetaPillProps {
   tone?: GitChromeTone;
   children: JSX.Element;
@@ -113,6 +132,19 @@ export function GitMetaPill(props: GitMetaPillProps) {
     <span class={cn('inline-flex max-w-full items-center rounded px-2 py-0.5 text-[10px] font-medium tracking-[0.04em]', gitToneBadgeClass(props.tone), props.class)}>
       <span class="truncate">{props.children}</span>
     </span>
+  );
+}
+
+export interface GitChangeStatusPillProps {
+  change?: string | null;
+  class?: string;
+}
+
+export function GitChangeStatusPill(props: GitChangeStatusPillProps) {
+  return (
+    <GitMetaPill tone={gitChangeTone(props.change ?? undefined)} class={cn('whitespace-nowrap', props.class)}>
+      {gitChangeLabel(props.change ?? undefined)}
+    </GitMetaPill>
   );
 }
 

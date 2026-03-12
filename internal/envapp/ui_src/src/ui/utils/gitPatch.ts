@@ -89,54 +89,6 @@ export function gitPatchRenderedLineClass(line: GitPatchRenderedLine): string {
   }
 }
 
-export function gitChangeLabel(change: string | undefined): string {
-  switch (String(change ?? '').trim()) {
-    case 'added':
-      return 'Added';
-    case 'deleted':
-      return 'Deleted';
-    case 'renamed':
-      return 'Renamed';
-    case 'copied':
-      return 'Copied';
-    case 'modified':
-    default:
-      return 'Updated';
-  }
-}
-
-export function gitChangeClass(change: string | undefined): string {
-  switch (String(change ?? '').trim()) {
-    case 'added':
-      return 'bg-success/12 text-success';
-    case 'deleted':
-      return 'bg-error/12 text-error';
-    case 'renamed':
-      return 'bg-violet-500/[0.10] text-violet-700 dark:text-violet-300';
-    case 'copied':
-      return 'bg-primary/[0.10] text-primary';
-    case 'modified':
-    default:
-      return 'bg-sky-500/[0.10] text-sky-700 dark:text-sky-300';
-  }
-}
-
-export function gitChangeDotClass(change: string | undefined): string {
-  switch (String(change ?? '').trim()) {
-    case 'added':
-      return 'bg-success';
-    case 'deleted':
-      return 'bg-error';
-    case 'renamed':
-      return 'bg-violet-500';
-    case 'copied':
-      return 'bg-primary';
-    case 'modified':
-    default:
-      return 'bg-sky-500';
-  }
-}
-
 export function gitFileDisplayName(pathValue: string | undefined): string {
   const fullPath = String(pathValue ?? '').trim();
   if (!fullPath) return '(unknown)';

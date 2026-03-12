@@ -2,7 +2,17 @@ import { For, createMemo } from 'solid-js';
 import { Button, Dialog } from '@floegence/floe-webapp-core/ui';
 import type { GitWorkspaceChange } from '../protocol/redeven_v1';
 import { gitChangePathClass } from './GitChrome';
-import { GitChangeMetrics, GitStatStrip } from './GitWorkbenchPrimitives';
+import {
+  GIT_CHANGED_FILES_CELL_CLASS,
+  GIT_CHANGED_FILES_HEADER_CELL_CLASS,
+  GIT_CHANGED_FILES_HEAD_CLASS,
+  GIT_CHANGED_FILES_HEADER_ROW_CLASS,
+  GIT_CHANGED_FILES_TABLE_CLASS,
+  GitChangeMetrics,
+  GitChangeStatusPill,
+  GitStatStrip,
+  gitChangedFilesRowClass,
+} from './GitWorkbenchPrimitives';
 
 export interface GitCommitDialogProps {
   open: boolean;
@@ -56,23 +66,23 @@ export function GitCommitDialog(props: GitCommitDialogProps) {
 
         <div class="overflow-hidden rounded-md border border-border/65 bg-card">
           <div class="max-h-[16rem] overflow-auto">
-            <table class="w-full text-xs">
-              <thead class="sticky top-0 bg-muted/30 text-left text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-                <tr class="border-b border-border/60">
-                  <th class="px-3 py-2.5 font-medium">Path</th>
-                  <th class="px-3 py-2.5 font-medium">Type</th>
-                  <th class="px-3 py-2.5 font-medium">Changes</th>
+            <table class={GIT_CHANGED_FILES_TABLE_CLASS}>
+              <thead class={GIT_CHANGED_FILES_HEAD_CLASS}>
+                <tr class={GIT_CHANGED_FILES_HEADER_ROW_CLASS}>
+                  <th class={GIT_CHANGED_FILES_HEADER_CELL_CLASS}>Path</th>
+                  <th class={GIT_CHANGED_FILES_HEADER_CELL_CLASS}>Status</th>
+                  <th class={GIT_CHANGED_FILES_HEADER_CELL_CLASS}>Changes</th>
                 </tr>
               </thead>
               <tbody>
                 <For each={props.stagedItems}>
                   {(item) => (
-                    <tr class="border-b border-border/45 last:border-b-0">
-                      <td class="px-3 py-2.5">
-                        <div class={`truncate text-xs font-medium ${gitChangePathClass(item.changeType)}`} title={itemPath(item)}>{itemPath(item)}</div>
+                    <tr class={gitChangedFilesRowClass(false)}>
+                      <td class={GIT_CHANGED_FILES_CELL_CLASS}>
+                        <div class={`truncate text-[11px] font-medium ${gitChangePathClass(item.changeType)}`} title={itemPath(item)}>{itemPath(item)}</div>
                       </td>
-                      <td class="px-3 py-2.5 capitalize text-muted-foreground">{item.changeType || 'modified'}</td>
-                      <td class="px-3 py-2.5"><GitChangeMetrics additions={item.additions} deletions={item.deletions} /></td>
+                      <td class={GIT_CHANGED_FILES_CELL_CLASS}><GitChangeStatusPill change={item.changeType} /></td>
+                      <td class={GIT_CHANGED_FILES_CELL_CLASS}><GitChangeMetrics additions={item.additions} deletions={item.deletions} /></td>
                     </tr>
                   )}
                 </For>
