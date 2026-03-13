@@ -22,7 +22,7 @@ We deliberately split configuration into two local files:
 
 1) `~/.redeven/config.json` (non-secret settings)
 
-- Control-plane bootstrap fields + local preferences.
+- Bootstrap connection fields + local preferences.
 - Contains AI provider registry and allowed models.
 - Must **never** contain provider API keys.
 

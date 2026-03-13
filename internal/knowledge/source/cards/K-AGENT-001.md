@@ -1,20 +1,20 @@
 ---
 id: K-AGENT-001
 version: 1
-title: Agent session permissions are enforced by control metadata and local policy
+title: Agent session permissions are enforced by session metadata and local policy
 status: stable
 owners:
   - backend
 tags:
   - architecture
   - security
-  - control_plane
+  - session_security
 source_card_id: K-AGENT-001
 ---
 
 ## Conclusion
 
-The agent accepts control-plane session metadata and always clamps granted permissions with the local permission policy before serving a session.
+The agent accepts authoritative session metadata and always clamps granted permissions with the local permission policy before serving a session.
 
 ## Mechanism
 

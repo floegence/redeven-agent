@@ -5,7 +5,7 @@ Redeven Agent can optionally enable **Flower**, an on-device AI assistant inside
 High-level design:
 
 - The browser UI calls the agent via the existing `/_redeven_proxy/api/ai/*` gateway routes (still over Flowersec E2EE proxy).
-- The **Go agent is the security boundary** and executes tools after validating authoritative `session_meta`.
+- The **Go agent is the security boundary** and executes tools after validating authoritative session metadata.
 - Tooling follows a shell-first workflow: `terminal.exec` for investigation and verification, `apply_patch` for file edits.
 - LLM orchestration runs in the **Go runtime** via native provider SDK adapters:
   - OpenAI: `openai-go` (Responses API)
@@ -39,7 +39,7 @@ Example:
 
 ```json
 {
-  "controlplane_base_url": "https://<region>.<base-domain>",
+  "controlplane_base_url": "https://<redeven-environment-host>",
   "environment_id": "env_xxx",
   "agent_instance_id": "ai_xxx",
   "direct": {
