@@ -1,6 +1,6 @@
 # Redeven Agent
 
-![Go Version](https://img.shields.io/badge/Go-1.25.7-00ADD8?logo=go)
+![Go Version](https://img.shields.io/badge/Go-1.25.8-00ADD8?logo=go)
 ![Node Version](https://img.shields.io/badge/Node.js-20-339933?logo=node.js)
 ![Architecture](https://img.shields.io/badge/Architecture-E2EE%20Endpoint-5B2CFF)
 
@@ -37,7 +37,7 @@ Management channel and E2EE session transport are intentionally split:
 
 ### Prerequisites
 
-- Go `1.25.7`
+- Go `1.25.8`
 - Node.js `20`
 - npm
 - pnpm (or Node.js `corepack`)
