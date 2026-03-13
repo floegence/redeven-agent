@@ -27,29 +27,29 @@ Agent side:
 - The agent serves Env App static assets under `/_redeven_proxy/env/*` via the local gateway.
 - The Env App UI talks to the agent using **Flowersec RPC/streams** (fs/terminal/monitor domains).
 
-## Control-plane APIs used by the Env App UI
+## Session bootstrap flow used by the Env App UI
 
-The Env App UI runs on sandbox origins and uses the cookie-session control-plane flow:
+The Env App UI runs on sandbox origins and uses the Redeven session-bootstrap flow:
 
 - Portal issues a one-time `boot_ticket` for Env App startup.
 - Sandbox bootstrap exchanges `boot_ticket` for an HttpOnly `env_session` cookie.
 - Env App uses `env_session` to mint one-time `entry_ticket` values on demand.
-- `entry_ticket` is then exchanged at `/v1/channel/init/entry` to establish Flowersec sessions.
+- `entry_ticket` is then redeemed to establish Flowersec sessions.
 
 Security baseline:
 
 - Env App UI never stores long-lived capability credentials in browser storage.
 - High-value credentials are HttpOnly cookies scoped to the sandbox origin.
 - One-time `entry_ticket` values are exchanged on demand with short TTL.
-- If sandbox session context is missing/expired, the browser must return to Portal for re-issuance.
+- If sandbox session context is missing or expired, the browser must return to the Redeven web app for re-issuance.
 
 ## Audit log
 
 There are **two** audit log sources:
 
-1) Region-side grant audit log (control plane): recorded by control plane at `/v1/channel/init*`.
+1) Redeven service-side session audit log.
    - This is **not** shown in the Env App.
-   - It is surfaced in the Console Dashboard environments list (env admin only).
+   - It is surfaced in the Redeven web app for environment admins.
 
 2) Agent-local audit log (user operations): recorded and persisted by the agent.
    - Env App reads it via the local gateway API (env admin only):

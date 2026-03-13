@@ -2,7 +2,7 @@
 
 Redeven agents enforce permissions from two sources:
 
-1) Control-plane: `session_meta` delivered by control plane (authoritative grant).
+1) Session bootstrap: `session_meta` delivered by the Redeven service (authoritative grant).
 2) Endpoint local: `permission_policy` in the agent config (authoritative cap).
 
 The agent must always compute:
@@ -19,11 +19,11 @@ effective_admin = session_meta.can_admin  // NOTE: not clamped by permission_pol
 The local cap is designed to protect users from:
 - accidental misconfiguration,
 - overly-broad grants,
-- and (in the worst case) compromised control-plane behavior.
+- and (in the worst case) buggy or compromised server-issued grants.
 
 Notes:
 - The local cap only applies to `read/write/execute` (RWX).
-- `can_admin` is a separate namespace-level capability bit delivered by control plane in `session_meta`.
+- `can_admin` is a separate namespace-level capability bit delivered in `session_meta`.
 
 ## Config Schema
 
@@ -62,7 +62,7 @@ If `permission_policy` is missing, the recommended default local cap is:
 
 Rationale:
 - Redeven is a full remote development environment. Most users expect terminal, file editing, codespaces, and port forwarding to work out of the box.
-- The local cap is still only a cap: the effective permissions are always clamped by the control-plane grant.
+- The local cap is still only a cap: the effective permissions are always clamped by the server-issued grant.
 
 Security note:
 - `execute=true` means terminal commands can mutate files even if `write=false`. Use the `read_only` preset for strict read-only (`execute=false, read=true, write=false`).

@@ -24,7 +24,7 @@ This document describes the **Code App** implementation in the Redeven agent:
 
 ## Local data directory
 
-The Code App stores all code space data on the user's machine (not in control plane).
+The Code App stores all code space data on the user's machine (not on Redeven servers).
 
 By default, the agent config is `~/.redeven/config.json`, so the state directory is:
 

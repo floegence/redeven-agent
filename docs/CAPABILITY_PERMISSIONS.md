@@ -22,7 +22,7 @@ Scope:
   - High risk and should be explicitly enabled.
 - `admin`
   - Management actions (codespace management, settings updates, agent maintenance operations, audit log access).
-  - This is the namespace-level `admin` bit delivered by control plane in `session_meta`.
+  - This is the namespace-level `admin` bit delivered in authoritative `session_meta`.
 
 Notes:
 - `write` does NOT imply `execute`, and vice versa.
@@ -30,11 +30,11 @@ Notes:
 - `admin` is a separate capability dimension from RWX.
 - UIs should treat permission denials as a normal capability state (not an exceptional error): when a capability is not granted (or is locally capped by `permission_policy`), stop polling and show a permission empty state.
 
-## Effective Permissions (Control-Plane Grant ∩ Endpoint Local Cap)
+## Effective Permissions (Server-Issued Grant ∩ Endpoint Local Cap)
 
 Redeven agents enforce permissions from two sources:
 
-1) Control-plane: `session_meta` delivered by control plane (authoritative grant).
+1) Session bootstrap: `session_meta` delivered by the Redeven service (authoritative grant).
 2) Endpoint local: `permission_policy` in the agent config (authoritative cap).
 
 The agent must always compute:

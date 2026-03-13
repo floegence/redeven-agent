@@ -5,33 +5,33 @@
 ![Architecture](https://img.shields.io/badge/Architecture-E2EE%20Endpoint-5B2CFF)
 
 Redeven Agent is the **endpoint runtime** in the Redeven + Flowersec architecture.
-It runs on the user machine, receives control-plane grants from control plane, and serves encrypted RPC/streams over Flowersec.
+It runs on the user machine, receives session grants from the Redeven service, and serves encrypted RPC/streams over Flowersec.
 
 > This repository is designed to be open-source and auditable, so users can inspect exactly what runs locally.
 
 ## Why Redeven Agent
 
 - **E2EE by design**: business traffic is encrypted end-to-end between browser and endpoint.
-- **Clear trust boundary**: control-plane metadata and data-plane bytes are separated by architecture.
+- **Clear trust boundary**: session metadata and encrypted application bytes are separated by design.
 - **Local-first runtime**: files, terminals, monitoring, and code-server run on the user machine.
 - **Auditable behavior**: release and verification flow are documented and reproducible.
 
 ## Architecture at a Glance
 
 ```text
-                           (control-plane, direct)
-control plane  -------------------------------------------->  Redeven Agent
-  /control/ws, grant_server + session_meta                     (endpoint runtime)
+                        (management channel, direct)
+Redeven Service  ------------------------------------------>  Redeven Agent
+  bootstrap + session_meta                                      (endpoint runtime)
 
 Browser (Sandbox)  <========== Flowersec Tunnel ==========>  Redeven Agent
       E2EE client attach token + PSK            E2EE server role + app handlers
                            (data-plane bytes only)
 ```
 
-Control-plane and data-plane are intentionally split:
+Management channel and E2EE session transport are intentionally split:
 
-- **Control-plane**: authenticate, authorize, issue grants, deliver `session_meta`.
-- **Data-plane**: forward encrypted bytes; tunnel cannot decrypt application data.
+- **Management channel**: authenticate, authorize, issue grants, deliver `session_meta`.
+- **E2EE transport**: forward encrypted bytes; tunnel cannot decrypt application data.
 
 ## Quick Start (2 Minutes)
 
@@ -66,7 +66,7 @@ This enables the repository pre-commit hook that runs `scripts/open_source_hygie
 
 ```bash
 ./redeven bootstrap \
-  --controlplane https://<region>.<base-domain> \
+  --controlplane https://<redeven-environment-host> \
   --env-id <env_public_id> \
   --env-token <env_token>
 
@@ -81,7 +81,7 @@ What bootstrap writes by default:
 ### Success checklist
 
 - `redeven run` starts without config validation errors.
-- control plane sees the endpoint online through direct control channel.
+- The Redeven service shows the endpoint online.
 - Env App can open and perform basic file/terminal actions through E2EE sessions.
 
 ## What You Get Today
@@ -113,8 +113,8 @@ Details:
 
 - The agent **does not trust browser-claimed permissions**.
 - Effective permissions come from:
-  - control-plane `session_meta`
-  - intersected with local `permission_policy` cap
+  - server-issued `session_meta`
+  - intersected with the local `permission_policy` cap
 - Capability behavior is explicit and documented:
   - [`docs/CAPABILITY_PERMISSIONS.md`](docs/CAPABILITY_PERMISSIONS.md)
   - [`docs/PERMISSION_POLICY.md`](docs/PERMISSION_POLICY.md)
@@ -166,7 +166,7 @@ Release details:
 ### `bootstrap failed` or `missing direct connect info`
 
 - Verify `--controlplane`, `--env-id`, and `--env-token` are correct.
-- Confirm control plane can reach the environment and issue bootstrap credentials.
+- Confirm the Redeven environment is reachable and can issue bootstrap credentials.
 
 ### Code App says `code-server binary not found`
 
