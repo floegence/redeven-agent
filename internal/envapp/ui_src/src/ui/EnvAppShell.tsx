@@ -316,7 +316,7 @@ export function EnvAppShell() {
     const resp = await fetch('/_redeven_proxy/api/ai/uploads', {
       method: 'POST',
       body: form,
-      credentials: gatewayRequestCredentials(),
+      credentials: await gatewayRequestCredentials(),
       cache: 'no-store',
     });
 

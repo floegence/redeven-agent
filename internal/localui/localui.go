@@ -39,7 +39,7 @@ const (
 
 type Options struct {
 	Logger *slog.Logger
-	Port   int
+	Bind   BindSpec
 
 	// Gateway is the Env App gateway handler mounted under /_redeven_proxy/*.
 	Gateway *gateway.Gateway
@@ -61,22 +61,20 @@ type Options struct {
 type Server struct {
 	log *slog.Logger
 
-	port       int
+	bind       BindSpec
 	configPath string
 	version    string
 
 	gw *gateway.Gateway
 	a  *agent.Agent
 
-	accessGate     *accessgate.Gate
-	allowedOrigins []string
+	accessGate *accessgate.Gate
 
 	pendingMu sync.Mutex
 	pending   map[string]pendingDirect
 
-	ln4 net.Listener
-	ln6 net.Listener
-	srv *http.Server
+	listeners []net.Listener
+	srv       *http.Server
 }
 
 type pendingDirect struct {
@@ -85,21 +83,10 @@ type pendingDirect struct {
 	meta              session.Meta
 }
 
-func AllowedOriginsForPort(port int) []string {
-	p := port
-	if p <= 0 {
-		p = 23998
-	}
-	return []string{
-		fmt.Sprintf("http://localhost:%d", p),
-		fmt.Sprintf("http://127.0.0.1:%d", p),
-		fmt.Sprintf("http://[::1]:%d", p),
-	}
-}
-
 func (s *Server) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleRoot)
+	mux.HandleFunc("/cs/", s.handleCodeSpace)
 	// Browsers may request these root-level assets regardless of the actual SPA base path.
 	// Keep them available to avoid noisy 404s in Local UI mode.
 	mux.HandleFunc("/favicon.ico", s.handleFavicon)
@@ -127,12 +114,13 @@ func New(opts Options) (*Server, error) {
 	if strings.TrimSpace(opts.ConfigPath) == "" {
 		return nil, errors.New("missing ConfigPath")
 	}
-	port := opts.Port
-	if port == 0 {
-		port = 23998
-	}
-	if port <= 0 || port > 65535 {
-		return nil, fmt.Errorf("invalid Port: %d", port)
+	bind := opts.Bind
+	if bind.Port() == 0 {
+		var err error
+		bind, err = ParseBind(DefaultBind)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	logger := opts.Logger
@@ -141,15 +129,14 @@ func New(opts Options) (*Server, error) {
 	}
 
 	return &Server{
-		log:            logger,
-		port:           port,
-		configPath:     strings.TrimSpace(opts.ConfigPath),
-		version:        strings.TrimSpace(opts.Version),
-		gw:             opts.Gateway,
-		a:              opts.Agent,
-		accessGate:     opts.AccessGate,
-		allowedOrigins: AllowedOriginsForPort(port),
-		pending:        make(map[string]pendingDirect),
+		log:        logger,
+		bind:       bind,
+		configPath: strings.TrimSpace(opts.ConfigPath),
+		version:    strings.TrimSpace(opts.Version),
+		gw:         opts.Gateway,
+		a:          opts.Agent,
+		accessGate: opts.AccessGate,
+		pending:    make(map[string]pendingDirect),
 	}, nil
 }
 
@@ -164,24 +151,28 @@ func (s *Server) Start(ctx context.Context) error {
 		return nil
 	}
 
-	addr4 := net.JoinHostPort("127.0.0.1", fmt.Sprintf("%d", s.port))
-	ln4, err := net.Listen("tcp", addr4)
-	if err != nil {
-		return fmt.Errorf("listen %s: %w", addr4, err)
+	var listeners []net.Listener
+	var errs []string
+	for _, addr := range s.bind.ListenAddrs() {
+		ln, err := net.Listen("tcp", addr)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", addr, err))
+			continue
+		}
+		listeners = append(listeners, ln)
 	}
-	addr6 := net.JoinHostPort("::1", fmt.Sprintf("%d", s.port))
-	ln6, err := net.Listen("tcp", addr6)
-	if err != nil {
-		_ = ln4.Close()
-		return fmt.Errorf("listen %s: %w", addr6, err)
+	if len(listeners) == 0 {
+		return fmt.Errorf("listen %s failed: %s", s.bind.ListenLabel(), strings.Join(errs, "; "))
+	}
+	for _, errText := range errs {
+		s.log.Warn("local ui listener unavailable", "bind", s.bind.ListenLabel(), "error", errText)
 	}
 
 	s.srv = &http.Server{
 		Handler:           s.handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-	s.ln4 = ln4
-	s.ln6 = ln6
+	s.listeners = listeners
 
 	go func() {
 		<-ctx.Done()
@@ -190,18 +181,16 @@ func (s *Server) Start(ctx context.Context) error {
 
 	go s.sweepLoop(ctx)
 
-	go func() {
-		if err := s.srv.Serve(ln4); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			s.log.Error("local ui server stopped (ipv4)", "error", err)
-		}
-	}()
-	go func() {
-		if err := s.srv.Serve(ln6); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			s.log.Error("local ui server stopped (ipv6)", "error", err)
-		}
-	}()
+	for _, ln := range listeners {
+		ln := ln
+		go func() {
+			if err := s.srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				s.log.Error("local ui server stopped", "addr", ln.Addr().String(), "error", err)
+			}
+		}()
+	}
 
-	s.log.Info("local ui listening", "port", s.port)
+	s.log.Info("local ui listening", "bind", s.bind.ListenLabel())
 	return nil
 }
 
@@ -214,15 +203,11 @@ func (s *Server) Close() error {
 		defer cancel()
 		_ = s.srv.Shutdown(ctx)
 	}
-	if s.ln4 != nil {
-		_ = s.ln4.Close()
-	}
-	if s.ln6 != nil {
-		_ = s.ln6.Close()
+	for _, ln := range s.listeners {
+		_ = ln.Close()
 	}
 	s.srv = nil
-	s.ln4 = nil
-	s.ln6 = nil
+	s.listeners = nil
 	return nil
 }
 
@@ -230,7 +215,7 @@ func (s *Server) Port() int {
 	if s == nil {
 		return 0
 	}
-	return s.port
+	return s.bind.Port()
 }
 
 type apiResp struct {
@@ -347,7 +332,52 @@ func (s *Server) handleGateway(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "access password required", http.StatusLocked)
 		return
 	}
-	s.gw.ServeHTTP(w, r)
+	s.gw.ServeHTTP(w, gateway.WithLocalUIEnvRoute(r))
+}
+
+func (s *Server) handleCodeSpace(w http.ResponseWriter, r *http.Request) {
+	if s == nil || w == nil || r == nil {
+		return
+	}
+	if s.gw == nil {
+		http.NotFound(w, r)
+		return
+	}
+	codeSpaceID, basePath, ok := localCodeSpaceRoute(r.URL.Path)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	if r.URL.Path == basePath {
+		target := basePath + "/"
+		if rawQuery := strings.TrimSpace(r.URL.RawQuery); rawQuery != "" {
+			target += "?" + rawQuery
+		}
+		http.Redirect(w, r, target, http.StatusFound)
+		return
+	}
+	if s.accessEnabled() && !s.hasLocalAccess(r) {
+		http.Error(w, "access password required", http.StatusLocked)
+		return
+	}
+	s.gw.ServeHTTP(w, gateway.WithLocalUICodeSpaceRoute(r, codeSpaceID))
+}
+
+func localCodeSpaceRoute(path string) (codeSpaceID string, basePath string, ok bool) {
+	p := strings.TrimSpace(path)
+	if !strings.HasPrefix(p, "/cs/") {
+		return "", "", false
+	}
+	rest := strings.TrimPrefix(p, "/cs/")
+	if rest == "" {
+		return "", "", false
+	}
+	codeSpaceID, _, _ = strings.Cut(rest, "/")
+	codeSpaceID = strings.TrimSpace(codeSpaceID)
+	if codeSpaceID == "" {
+		return "", "", false
+	}
+	return codeSpaceID, "/cs/" + codeSpaceID, true
 }
 
 func (s *Server) handleAccessStatus(w http.ResponseWriter, r *http.Request) {
@@ -739,9 +769,12 @@ func (s *Server) handleDirectWS(w http.ResponseWriter, r *http.Request) {
 	if !s.requireLocalAccessHTTP(w, r) {
 		return
 	}
+	if !sameOriginWSRequest(r) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 
-	checkOrigin := ws.NewOriginChecker(s.allowedOrigins, false)
-	c, err := ws.Upgrade(w, r, ws.UpgraderOptions{CheckOrigin: checkOrigin})
+	c, err := ws.Upgrade(w, r, ws.UpgraderOptions{CheckOrigin: sameOriginWSRequest})
 	if err != nil {
 		s.log.Warn("local direct ws upgrade failed", "error", err)
 		return
@@ -786,6 +819,33 @@ func (s *Server) handleDirectWS(w http.ResponseWriter, r *http.Request) {
 	if err := s.a.ServeLocalDirectSession(r.Context(), sess, &metaCopy); err != nil && r.Context().Err() == nil {
 		s.log.Warn("local direct session exited", "channel_id", metaCopy.ChannelID, "error", err)
 	}
+}
+
+func sameOriginWSRequest(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	originRaw := strings.TrimSpace(r.Header.Get("Origin"))
+	if originRaw == "" {
+		return false
+	}
+	originURL, err := url.Parse(originRaw)
+	if err != nil || originURL == nil {
+		return false
+	}
+	expectedScheme := "http"
+	if r.TLS != nil {
+		expectedScheme = "https"
+	}
+	expectedHost := strings.ToLower(strings.TrimSpace(r.Host))
+	if expectedHost == "" {
+		expectedHost = strings.ToLower(strings.TrimSpace(r.Header.Get("Host")))
+	}
+	if expectedHost == "" {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(originURL.Scheme), expectedScheme) &&
+		strings.EqualFold(strings.TrimSpace(originURL.Host), expectedHost)
 }
 
 func (s *Server) sweepLoop(ctx context.Context) {

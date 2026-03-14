@@ -1,3 +1,5 @@
+import { getLocalRuntime } from './controlplaneApi';
+
 export type GatewayAccessStatus = {
   password_required: boolean;
   unlocked: boolean;
@@ -17,14 +19,9 @@ function gatewayErrorMessage(data: any, status: number): string {
   return `HTTP ${status}`;
 }
 
-export function gatewayRequestCredentialsForHost(hostname: string): RequestCredentials {
-  const host = String(hostname ?? '').trim().toLowerCase();
-  return host === 'localhost' || host === '127.0.0.1' || host === '::1' ? 'same-origin' : 'omit';
-}
-
-export function gatewayRequestCredentials(): RequestCredentials {
+export async function gatewayRequestCredentials(): Promise<RequestCredentials> {
   try {
-    return gatewayRequestCredentialsForHost(window.location.hostname);
+    return (await getLocalRuntime()) ? 'same-origin' : 'omit';
   } catch {
     return 'omit';
   }
@@ -37,7 +34,7 @@ export async function fetchGatewayJSON<T>(url: string, init: RequestInit): Promi
   const resp = await fetch(url, {
     ...init,
     headers,
-    credentials: init.credentials ?? gatewayRequestCredentials(),
+    credentials: init.credentials ?? (await gatewayRequestCredentials()),
     cache: 'no-store',
   });
   const text = await resp.text();

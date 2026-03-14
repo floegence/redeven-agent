@@ -38,7 +38,6 @@ func TestAgentRun_MigratesLegacyThreadstoreE2E(t *testing.T) {
 		Config:                cfg,
 		ConfigPath:            cfgPath,
 		LocalUIEnabled:        false,
-		LocalUIAllowedOrigins: nil,
 		ControlChannelEnabled: false,
 		Version:               "test",
 		Commit:                "test",

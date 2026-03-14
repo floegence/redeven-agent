@@ -185,7 +185,7 @@ async function requestDeleteThread(threadID: string, force: boolean): Promise<De
   if (!tid) throw new Error('missing thread_id');
 
   const url = `/_redeven_proxy/api/ai/threads/${encodeURIComponent(tid)}${force ? '?force=true' : ''}`;
-  const resp = await fetch(url, { method: 'DELETE', credentials: gatewayRequestCredentials(), cache: 'no-store' });
+  const resp = await fetch(url, { method: 'DELETE', credentials: await gatewayRequestCredentials(), cache: 'no-store' });
   const text = await resp.text();
   let data: any = null;
   try {

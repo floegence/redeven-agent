@@ -268,15 +268,6 @@ async function fetchJSON<T>(input: RequestInfo | URL, init: RequestInit & { bear
   return (data?.data ?? data) as T;
 }
 
-function isLoopbackOriginBestEffort(): boolean {
-  try {
-    const host = String(window.location.hostname ?? '').trim().toLowerCase();
-    return host === 'localhost' || host === '127.0.0.1' || host === '::1';
-  } catch {
-    return false;
-  }
-}
-
 function buildLocalDirectWSURLBestEffort(): string {
   const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   return `${scheme}//${window.location.host}/_redeven_direct/ws`;
@@ -292,8 +283,6 @@ async function fetchLocalJSON<T>(input: RequestInfo | URL, init: RequestInit & {
 let cachedLocalRuntime: LocalRuntimeInfo | null | undefined = undefined;
 
 export async function getLocalAccessStatus(): Promise<LocalAccessStatus | null> {
-  if (!isLoopbackOriginBestEffort()) return null;
-
   try {
     const out = await fetchLocalJSON<LocalAccessStatus>('/api/local/access/status', { method: 'GET' });
     if (typeof out?.password_required === 'boolean' && typeof out?.unlocked === 'boolean') {
@@ -319,12 +308,6 @@ export async function unlockLocalAccess(password: string): Promise<LocalAccessUn
 export async function getLocalRuntime(): Promise<LocalRuntimeInfo | null> {
   if (cachedLocalRuntime !== undefined) return cachedLocalRuntime;
 
-  // Local UI mode is loopback-only. Avoid probing /api/local/* on sandbox domains (404 noise).
-  if (!isLoopbackOriginBestEffort()) {
-    cachedLocalRuntime = null;
-    return null;
-  }
-
   const access = await getLocalAccessStatus();
   if (access) {
     cachedLocalRuntime = {
@@ -333,16 +316,6 @@ export async function getLocalRuntime(): Promise<LocalRuntimeInfo | null> {
       direct_ws_url: buildLocalDirectWSURLBestEffort(),
     };
     return cachedLocalRuntime;
-  }
-
-  try {
-    const out = await fetchLocalJSON<LocalRuntimeInfo>('/api/local/runtime', { method: 'GET' });
-    if (out && String((out as any).mode ?? '') === 'local') {
-      cachedLocalRuntime = out;
-      return out;
-    }
-  } catch {
-    // ignore
   }
 
   cachedLocalRuntime = null;

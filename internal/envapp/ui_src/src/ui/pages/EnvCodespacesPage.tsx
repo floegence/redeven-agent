@@ -47,7 +47,7 @@ async function fetchGatewayJSON<T>(url: string, init: RequestInit): Promise<T> {
   const resp = await fetch(url, {
     ...init,
     headers,
-    credentials: init.credentials ?? gatewayRequestCredentials(),
+    credentials: init.credentials ?? (await gatewayRequestCredentials()),
     cache: "no-store",
   });
   const text = await resp.text();
@@ -125,14 +125,9 @@ async function openCodespace(codeSpaceID: string, setStatus: (s: string) => void
     try {
       setStatus("Starting codespace...");
       const sp = await fetchGatewayJSON<SpaceStatus>(`/_redeven_proxy/api/spaces/${encodeURIComponent(codeSpaceID)}/start`, { method: "POST" });
-      const codePort = Number(sp?.code_port ?? 0);
-      if (!Number.isFinite(codePort) || codePort <= 0) throw new Error("Invalid code server port");
-
-      const origin = `http://127.0.0.1:${codePort}`;
-      registerSandboxWindow(win, { origin, floe_app: FLOE_APP_CODE, code_space_id: codeSpaceID, app_path: "/" });
-
       const folder = String(sp?.workspace_path ?? "").trim();
-      const url = folder ? `${origin}/?folder=${encodeURIComponent(folder)}` : `${origin}/`;
+      const basePath = `/cs/${encodeURIComponent(codeSpaceID)}/`;
+      const url = folder ? `${basePath}?folder=${encodeURIComponent(folder)}` : basePath;
       setStatus("Opening...");
       win.location.assign(url);
       return;

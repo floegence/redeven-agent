@@ -7,10 +7,9 @@ import (
 	"os"
 	"strings"
 
+	"github.com/floegence/redeven-agent/internal/localui"
 	"golang.org/x/term"
 )
-
-const defaultLocalUIPort = 23998
 
 // ANSI color codes for terminal styling.
 const (
@@ -25,7 +24,8 @@ type welcomeBannerOptions struct {
 	ControlplaneBaseURL string
 	EnvironmentID       string
 	LocalUIEnabled      bool
-	LocalUIPort         int
+	LocalUIBind         string
+	LocalUIURLs         []string
 }
 
 func printWelcomeBanner(w io.Writer, opts welcomeBannerOptions) {
@@ -62,13 +62,15 @@ func printWelcomeBanner(w io.Writer, opts welcomeBannerOptions) {
 		fmt.Fprintln(w, centerWithAnsi(line, width))
 	}
 	if opts.LocalUIEnabled {
-		port := opts.LocalUIPort
-		if port <= 0 {
-			port = defaultLocalUIPort
+		bind := strings.TrimSpace(opts.LocalUIBind)
+		if bind == "" {
+			bind = localui.DefaultBind
 		}
-		localURL := fmt.Sprintf("http://localhost:%d/", port)
-		line := fmt.Sprintf("Local URL: %s", styleURL(localURL, useANSI))
-		fmt.Fprintln(w, centerWithAnsi(line, width))
+		fmt.Fprintln(w, center(fmt.Sprintf("Local Bind: %s", bind), width))
+		for _, localURL := range opts.LocalUIURLs {
+			line := fmt.Sprintf("Local URL: %s", styleURL(localURL, useANSI))
+			fmt.Fprintln(w, centerWithAnsi(line, width))
+		}
 	}
 	fmt.Fprintln(w)
 }

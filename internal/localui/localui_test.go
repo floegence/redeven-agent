@@ -75,11 +75,6 @@ func newTestGateway(t *testing.T, cfgPath string) *gatewaypkg.Gateway {
 		},
 		ConfigPath:         cfgPath,
 		ResolveSessionMeta: func(string) (*session.Meta, bool) { return nil, false },
-		LocalUIAllowedOrigins: []string{
-			"http://localhost:23998",
-			"http://127.0.0.1:23998",
-			"http://[::1]:23998",
-		},
 	})
 	if err != nil {
 		t.Fatalf("gateway.New() error = %v", err)
@@ -254,5 +249,31 @@ func TestServer_handleLogo_redirect(t *testing.T) {
 	}
 	if loc := res.Header.Get("Location"); loc != "/_redeven_proxy/env/logo.png" {
 		t.Fatalf("location = %q, want %q", loc, "/_redeven_proxy/env/logo.png")
+	}
+}
+
+func TestLocalCodeSpaceRoute(t *testing.T) {
+	codeSpaceID, basePath, ok := localCodeSpaceRoute("/cs/demo/")
+	if !ok {
+		t.Fatalf("expected route match")
+	}
+	if codeSpaceID != "demo" {
+		t.Fatalf("codeSpaceID = %q, want %q", codeSpaceID, "demo")
+	}
+	if basePath != "/cs/demo" {
+		t.Fatalf("basePath = %q, want %q", basePath, "/cs/demo")
+	}
+}
+
+func TestSameOriginWSRequest(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "http://192.168.1.11:12345/_redeven_direct/ws", nil)
+	req.Header.Set("Origin", "http://192.168.1.11:12345")
+	if !sameOriginWSRequest(req) {
+		t.Fatalf("expected same-origin websocket request to pass")
+	}
+
+	req.Header.Set("Origin", "http://evil.example.com")
+	if sameOriginWSRequest(req) {
+		t.Fatalf("expected mismatched origin to fail")
 	}
 }

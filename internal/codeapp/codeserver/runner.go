@@ -268,9 +268,11 @@ func (r *Runner) start(codeSpaceID string, workspacePath string, port int) (*Ins
 	stderr, _ := os.OpenFile(stderrPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 
 	args := append([]string{}, prefixArgs...)
+	absProxyBasePath := fmt.Sprintf("/cs/%s", codeSpaceID)
 	args = append(args,
 		"--bind-addr", fmt.Sprintf("127.0.0.1:%d", port),
 		"--auth", "none",
+		"--abs-proxy-base-path", absProxyBasePath,
 		// The codespace is only reachable via the agent gateway (localhost) and/or Flowersec E2EE proxy.
 		"--disable-telemetry",
 		"--disable-update-check",

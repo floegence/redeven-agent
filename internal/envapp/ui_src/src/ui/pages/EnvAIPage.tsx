@@ -3790,7 +3790,7 @@ export function EnvAIPage() {
     const resp = await fetch('/_redeven_proxy/api/ai/uploads', {
       method: 'POST',
       body: form,
-      credentials: gatewayRequestCredentials(),
+      credentials: await gatewayRequestCredentials(),
       cache: 'no-store',
     });
 
@@ -4110,7 +4110,7 @@ export function EnvAIPage() {
     setDeleting(true);
     try {
       const url = `/_redeven_proxy/api/ai/threads/${encodeURIComponent(tid)}${force ? '?force=true' : ''}`;
-      const resp = await fetch(url, { method: 'DELETE', credentials: gatewayRequestCredentials(), cache: 'no-store' });
+      const resp = await fetch(url, { method: 'DELETE', credentials: await gatewayRequestCredentials(), cache: 'no-store' });
       const text = await resp.text();
       let data: any = null;
       try {
