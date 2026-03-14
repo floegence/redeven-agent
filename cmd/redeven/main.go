@@ -135,7 +135,7 @@ func runCmd(args []string) {
 	envToken := fs.String("env-token", "", "Environment token (required when --controlplane/--env-id is set)")
 	permissionPolicy := fs.String("permission-policy", "", "Local permission policy preset: execute_read|read_only|execute_read_write (optional; applies when bootstrapping)")
 	modeRaw := fs.String("mode", "remote", "Run mode: remote|hybrid|local")
-	localUIPort := fs.Int("local-ui-port", defaultLocalUIPort, "Local UI port (default: 23998)")
+	localUIBindRaw := fs.String("local-ui-bind", localui.DefaultBind, "Local UI bind address (default: localhost:23998)")
 	password := fs.String("password", "", "Access password (not recommended; prefer --password-env or --password-file)")
 	passwordEnv := fs.String("password-env", "", "Environment variable name holding the access password")
 	passwordFile := fs.String("password-file", "", "File path holding the access password")
@@ -144,6 +144,12 @@ func runCmd(args []string) {
 	mode, err := parseRunMode(*modeRaw)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "invalid --mode: %v\n\n", err)
+		fs.Usage()
+		os.Exit(2)
+	}
+	localUIBind, err := localui.ParseBind(*localUIBindRaw)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "invalid --local-ui-bind: %v\n\n", err)
 		fs.Usage()
 		os.Exit(2)
 	}
@@ -199,6 +205,11 @@ func runCmd(args []string) {
 		fmt.Fprintf(os.Stderr, "password verification failed: %v\n", err)
 		os.Exit(1)
 	}
+	if mode != runModeRemote && !localUIBind.IsLoopbackOnly() && !accessGate.Enabled() {
+		fmt.Fprintf(os.Stderr, "non-loopback --local-ui-bind requires an access password\n")
+		fmt.Fprintf(os.Stderr, "Hint: set --password, --password-env, or --password-file.\n")
+		os.Exit(2)
+	}
 
 	if bootstrapViaFlags {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -249,27 +260,21 @@ func runCmd(args []string) {
 		os.Exit(1)
 	}
 
-	localPort := *localUIPort
 	announce := func() {
 		printWelcomeBanner(os.Stderr, welcomeBannerOptions{
 			Version:             Version,
 			ControlplaneBaseURL: cfg.ControlplaneBaseURL,
 			EnvironmentID:       cfg.EnvironmentID,
 			LocalUIEnabled:      localUIEnabled,
-			LocalUIPort:         localPort,
+			LocalUIBind:         localUIBind.ListenLabel(),
+			LocalUIURLs:         localUIBind.DisplayURLs(),
 		})
-	}
-
-	var allowedOrigins []string
-	if localUIEnabled {
-		allowedOrigins = localui.AllowedOriginsForPort(*localUIPort)
 	}
 
 	a, err := agent.New(agent.Options{
 		Config:                cfg,
 		ConfigPath:            cfgPathClean,
 		LocalUIEnabled:        localUIEnabled,
-		LocalUIAllowedOrigins: allowedOrigins,
 		ControlChannelEnabled: controlChannelEnabled,
 		Version:               Version,
 		Commit:                Commit,
@@ -308,7 +313,7 @@ func runCmd(args []string) {
 		}
 
 		srv, err := localui.New(localui.Options{
-			Port:       *localUIPort,
+			Bind:       localUIBind,
 			Gateway:    gw,
 			Agent:      a,
 			ConfigPath: cfgPathAbs,
@@ -323,9 +328,6 @@ func runCmd(args []string) {
 			fmt.Fprintf(os.Stderr, "failed to start local ui: %v\n", err)
 			os.Exit(1)
 		}
-
-		// Keep the port accurate in the banner (srv.Port() is the bound port).
-		localPort = srv.Port()
 
 		// In local mode, print after the Local UI is ready.
 		// In hybrid mode, print after the control channel connects (so URL is accurate).

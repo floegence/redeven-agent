@@ -390,7 +390,7 @@ export const ShellBlock: Component<ShellBlockProps> = (props) => {
 
     const resp = await fetch(terminalOutputURL(runID, toolID, metaOnly), {
       method: 'GET',
-      credentials: gatewayRequestCredentials(),
+      credentials: await gatewayRequestCredentials(),
       cache: 'no-store',
     });
     const raw = await resp.text();

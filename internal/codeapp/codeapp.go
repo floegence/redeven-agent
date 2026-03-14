@@ -48,9 +48,9 @@ type Options struct {
 
 	AIConfig *config.AIConfig
 	Audit    *auditlog.Store
-	// LocalUIAllowedOrigins enables the Local UI path for /_redeven_proxy/* (loopback HTTP entry).
-	// When empty, gateway uses the Standard Mode origin semantics only.
-	LocalUIAllowedOrigins   []string
+	// LocalUIEnabled enables Local UI-specific runtime behavior such as shorter
+	// code-server reconnection grace and local gateway routing.
+	LocalUIEnabled          bool
 	ResolveSessionMeta      func(channelID string) (*session.Meta, bool)
 	ResolveSessionTunnelURL func(channelID string) (string, bool)
 }
@@ -137,8 +137,8 @@ func New(ctx context.Context, opts Options) (*Service, error) {
 
 	portMin, portMax := normalizePortRange(opts.CodeServerPortMin, opts.CodeServerPortMax)
 	reconnectionGrace := time.Duration(0)
-	if len(opts.LocalUIAllowedOrigins) > 0 {
-		// Local UI runs on stable loopback links, so keeping extension-host reconnect
+	if opts.LocalUIEnabled {
+		// Local UI keeps code-server on the same machine, so keeping extension-host reconnect
 		// grace in hours only accumulates stale hosts and lock contention after refreshes.
 		reconnectionGrace = 30 * time.Second
 	}
@@ -195,7 +195,6 @@ func New(ctx context.Context, opts Options) (*Service, error) {
 		ConfigPath:              strings.TrimSpace(opts.ConfigPath),
 		SecretsStore:            secrets,
 		ListenAddr:              "127.0.0.1:0",
-		LocalUIAllowedOrigins:   opts.LocalUIAllowedOrigins,
 	})
 	if err != nil {
 		_ = reg.Close()

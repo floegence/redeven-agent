@@ -26,20 +26,28 @@ describe('gatewayApi access credentials', () => {
     vi.restoreAllMocks();
   });
 
-  it('uses same-origin credentials for loopback hosts', async () => {
+  it('uses same-origin credentials when local runtime is available', async () => {
+    vi.doMock('./controlplaneApi', () => ({
+      getLocalRuntime: vi.fn(async () => ({ mode: 'local', env_public_id: 'env_local' })),
+    }));
+
     const mod = await import('./gatewayApi');
-    expect(mod.gatewayRequestCredentialsForHost('localhost')).toBe('same-origin');
-    expect(mod.gatewayRequestCredentialsForHost('127.0.0.1')).toBe('same-origin');
-    expect(mod.gatewayRequestCredentialsForHost('::1')).toBe('same-origin');
+    await expect(mod.gatewayRequestCredentials()).resolves.toBe('same-origin');
   });
 
-  it('uses omit credentials for non-loopback hosts', async () => {
+  it('uses omit credentials when local runtime is not available', async () => {
+    vi.doMock('./controlplaneApi', () => ({
+      getLocalRuntime: vi.fn(async () => null),
+    }));
+
     const mod = await import('./gatewayApi');
-    expect(mod.gatewayRequestCredentialsForHost('env-1.example.com')).toBe('omit');
-    expect(mod.gatewayRequestCredentialsForHost('dev.redeven.test')).toBe('omit');
+    await expect(mod.gatewayRequestCredentials()).resolves.toBe('omit');
   });
 
   it('applies same-origin credentials to gateway fetches on localhost', async () => {
+    vi.doMock('./controlplaneApi', () => ({
+      getLocalRuntime: vi.fn(async () => ({ mode: 'local', env_public_id: 'env_local' })),
+    }));
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       expect(init?.credentials).toBe('same-origin');
       return jsonResponse({ ok: true });
@@ -54,6 +62,9 @@ describe('gatewayApi access credentials', () => {
   });
 
   it('fetches remote access status without same-origin cookies on sandbox hosts', async () => {
+    vi.doMock('./controlplaneApi', () => ({
+      getLocalRuntime: vi.fn(async () => null),
+    }));
     window.history.replaceState(null, document.title, '/_redeven_proxy/env/');
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       expect(String(input)).toBe('/_redeven_proxy/api/access/status');
@@ -71,6 +82,9 @@ describe('gatewayApi access credentials', () => {
   });
 
   it('posts remote unlock without same-origin cookies and accepts resume-token-only responses', async () => {
+    vi.doMock('./controlplaneApi', () => ({
+      getLocalRuntime: vi.fn(async () => null),
+    }));
     window.history.replaceState(null, document.title, '/_redeven_proxy/env/');
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       expect(String(input)).toBe('/_redeven_proxy/api/access/unlock');

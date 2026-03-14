@@ -70,11 +70,7 @@ type Options struct {
 	//
 	// When enabled, the agent is allowed to start even without a full bootstrap config.
 	LocalUIEnabled bool
-	// LocalUIAllowedOrigins is the browser origin allow-list for loopback Local UI mode.
-	// It is forwarded to internal gateways (e.g. /_redeven_proxy/* hardening) so the Local UI works
-	// without affecting Standard Mode origin checks.
-	LocalUIAllowedOrigins []string
-	// ControlChannelEnabled indicates whether the agent should connect to the remote control channel.
+	// ControlChannelEnabled indicates whether the agent should connect to the Region Center control channel.
 	//
 	// In Local mode, this should be false even when the config is fully bootstrapped.
 	ControlChannelEnabled bool
@@ -119,7 +115,6 @@ type Agent struct {
 	onControlConnected   func()
 
 	localUIEnabled        bool
-	localUIAllowedOrigin  []string
 	controlChannelEnabled bool
 	accessGate            *accessgate.Gate
 }
@@ -192,17 +187,6 @@ func New(opts Options) (*Agent, error) {
 		localUIEnabled:        opts.LocalUIEnabled,
 		controlChannelEnabled: opts.ControlChannelEnabled,
 		accessGate:            opts.AccessGate,
-		localUIAllowedOrigin: func() []string {
-			var out []string
-			for _, o := range opts.LocalUIAllowedOrigins {
-				v := strings.TrimSpace(o)
-				if v == "" {
-					continue
-				}
-				out = append(out, v)
-			}
-			return out
-		}(),
 	}
 
 	auditStore, err := auditlog.New(auditlog.Options{Logger: logger, StateDir: stateDir})
@@ -222,17 +206,17 @@ func New(opts Options) (*Agent, error) {
 	})
 
 	codeSvc, err := codeapp.New(context.Background(), codeapp.Options{
-		Logger:                logger,
-		StateDir:              stateDir,
-		ConfigPath:            cfgPathAbs,
-		ControlplaneBaseURL:   strings.TrimSpace(opts.Config.ControlplaneBaseURL),
-		CodeServerPortMin:     opts.Config.CodeServerPortMin,
-		CodeServerPortMax:     opts.Config.CodeServerPortMax,
-		AgentHomeDir:          agentHomeAbs,
-		Shell:                 shell,
-		AIConfig:              opts.Config.AI,
-		Audit:                 auditStore,
-		LocalUIAllowedOrigins: a.localUIAllowedOrigin,
+		Logger:              logger,
+		StateDir:            stateDir,
+		ConfigPath:          cfgPathAbs,
+		ControlplaneBaseURL: strings.TrimSpace(opts.Config.ControlplaneBaseURL),
+		CodeServerPortMin:   opts.Config.CodeServerPortMin,
+		CodeServerPortMax:   opts.Config.CodeServerPortMax,
+		AgentHomeDir:        agentHomeAbs,
+		Shell:               shell,
+		AIConfig:            opts.Config.AI,
+		Audit:               auditStore,
+		LocalUIEnabled:      a.localUIEnabled,
 		ResolveSessionMeta: func(channelID string) (*session.Meta, bool) {
 			if a == nil {
 				return nil, false

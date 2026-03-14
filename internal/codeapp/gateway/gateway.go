@@ -23,7 +23,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/realtime/ws"
 	"github.com/floegence/redeven-agent/internal/ai"
 	"github.com/floegence/redeven-agent/internal/auditlog"
 	"github.com/floegence/redeven-agent/internal/config"
@@ -50,14 +49,6 @@ type Options struct {
 	// SecretsStore holds user-managed secrets (such as AI provider API keys).
 	// If nil, the gateway will derive a default secrets path from ConfigPath.
 	SecretsStore *settings.SecretsStore
-
-	// LocalUIAllowedOrigins enables Local UI semantics for the gateway:
-	// - allow loopback browser navigations without Origin
-	// - treat allowed loopback origins as Env App origin for /_redeven_proxy/*
-	// - inject a fixed local session_meta for permission checks (no ch- label required)
-	//
-	// When empty, the gateway runs in Standard Mode only (env-/cs-/pf- origin model).
-	LocalUIAllowedOrigins []string
 }
 
 type Backend interface {
@@ -119,14 +110,56 @@ type Gateway struct {
 	configMu   sync.Mutex
 	secrets    *settings.SecretsStore
 
-	localUIAllowedOrigins []string
-
 	distFS fs.FS
 	dist   http.Handler
 
 	ln   net.Listener
 	srv  *http.Server
 	addr string
+}
+
+type localUIRouteKind int
+
+const (
+	localUIRouteNone localUIRouteKind = iota
+	localUIRouteEnv
+	localUIRouteCodeSpace
+)
+
+type localUIRoute struct {
+	kind        localUIRouteKind
+	codeSpaceID string
+}
+
+type localUIRouteContextKey struct{}
+
+func WithLocalUIEnvRoute(r *http.Request) *http.Request {
+	return withLocalUIRoute(r, localUIRoute{kind: localUIRouteEnv})
+}
+
+func WithLocalUICodeSpaceRoute(r *http.Request, codeSpaceID string) *http.Request {
+	return withLocalUIRoute(r, localUIRoute{
+		kind:        localUIRouteCodeSpace,
+		codeSpaceID: strings.TrimSpace(codeSpaceID),
+	})
+}
+
+func withLocalUIRoute(r *http.Request, route localUIRoute) *http.Request {
+	if r == nil {
+		return nil
+	}
+	return r.WithContext(context.WithValue(r.Context(), localUIRouteContextKey{}, route))
+}
+
+func localUIRouteFromRequest(r *http.Request) (localUIRoute, bool) {
+	if r == nil {
+		return localUIRoute{}, false
+	}
+	route, ok := r.Context().Value(localUIRouteContextKey{}).(localUIRoute)
+	if !ok || route.kind == localUIRouteNone {
+		return localUIRoute{}, false
+	}
+	return route, true
 }
 
 func New(opts Options) (*Gateway, error) {
@@ -174,23 +207,10 @@ func New(opts Options) (*Gateway, error) {
 		resolveSessionTunnelURL: opts.ResolveSessionTunnelURL,
 		configPath:              strings.TrimSpace(opts.ConfigPath),
 		secrets:                 secrets,
-		localUIAllowedOrigins:   sanitizeOrigins(opts.LocalUIAllowedOrigins),
 		distFS:                  opts.DistFS,
 		dist:                    dist,
 		addr:                    addr,
 	}, nil
-}
-
-func sanitizeOrigins(in []string) []string {
-	var out []string
-	for _, o := range in {
-		v := strings.TrimSpace(o)
-		if v == "" {
-			continue
-		}
-		out = append(out, v)
-	}
-	return out
 }
 
 func (g *Gateway) Start(ctx context.Context) error {
@@ -264,12 +284,17 @@ func (g *Gateway) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	p := r.URL.Path
 
-	localUI := g.isLocalUIRequest(r)
+	localRoute, localUI := localUIRouteFromRequest(r)
 	originRole := originRoleFromRequest(r)
 	if localUI {
-		// Local UI mode does not use env-/cs-/pf- origins; treat allowed loopback origins
-		// as Env App origin for /_redeven_proxy/* requests.
-		originRole = originRoleEnv
+		switch localRoute.kind {
+		case localUIRouteEnv:
+			originRole = originRoleEnv
+		case localUIRouteCodeSpace:
+			originRole = originRoleCodeSpace
+		default:
+			originRole = originRoleUnknown
+		}
 	}
 
 	// No caching: UI + inject are agent-versioned and delivered over E2EE.
@@ -322,6 +347,11 @@ func (g *Gateway) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	// deterministic for all entry paths (open/refresh/bookmark).
 	switch originRole {
 	case originRoleCodeSpace:
+		if localUI {
+			if _, ok := g.requirePermission(w, r, requiredPermissionFull); !ok {
+				return
+			}
+		}
 		if g.maybeRedirectCodespaceRootToWorkspace(w, r) {
 			return
 		}
@@ -339,44 +369,6 @@ func (g *Gateway) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-}
-
-func (g *Gateway) isLocalUIRequest(r *http.Request) bool {
-	if g == nil || r == nil {
-		return false
-	}
-	if len(g.localUIAllowedOrigins) == 0 {
-		return false
-	}
-	// Fast path: browser requests include Origin for fetch/XHR/WebSocket; rely on the allow-list.
-	if ws.IsOriginAllowed(r, g.localUIAllowedOrigins, false) {
-		return true
-	}
-	// Fallback: top-level navigations commonly omit Origin; derive it from scheme+Host.
-	if strings.TrimSpace(r.Header.Get("Origin")) != "" {
-		return false
-	}
-	host := strings.TrimSpace(r.Host)
-	if host == "" {
-		return false
-	}
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
-	}
-	if raw := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); raw != "" {
-		// Support a single value or a comma-separated list (use the first).
-		first := strings.TrimSpace(strings.Split(raw, ",")[0])
-		if first != "" {
-			scheme = strings.ToLower(first)
-		}
-	}
-	derived := scheme + "://" + host
-
-	rr := r.Clone(r.Context())
-	rr.Header = r.Header.Clone()
-	rr.Header.Set("Origin", derived)
-	return ws.IsOriginAllowed(rr, g.localUIAllowedOrigins, false)
 }
 
 type apiResp struct {
@@ -570,7 +562,7 @@ func (g *Gateway) requirePermission(w http.ResponseWriter, r *http.Request, perm
 
 	// Local UI mode: inject a fixed local session_meta so the Env App gateway APIs can work
 	// without the env-/ch- origin labels used in Standard Mode.
-	if g.isLocalUIRequest(r) {
+	if _, ok := localUIRouteFromRequest(r); ok {
 		meta := g.localSessionMeta()
 		if meta == nil {
 			writeJSON(w, http.StatusServiceUnavailable, apiResp{OK: false, Error: "gateway not ready"})
@@ -2749,11 +2741,12 @@ func (g *Gateway) handleCodeServerProxy(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "missing external origin", http.StatusBadRequest)
 		return
 	}
-	codeSpaceID, ok := codeSpaceIDFromExternalHost(extHost)
+	codeSpaceID, ok := codeSpaceIDFromRequest(r)
 	if !ok {
 		http.Error(w, "not a codespace origin", http.StatusNotFound)
 		return
 	}
+	localPrefix := localCodeSpaceBasePath(r)
 
 	port, err := g.backend.ResolveCodeServerPort(r.Context(), codeSpaceID)
 	if err != nil {
@@ -2767,6 +2760,15 @@ func (g *Gateway) handleCodeServerProxy(w http.ResponseWriter, r *http.Request) 
 	proxy := &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(target)
+			if localPrefix != "" {
+				pr.Out.URL.Path = stripCodeSpaceProxyPrefix(pr.In.URL.Path, localPrefix)
+				if pr.In.URL.RawPath != "" {
+					pr.Out.URL.RawPath = stripCodeSpaceProxyPrefix(pr.In.URL.RawPath, localPrefix)
+				} else {
+					pr.Out.URL.RawPath = ""
+				}
+				pr.Out.URL.RawQuery = pr.In.URL.RawQuery
+			}
 			// code-server enforces host == origin.
 			pr.Out.Host = extHost
 			pr.Out.Header.Set("Origin", origin)
@@ -2783,6 +2785,58 @@ func (g *Gateway) handleCodeServerProxy(w http.ResponseWriter, r *http.Request) 
 		},
 	}
 	proxy.ServeHTTP(w, r)
+}
+
+func codeSpaceIDFromRequest(r *http.Request) (string, bool) {
+	if route, ok := localUIRouteFromRequest(r); ok && route.kind == localUIRouteCodeSpace {
+		id := strings.TrimSpace(route.codeSpaceID)
+		if id == "" {
+			return "", false
+		}
+		return id, true
+	}
+	_, host, err := externalOriginFromRequest(r)
+	if err != nil {
+		return "", false
+	}
+	return codeSpaceIDFromExternalHost(host)
+}
+
+func localCodeSpaceBasePath(r *http.Request) string {
+	route, ok := localUIRouteFromRequest(r)
+	if !ok || route.kind != localUIRouteCodeSpace {
+		return ""
+	}
+	codeSpaceID := strings.TrimSpace(route.codeSpaceID)
+	if codeSpaceID == "" {
+		return ""
+	}
+	return "/cs/" + codeSpaceID
+}
+
+func codespaceRequestRootPath(r *http.Request) string {
+	if base := localCodeSpaceBasePath(r); base != "" {
+		return base + "/"
+	}
+	return "/"
+}
+
+func stripCodeSpaceProxyPrefix(path string, prefix string) string {
+	p := strings.TrimSpace(path)
+	if p == "" {
+		return "/"
+	}
+	if prefix == "" {
+		return p
+	}
+	out := strings.TrimPrefix(p, prefix)
+	if out == "" {
+		return "/"
+	}
+	if !strings.HasPrefix(out, "/") {
+		out = "/" + out
+	}
+	return out
 }
 
 const (
@@ -3216,7 +3270,8 @@ func (g *Gateway) maybeRedirectCodespaceRootToWorkspace(w http.ResponseWriter, r
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		return false
 	}
-	if r.URL.Path != "/" {
+	rootPath := codespaceRequestRootPath(r)
+	if rootPath == "" || r.URL.Path != rootPath {
 		return false
 	}
 
@@ -3225,11 +3280,7 @@ func (g *Gateway) maybeRedirectCodespaceRootToWorkspace(w http.ResponseWriter, r
 		return false
 	}
 
-	_, host, err := externalOriginFromRequest(r)
-	if err != nil {
-		return false
-	}
-	codeSpaceID, ok := codeSpaceIDFromExternalHost(host)
+	codeSpaceID, ok := codeSpaceIDFromRequest(r)
 	if !ok {
 		return false
 	}
@@ -3253,7 +3304,7 @@ func (g *Gateway) maybeRedirectCodespaceRootToWorkspace(w http.ResponseWriter, r
 	q.Set("folder", workspacePath)
 	q.Del("workspace")
 
-	u := &url.URL{Path: r.URL.Path, RawQuery: q.Encode()}
+	u := &url.URL{Path: rootPath, RawQuery: q.Encode()}
 	http.Redirect(w, r, u.String(), http.StatusFound)
 	return true
 }
