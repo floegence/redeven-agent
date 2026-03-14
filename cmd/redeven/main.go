@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -26,28 +28,57 @@ var (
 	BuildTime = "unknown"
 )
 
-func main() {
-	cleanupLegacyHomeDir()
+type cli struct {
+	stdout io.Writer
+	stderr io.Writer
+}
 
-	if len(os.Args) < 2 {
-		printUsage()
-		os.Exit(2)
+func main() {
+	os.Exit(runCLI(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+func runCLI(args []string, stdout, stderr io.Writer) int {
+	cleanupLegacyHomeDir()
+	return (&cli{stdout: stdout, stderr: stderr}).run(args)
+}
+
+func (c *cli) run(args []string) int {
+	if len(args) == 0 {
+		writeText(c.stderr, rootHelpText())
+		return 2
 	}
 
-	switch os.Args[1] {
+	if isHelpToken(args[0]) {
+		writeText(c.stdout, rootHelpText())
+		return 0
+	}
+
+	switch strings.TrimSpace(strings.ToLower(args[0])) {
+	case "help":
+		return c.helpCmd(args[1:])
 	case "bootstrap":
-		bootstrapCmd(os.Args[2:])
+		return c.bootstrapCmd(args[1:])
 	case "run":
-		runCmd(os.Args[2:])
+		return c.runCmd(args[1:])
 	case "search":
-		searchCmd(os.Args[2:])
+		return c.searchCmd(args[1:])
 	case "knowledge":
-		knowledgeCmd(os.Args[2:])
+		return c.knowledgeCmd(args[1:])
 	case "version":
-		fmt.Printf("redeven %s (%s) %s\n", Version, Commit, BuildTime)
+		if len(args) > 1 && isHelpToken(args[1]) {
+			writeText(c.stdout, versionHelpText())
+			return 0
+		}
+		fmt.Fprintf(c.stdout, "redeven %s (%s) %s\n", Version, Commit, BuildTime)
+		return 0
 	default:
-		printUsage()
-		os.Exit(2)
+		writeErrorWithHelp(
+			c.stderr,
+			fmt.Sprintf("unknown command: %s", strings.TrimSpace(args[0])),
+			[]string{"Run `redeven help` for usage and startup examples."},
+			rootHelpText(),
+		)
+		return 2
 	}
 }
 
@@ -62,28 +93,27 @@ func cleanupLegacyHomeDir() {
 	_ = os.RemoveAll(filepath.Join(home, ".redeven-agent"))
 }
 
-func printUsage() {
-	fmt.Fprintf(os.Stderr, `redeven
-
-Usage:
-  redeven bootstrap [flags]
-  redeven run [flags]
-  redeven search [flags] <query>
-  redeven knowledge bundle [flags]
-  redeven version
-
-Commands:
-  bootstrap   Exchange an environment token for Flowersec direct control-channel credentials and write config.
-  run         Run the agent (uses local config by default; can also bootstrap via flags).
-  search      Web search (Brave by default). Useful as a local search helper and as an AI tool backend.
-  knowledge   Build and verify deterministic knowledge assets for Redeven assistant workflows.
-  version     Print build information.
-
-`)
+func (c *cli) helpCmd(args []string) int {
+	text, ok := lookupHelpText(args)
+	if !ok {
+		topic := strings.TrimSpace(strings.Join(args, " "))
+		if topic == "" {
+			topic = "<empty>"
+		}
+		writeErrorWithHelp(
+			c.stderr,
+			fmt.Sprintf("unknown help topic: %s", topic),
+			[]string{"Run `redeven help` for available commands."},
+			rootHelpText(),
+		)
+		return 2
+	}
+	writeText(c.stdout, text)
+	return 0
 }
 
-func bootstrapCmd(args []string) {
-	fs := flag.NewFlagSet("bootstrap", flag.ExitOnError)
+func (c *cli) bootstrapCmd(args []string) int {
+	fs := newCLIFlagSet("bootstrap")
 
 	controlplane := fs.String("controlplane", "", "Controlplane base URL (e.g. https://region.example.invalid)")
 	envID := fs.String("env-id", "", "Environment public ID (env_...)")
@@ -99,17 +129,42 @@ func bootstrapCmd(args []string) {
 
 	timeout := fs.Duration("timeout", 15*time.Second, "Bootstrap request timeout")
 
-	_ = fs.Parse(args)
+	if err := parseCommandFlags(fs, args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			writeText(c.stdout, bootstrapHelpText())
+			return 0
+		}
+		message, details := translateFlagParseError("bootstrap", err)
+		writeErrorWithHelp(c.stderr, message, details, bootstrapHelpText())
+		return 2
+	}
 
-	if *controlplane == "" || *envID == "" || *envToken == "" {
-		fs.Usage()
-		os.Exit(2)
+	missing := findMissingFlags(
+		requiredFlag{name: "--controlplane", value: *controlplane},
+		requiredFlag{name: "--env-id", value: *envID},
+		requiredFlag{name: "--env-token", value: *envToken},
+	)
+	if len(missing) > 0 {
+		writeErrorWithHelp(
+			c.stderr,
+			fmt.Sprintf("missing required flags for `redeven bootstrap`: %s", formatFlagList(missing)),
+			[]string{
+				fmt.Sprintf(
+					"Example: redeven bootstrap --controlplane %s --env-id %s --env-token %s",
+					exampleControlplaneURL,
+					exampleEnvID,
+					exampleEnvToken,
+				),
+			},
+			bootstrapHelpText(),
+		)
+		return 2
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 
-	out, err := config.BootstrapConfig(ctx, config.BootstrapArgs{
+	_, err := config.BootstrapConfig(ctx, config.BootstrapArgs{
 		ControlplaneBaseURL:    *controlplane,
 		EnvironmentID:          *envID,
 		EnvironmentToken:       *envToken,
@@ -120,16 +175,16 @@ func bootstrapCmd(args []string) {
 		PermissionPolicyPreset: *permissionPolicy,
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bootstrap failed: %v\n", err)
-		os.Exit(1)
+		fmt.Fprintf(c.stderr, "bootstrap failed: %v\n", err)
+		return 1
 	}
 
-	_ = out
-	fmt.Printf("Bootstrap complete. Run `redeven run`.\n")
+	fmt.Fprintf(c.stdout, "Bootstrap complete. Run `redeven run`.\n")
+	return 0
 }
 
-func runCmd(args []string) {
-	fs := flag.NewFlagSet("run", flag.ExitOnError)
+func (c *cli) runCmd(args []string) int {
+	fs := newCLIFlagSet("run")
 	controlplane := fs.String("controlplane", "", "Controlplane base URL (optional; when set, bootstraps into an isolated per-environment state dir)")
 	envID := fs.String("env-id", "", "Environment public ID (env_...)")
 	envToken := fs.String("env-token", "", "Environment token (required when --controlplane/--env-id is set)")
@@ -139,19 +194,40 @@ func runCmd(args []string) {
 	password := fs.String("password", "", "Access password (not recommended; prefer --password-env or --password-file)")
 	passwordEnv := fs.String("password-env", "", "Environment variable name holding the access password")
 	passwordFile := fs.String("password-file", "", "File path holding the access password")
-	_ = fs.Parse(args)
+
+	if err := parseCommandFlags(fs, args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			writeText(c.stdout, runHelpText())
+			return 0
+		}
+		message, details := translateFlagParseError("run", err)
+		writeErrorWithHelp(c.stderr, message, details, runHelpText())
+		return 2
+	}
 
 	mode, err := parseRunMode(*modeRaw)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "invalid --mode: %v\n\n", err)
-		fs.Usage()
-		os.Exit(2)
+		writeErrorWithHelp(
+			c.stderr,
+			fmt.Sprintf("invalid value for `--mode`: %s", strings.TrimSpace(*modeRaw)),
+			[]string{
+				"Allowed values: remote, hybrid, local.",
+				"Example: redeven run --mode hybrid",
+			},
+			runHelpText(),
+		)
+		return 2
 	}
+
 	localUIBind, err := localui.ParseBind(*localUIBindRaw)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "invalid --local-ui-bind: %v\n\n", err)
-		fs.Usage()
-		os.Exit(2)
+		writeErrorWithHelp(
+			c.stderr,
+			fmt.Sprintf("invalid value for `--local-ui-bind`: %v", err),
+			[]string{"Accepted examples: localhost:23998, 127.0.0.1:24000, 0.0.0.0:24000, 192.168.1.11:24000"},
+			runHelpText(),
+		)
+		return 2
 	}
 
 	// Default: use the global config path. This is the recommended single-environment setup:
@@ -165,9 +241,31 @@ func runCmd(args []string) {
 		strings.TrimSpace(*envID) != "" ||
 		strings.TrimSpace(*envToken) != ""
 	if bootstrapViaFlags {
-		if strings.TrimSpace(*controlplane) == "" || strings.TrimSpace(*envID) == "" || strings.TrimSpace(*envToken) == "" {
-			fs.Usage()
-			os.Exit(2)
+		missing := findMissingFlags(
+			requiredFlag{name: "--controlplane", value: *controlplane},
+			requiredFlag{name: "--env-id", value: *envID},
+			requiredFlag{name: "--env-token", value: *envToken},
+		)
+		if len(missing) > 0 {
+			label := "flags"
+			if len(missing) == 1 {
+				label = "flag"
+			}
+			writeErrorWithHelp(
+				c.stderr,
+				fmt.Sprintf("incomplete bootstrap flags for `redeven run`: missing %s %s", label, formatFlagList(missing)),
+				[]string{
+					"Hint: provide --controlplane, --env-id, and --env-token together, or run `redeven bootstrap` first.",
+					fmt.Sprintf(
+						"Example: redeven run --mode hybrid --controlplane %s --env-id %s --env-token %s",
+						exampleControlplaneURL,
+						exampleEnvID,
+						exampleEnvToken,
+					),
+				},
+				runHelpText(),
+			)
+			return 2
 		}
 		cfgPathClean = filepath.Clean(config.EnvConfigPath(*envID))
 	}
@@ -176,8 +274,8 @@ func runCmd(args []string) {
 	// Local mode must work on a clean machine (no bootstrap yet).
 	cfgDir := filepath.Dir(cfgPathClean)
 	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to init state dir: %v\n", err)
-		os.Exit(1)
+		fmt.Fprintf(c.stderr, "failed to init state dir: %v\n", err)
+		return 1
 	}
 
 	// Prevent multiple agent processes from managing the same local state directory.
@@ -185,9 +283,13 @@ func runCmd(args []string) {
 	lockPath := filepath.Join(filepath.Dir(cfgPathClean), "agent.lock")
 	lk, err := lockfile.Acquire(lockPath)
 	if err != nil {
-		// Keep the message actionable; users can stop the existing process then retry.
-		fmt.Fprintf(os.Stderr, "failed to acquire agent lock (%s): %v\n", lockPath, err)
-		os.Exit(1)
+		if errors.Is(err, lockfile.ErrAlreadyLocked) {
+			fmt.Fprintf(c.stderr, "another redeven agent is already using this state directory: %s\n", lockPath)
+			fmt.Fprintf(c.stderr, "Hint: stop the existing agent process, or use a different environment/state directory before retrying.\n")
+			return 1
+		}
+		fmt.Fprintf(c.stderr, "failed to acquire agent lock (%s): %v\n", lockPath, err)
+		return 1
 	}
 	defer func() { _ = lk.Release() }()
 
@@ -197,18 +299,32 @@ func runCmd(args []string) {
 		passwordFile: *passwordFile,
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "invalid password flags: %v\n", err)
-		os.Exit(2)
+		message, details := translatePasswordOptionError(err)
+		writeErrorWithHelp(c.stderr, message, details, runHelpText())
+		return 2
 	}
+
 	accessGate := newAccessGate(runPassword.password)
 	if err := verifyStartupAccessPassword(accessGate, runPassword.requireStartupVerification); err != nil {
-		fmt.Fprintf(os.Stderr, "password verification failed: %v\n", err)
-		os.Exit(1)
+		message, details := translatePasswordVerificationError(err)
+		writeErrorWithHelp(c.stderr, message, details, "")
+		return 1
 	}
 	if mode != runModeRemote && !localUIBind.IsLoopbackOnly() && !accessGate.Enabled() {
-		fmt.Fprintf(os.Stderr, "non-loopback --local-ui-bind requires an access password\n")
-		fmt.Fprintf(os.Stderr, "Hint: set --password, --password-env, or --password-file.\n")
-		os.Exit(2)
+		writeErrorWithHelp(
+			c.stderr,
+			"non-loopback `--local-ui-bind` requires an access password",
+			[]string{
+				"Hint: set exactly one of --password, --password-env, or --password-file.",
+				fmt.Sprintf(
+					"Example: %s=replace-with-a-long-password redeven run --mode hybrid --local-ui-bind 0.0.0.0:24000 --password-env %s",
+					examplePasswordEnv,
+					examplePasswordEnv,
+				),
+			},
+			runHelpText(),
+		)
+		return 2
 	}
 
 	if bootstrapViaFlags {
@@ -223,8 +339,8 @@ func runCmd(args []string) {
 			PermissionPolicyPreset: *permissionPolicy,
 		})
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "bootstrap failed: %v\n", err)
-			os.Exit(1)
+			fmt.Fprintf(c.stderr, "bootstrap failed: %v\n", err)
+			return 1
 		}
 	}
 
@@ -239,12 +355,14 @@ func runCmd(args []string) {
 				LogLevel:         "info",
 			}
 			if err := config.Save(cfgPathClean, cfg); err != nil {
-				fmt.Fprintf(os.Stderr, "failed to init default config: %v\n", err)
-				os.Exit(1)
+				fmt.Fprintf(c.stderr, "failed to init default config: %v\n", err)
+				return 1
 			}
+		} else if os.IsNotExist(err) {
+			return c.printNotBootstrappedGuidance(err)
 		} else {
-			fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)
-			os.Exit(1)
+			fmt.Fprintf(c.stderr, "failed to load config: %v\n", err)
+			return 1
 		}
 	}
 
@@ -255,13 +373,11 @@ func runCmd(args []string) {
 	localUIEnabled := mode != runModeRemote
 
 	if controlChannelEnabled && !remoteEnabled {
-		fmt.Fprintf(os.Stderr, "agent not bootstrapped: %v\n", remoteErr)
-		fmt.Fprintf(os.Stderr, "Hint: run `redeven bootstrap` first.\n")
-		os.Exit(1)
+		return c.printNotBootstrappedGuidance(remoteErr)
 	}
 
 	announce := func() {
-		printWelcomeBanner(os.Stderr, welcomeBannerOptions{
+		printWelcomeBanner(c.stderr, welcomeBannerOptions{
 			Version:             Version,
 			ControlplaneBaseURL: cfg.ControlplaneBaseURL,
 			EnvironmentID:       cfg.EnvironmentID,
@@ -283,8 +399,8 @@ func runCmd(args []string) {
 		AccessGate:            accessGate,
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to init agent: %v\n", err)
-		os.Exit(1)
+		fmt.Fprintf(c.stderr, "failed to init agent: %v\n", err)
+		return 1
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -303,13 +419,13 @@ func runCmd(args []string) {
 	if localUIEnabled {
 		cfgPathAbs, err := filepath.Abs(cfgPathClean)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed to resolve config path: %v\n", err)
-			os.Exit(1)
+			fmt.Fprintf(c.stderr, "failed to resolve config path: %v\n", err)
+			return 1
 		}
 		gw := a.CodeGateway()
 		if gw == nil {
-			fmt.Fprintf(os.Stderr, "local ui unavailable: gateway not initialized\n")
-			os.Exit(1)
+			fmt.Fprintf(c.stderr, "local ui unavailable: gateway not initialized\n")
+			return 1
 		}
 
 		srv, err := localui.New(localui.Options{
@@ -321,12 +437,12 @@ func runCmd(args []string) {
 			AccessGate: accessGate,
 		})
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed to init local ui: %v\n", err)
-			os.Exit(1)
+			fmt.Fprintf(c.stderr, "failed to init local ui: %v\n", err)
+			return 1
 		}
 		if err := srv.Start(ctx); err != nil {
-			fmt.Fprintf(os.Stderr, "failed to start local ui: %v\n", err)
-			os.Exit(1)
+			fmt.Fprintf(c.stderr, "failed to start local ui: %v\n", err)
+			return 1
 		}
 
 		// In local mode, print after the Local UI is ready.
@@ -337,9 +453,25 @@ func runCmd(args []string) {
 	}
 
 	if err := a.Run(ctx); err != nil && ctx.Err() == nil {
-		fmt.Fprintf(os.Stderr, "agent exited with error: %v\n", err)
-		os.Exit(1)
+		fmt.Fprintf(c.stderr, "agent exited with error: %v\n", err)
+		return 1
 	}
+	return 0
+}
+
+func (c *cli) printNotBootstrappedGuidance(reason error) int {
+	writeErrorWithHelp(
+		c.stderr,
+		fmt.Sprintf("agent is not bootstrapped for remote or hybrid mode: %v", reason),
+		[]string{
+			"Hint: run `redeven bootstrap` first, or pass --controlplane, --env-id, and --env-token directly to `redeven run`.",
+			"Examples:",
+			fmt.Sprintf("  redeven bootstrap --controlplane %s --env-id %s --env-token %s", exampleControlplaneURL, exampleEnvID, exampleEnvToken),
+			fmt.Sprintf("  redeven run --mode hybrid --controlplane %s --env-id %s --env-token %s", exampleControlplaneURL, exampleEnvID, exampleEnvToken),
+		},
+		"",
+	)
+	return 1
 }
 
 type runMode string
