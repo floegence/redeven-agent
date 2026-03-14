@@ -10,6 +10,11 @@ import (
 	"golang.org/x/term"
 )
 
+var (
+	errAccessPasswordVerificationFailed = errors.New("access password verification failed")
+	errPasswordPromptRequiresTTY        = errors.New("password gate requires an interactive tty")
+)
+
 type runPasswordOptions struct {
 	password     string
 	passwordEnv  string
@@ -26,6 +31,53 @@ type passwordPromptTTY struct {
 	shouldClose bool
 }
 
+type passwordOptionErrorKind string
+
+const (
+	passwordOptionErrorMultipleSources passwordOptionErrorKind = "multiple_sources"
+	passwordOptionErrorEnvNotSet       passwordOptionErrorKind = "env_not_set"
+	passwordOptionErrorEnvEmpty        passwordOptionErrorKind = "env_empty"
+	passwordOptionErrorFileRead        passwordOptionErrorKind = "file_read"
+	passwordOptionErrorFileEmpty       passwordOptionErrorKind = "file_empty"
+)
+
+type passwordOptionError struct {
+	kind    passwordOptionErrorKind
+	envName string
+	path    string
+	cause   error
+}
+
+func (e *passwordOptionError) Error() string {
+	if e == nil {
+		return ""
+	}
+	switch e.kind {
+	case passwordOptionErrorMultipleSources:
+		return "use only one of --password, --password-env, or --password-file"
+	case passwordOptionErrorEnvNotSet:
+		return fmt.Sprintf("password env var %q is not set", e.envName)
+	case passwordOptionErrorEnvEmpty:
+		return fmt.Sprintf("password env var %q is empty", e.envName)
+	case passwordOptionErrorFileRead:
+		return fmt.Sprintf("read password file %q: %v", e.path, e.cause)
+	case passwordOptionErrorFileEmpty:
+		return fmt.Sprintf("password file %q is empty", e.path)
+	default:
+		if e.cause != nil {
+			return e.cause.Error()
+		}
+		return "invalid password flags"
+	}
+}
+
+func (e *passwordOptionError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.cause
+}
+
 func resolveRunPassword(opts runPasswordOptions) (resolvedRunPassword, error) {
 	sourceCount := 0
 	if opts.password != "" {
@@ -38,7 +90,7 @@ func resolveRunPassword(opts runPasswordOptions) (resolvedRunPassword, error) {
 		sourceCount++
 	}
 	if sourceCount > 1 {
-		return resolvedRunPassword{}, errors.New("use only one of --password, --password-env, or --password-file")
+		return resolvedRunPassword{}, &passwordOptionError{kind: passwordOptionErrorMultipleSources}
 	}
 	if sourceCount == 0 {
 		return resolvedRunPassword{}, nil
@@ -49,10 +101,10 @@ func resolveRunPassword(opts runPasswordOptions) (resolvedRunPassword, error) {
 	if name := strings.TrimSpace(opts.passwordEnv); name != "" {
 		value, ok := os.LookupEnv(name)
 		if !ok {
-			return resolvedRunPassword{}, fmt.Errorf("password env var %q is not set", name)
+			return resolvedRunPassword{}, &passwordOptionError{kind: passwordOptionErrorEnvNotSet, envName: name}
 		}
 		if value == "" {
-			return resolvedRunPassword{}, fmt.Errorf("password env var %q is empty", name)
+			return resolvedRunPassword{}, &passwordOptionError{kind: passwordOptionErrorEnvEmpty, envName: name}
 		}
 		return resolvedRunPassword{password: value, requireStartupVerification: true}, nil
 	}
@@ -62,11 +114,11 @@ func resolveRunPassword(opts runPasswordOptions) (resolvedRunPassword, error) {
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return resolvedRunPassword{}, fmt.Errorf("read password file: %w", err)
+		return resolvedRunPassword{}, &passwordOptionError{kind: passwordOptionErrorFileRead, path: path, cause: err}
 	}
 	value := strings.TrimRight(string(data), "\r\n")
 	if value == "" {
-		return resolvedRunPassword{}, fmt.Errorf("password file %q is empty", path)
+		return resolvedRunPassword{}, &passwordOptionError{kind: passwordOptionErrorFileEmpty, path: path}
 	}
 	return resolvedRunPassword{password: value, requireStartupVerification: true}, nil
 }
@@ -99,7 +151,7 @@ func verifyStartupAccessPassword(gate *accessgate.Gate, requireVerification bool
 		return fmt.Errorf("read password: %w", err)
 	}
 	if !gate.VerifyPassword(string(input)) {
-		return errors.New("access password verification failed")
+		return errAccessPasswordVerificationFailed
 	}
 	return nil
 }
@@ -112,5 +164,5 @@ func openTTYForPasswordPrompt() (*passwordPromptTTY, error) {
 	if err == nil {
 		return &passwordPromptTTY{file: f, shouldClose: true}, nil
 	}
-	return nil, errors.New("password gate requires an interactive tty")
+	return nil, errPasswordPromptRequiresTTY
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -15,8 +16,8 @@ import (
 	"github.com/floegence/redeven-agent/internal/websearch"
 )
 
-func searchCmd(args []string) {
-	fs := flag.NewFlagSet("search", flag.ExitOnError)
+func (c *cli) searchCmd(args []string) int {
+	fs := newCLIFlagSet("search")
 
 	provider := fs.String("provider", websearch.ProviderBrave, "Web search provider (default: brave)")
 	count := fs.Int("count", 5, "Number of results to return (default: 5, max: 10)")
@@ -25,12 +26,25 @@ func searchCmd(args []string) {
 	secretsPath := fs.String("secrets-path", "", "Secrets path (default: <config dir>/secrets.json)")
 	timeout := fs.Duration("timeout", 15*time.Second, "Search timeout")
 
-	_ = fs.Parse(args)
+	if err := parseCommandFlags(fs, args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			writeText(c.stdout, searchHelpText())
+			return 0
+		}
+		message, details := translateFlagParseError("search", err)
+		writeErrorWithHelp(c.stderr, message, details, searchHelpText())
+		return 2
+	}
 
 	query := strings.TrimSpace(strings.Join(fs.Args(), " "))
 	if query == "" {
-		fs.Usage()
-		os.Exit(2)
+		writeErrorWithHelp(
+			c.stderr,
+			"missing search query for `redeven search`",
+			[]string{"Example: redeven search \"redeven local ui bind\""},
+			searchHelpText(),
+		)
+		return 2
 	}
 
 	cfgPath := strings.TrimSpace(*configPath)
@@ -58,17 +72,17 @@ func searchCmd(args []string) {
 		store := settings.NewSecretsStore(secrets)
 		v, ok, err := store.GetWebSearchProviderAPIKey(providerID)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed to load secrets: %v\n", err)
-			os.Exit(1)
+			fmt.Fprintf(c.stderr, "failed to load secrets: %v\n", err)
+			return 1
 		}
 		if ok {
 			key = v
 		}
 	}
 	if strings.TrimSpace(key) == "" {
-		fmt.Fprintf(os.Stderr, "missing web search api key for provider %q\n", providerID)
-		fmt.Fprintf(os.Stderr, "Hint: set REDEVEN_BRAVE_API_KEY (or BRAVE_API_KEY), or configure it in the agent Settings.\n")
-		os.Exit(1)
+		fmt.Fprintf(c.stderr, "missing web search api key for provider %q\n", providerID)
+		fmt.Fprintf(c.stderr, "Hint: set REDEVEN_BRAVE_API_KEY (or BRAVE_API_KEY), or configure it in the agent Settings.\n")
+		return 1
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
@@ -76,18 +90,19 @@ func searchCmd(args []string) {
 
 	result, err := websearch.Search(ctx, providerID, key, websearch.SearchRequest{Query: query, Count: *count})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "search failed: %v\n", err)
-		os.Exit(1)
+		fmt.Fprintf(c.stderr, "search failed: %v\n", err)
+		return 1
 	}
 
 	switch strings.TrimSpace(strings.ToLower(*format)) {
 	case "", "json":
 		b, err := json.MarshalIndent(result, "", "  ")
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed to encode result: %v\n", err)
-			os.Exit(1)
+			fmt.Fprintf(c.stderr, "failed to encode result: %v\n", err)
+			return 1
 		}
-		fmt.Printf("%s\n", string(b))
+		fmt.Fprintf(c.stdout, "%s\n", string(b))
+		return 0
 	case "text":
 		for i, item := range result.Results {
 			url := strings.TrimSpace(item.URL)
@@ -99,13 +114,19 @@ func searchCmd(args []string) {
 				title = url
 			}
 			if snippet := strings.TrimSpace(item.Snippet); snippet != "" {
-				fmt.Printf("%d. %s\n   %s\n   %s\n\n", i+1, title, url, snippet)
+				fmt.Fprintf(c.stdout, "%d. %s\n   %s\n   %s\n\n", i+1, title, url, snippet)
 			} else {
-				fmt.Printf("%d. %s\n   %s\n\n", i+1, title, url)
+				fmt.Fprintf(c.stdout, "%d. %s\n   %s\n\n", i+1, title, url)
 			}
 		}
+		return 0
 	default:
-		fmt.Fprintf(os.Stderr, "invalid --format: %q (want json|text)\n", strings.TrimSpace(*format))
-		os.Exit(2)
+		writeErrorWithHelp(
+			c.stderr,
+			fmt.Sprintf("invalid value for `--format`: %s", strings.TrimSpace(*format)),
+			[]string{"Allowed values: json, text.", "Example: redeven search --format text \"golang flag help\""},
+			searchHelpText(),
+		)
+		return 2
 	}
 }

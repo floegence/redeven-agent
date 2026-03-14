@@ -1,73 +1,81 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/floegence/redeven-agent/internal/knowledge"
 )
 
-func knowledgeCmd(args []string) {
+func (c *cli) knowledgeCmd(args []string) int {
 	if len(args) == 0 {
-		printKnowledgeUsage()
-		os.Exit(2)
+		writeText(c.stderr, knowledgeHelpText())
+		return 2
 	}
+	if isHelpToken(args[0]) {
+		writeText(c.stdout, knowledgeHelpText())
+		return 0
+	}
+
 	switch strings.TrimSpace(strings.ToLower(args[0])) {
 	case "bundle":
-		knowledgeBundleCmd(args[1:])
+		return c.knowledgeBundleCmd(args[1:])
 	default:
-		printKnowledgeUsage()
-		os.Exit(2)
+		writeErrorWithHelp(
+			c.stderr,
+			fmt.Sprintf("unknown command for `redeven knowledge`: %s", strings.TrimSpace(args[0])),
+			[]string{"Run `redeven help knowledge` for usage information."},
+			knowledgeHelpText(),
+		)
+		return 2
 	}
 }
 
-func printKnowledgeUsage() {
-	fmt.Fprintf(os.Stderr, `redeven knowledge
-
-Usage:
-  redeven knowledge bundle [flags]
-
-Commands:
-  bundle      Build or verify dist knowledge bundle assets from source files.
-
-`)
-}
-
-func knowledgeBundleCmd(args []string) {
-	fs := flag.NewFlagSet("knowledge bundle", flag.ExitOnError)
+func (c *cli) knowledgeBundleCmd(args []string) int {
+	fs := newCLIFlagSet("knowledge bundle")
 	sourceRoot := fs.String("source-root", cleanAbs(filepath.Join("internal", "knowledge", "source")), "Knowledge source root")
 	distRoot := fs.String("dist-root", cleanAbs(filepath.Join("internal", "knowledge", "dist")), "Dist output root")
 	verifyOnly := fs.Bool("verify-only", false, "Verify dist files without rewriting")
 	validateSourceOnly := fs.Bool("validate-source-only", false, "Validate source files only without reading dist")
-	_ = fs.Parse(args)
+
+	if err := parseCommandFlags(fs, args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			writeText(c.stdout, knowledgeBundleHelpText())
+			return 0
+		}
+		message, details := translateFlagParseError("knowledge bundle", err)
+		writeErrorWithHelp(c.stderr, message, details, knowledgeBundleHelpText())
+		return 2
+	}
 
 	result, err := knowledge.BuildFromSource(cleanAbs(*sourceRoot))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "knowledge bundle failed: %v\n", err)
-		os.Exit(1)
+		fmt.Fprintf(c.stderr, "knowledge bundle failed: %v\n", err)
+		return 1
 	}
 	if *validateSourceOnly {
-		fmt.Printf("knowledge source validated: %s\n", cleanAbs(*sourceRoot))
-		return
+		fmt.Fprintf(c.stdout, "knowledge source validated: %s\n", cleanAbs(*sourceRoot))
+		return 0
 	}
 
 	if *verifyOnly {
 		if err := knowledge.VerifyDistFiles(cleanAbs(*distRoot), result); err != nil {
-			fmt.Fprintf(os.Stderr, "knowledge bundle verify failed: %v\n", err)
-			os.Exit(1)
+			fmt.Fprintf(c.stderr, "knowledge bundle verify failed: %v\n", err)
+			return 1
 		}
-		fmt.Printf("knowledge bundle verified: %s\n", cleanAbs(*distRoot))
-		return
+		fmt.Fprintf(c.stdout, "knowledge bundle verified: %s\n", cleanAbs(*distRoot))
+		return 0
 	}
 
 	if err := knowledge.WriteDistFiles(cleanAbs(*distRoot), result); err != nil {
-		fmt.Fprintf(os.Stderr, "knowledge bundle write failed: %v\n", err)
-		os.Exit(1)
+		fmt.Fprintf(c.stderr, "knowledge bundle write failed: %v\n", err)
+		return 1
 	}
-	fmt.Printf("knowledge bundle updated: %s\n", cleanAbs(*distRoot))
+	fmt.Fprintf(c.stdout, "knowledge bundle updated: %s\n", cleanAbs(*distRoot))
+	return 0
 }
 
 func cleanAbs(path string) string {
