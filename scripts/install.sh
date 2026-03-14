@@ -4,18 +4,16 @@
 # This script downloads and installs the latest Redeven agent binary
 # from the floegence/redeven-agent GitHub repository.
 #
-# Usage: curl -fsSL https://install.example.invalid/install.sh | sh
+# Usage: curl -fsSL https://raw.githubusercontent.com/floegence/redeven-agent/main/scripts/install.sh | sh
 #
 # Optional:
-#   REDEVEN_VERSION=v1.2.3 curl -fsSL https://install.example.invalid/install.sh | sh
+#   REDEVEN_VERSION=v1.2.3 curl -fsSL https://raw.githubusercontent.com/floegence/redeven-agent/main/scripts/install.sh | sh
 #
 # The script will:
 # 1. Detect your OS and architecture
-# 2. Resolve target version from REDEVEN_VERSION_MANIFEST_URL
+# 2. Resolve target version from the GitHub Releases API
 #    (or REDEVEN_VERSION when explicitly provided)
-# 3. Download the release package and release checksums with fallback support:
-#    - Primary: GitHub releases
-#    - Fallback: external delivery CDN (REDEVEN_PACKAGE_MIRROR_BASE_URL)
+# 3. Download the release package and release checksums from GitHub Releases
 # 4. Verify checksum + signature before extraction
 # 5. Install to /usr/local/bin/redeven (or ~/.redeven/bin/redeven)
 
@@ -30,21 +28,19 @@ NC='\033[0m' # No Color
 # GitHub repository for releases
 GITHUB_REPO="floegence/redeven-agent"
 GITHUB_RELEASES_URL="https://github.com/${GITHUB_REPO}/releases"
+GITHUB_API_URL="https://api.github.com/repos/${GITHUB_REPO}"
 
 # Binary name
 BINARY_NAME="redeven"
 
-# Public URL templates. Production values should be injected by downstream automation.
-REDEVEN_INSTALL_SCRIPT_URL="${REDEVEN_INSTALL_SCRIPT_URL:-https://install.example.invalid/install.sh}"
-REDEVEN_VERSION_MANIFEST_URL="${REDEVEN_VERSION_MANIFEST_URL:-https://version.agent.example.invalid/v1/manifest.json}"
-REDEVEN_PACKAGE_MIRROR_BASE_URL="${REDEVEN_PACKAGE_MIRROR_BASE_URL:-https://agent.package.example.invalid}"
+# Public URL templates.
+REDEVEN_RELEASES_API_URL="${REDEVEN_RELEASES_API_URL:-${GITHUB_API_URL}/releases/latest}"
 REDEVEN_CONSOLE_URL="${REDEVEN_CONSOLE_URL:-https://console.example.invalid}"
 REDEVEN_DOCS_URL="${REDEVEN_DOCS_URL:-https://docs.example.invalid}"
 
 # Shell-first tooling: pinned ripgrep distribution.
 RG_VERSION="14.1.1"
 RG_GITHUB_RELEASES_URL="https://github.com/BurntSushi/ripgrep/releases"
-RG_MIRROR_BASE_URL="${REDEVEN_RG_MIRROR_BASE_URL:-${REDEVEN_PACKAGE_MIRROR_BASE_URL}/third-party/ripgrep}"
 
 # Redeven home directory - config is written to ~/.redeven/config.json (default)
 REDEVEN_HOME="${HOME}/.redeven"
@@ -57,9 +53,6 @@ REDEVEN_INSTALL_MODE="${REDEVEN_INSTALL_MODE:-install}"
 
 # Optional explicit target version (for deterministic install/rollback)
 REDEVEN_VERSION="${REDEVEN_VERSION:-}"
-
-# Version metadata endpoint (must be HTTPS)
-VERSION_MANIFEST_URL="${REDEVEN_VERSION_MANIFEST_URL}"
 
 # Cosign identity constraint for SHA256SUMS signature verification.
 COSIGN_CERT_IDENTITY_REGEXP='^https://github.com/floegence/redeven-agent/.github/workflows/release\.yml@refs/tags/v.*$'
@@ -252,7 +245,28 @@ resolve_target_version() {
         return 0
     fi
 
-    resolve_version_from_manifest
+    resolve_version_from_github
+}
+
+resolve_version_from_github() {
+    log_info "Resolving latest release from GitHub: $REDEVEN_RELEASES_API_URL"
+
+    if ! response="$(curl -fsSL "$REDEVEN_RELEASES_API_URL")"; then
+        log_error "Failed to resolve the latest release from GitHub"
+        log_error "If GitHub API access is unavailable, set REDEVEN_VERSION explicitly."
+        exit 1
+    fi
+
+    compact_response=$(printf '%s' "$response" | tr -d '\n')
+    LATEST_VERSION=$(printf '%s' "$compact_response" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+    if [ -z "$LATEST_VERSION" ] || ! validate_release_version "$LATEST_VERSION"; then
+        log_error "GitHub Releases API did not return a valid tag_name"
+        log_error "If needed, set REDEVEN_VERSION explicitly."
+        exit 1
+    fi
+
+    VERSION_SOURCE="github_latest_release"
+    log_info "Resolved latest version: $LATEST_VERSION"
 }
 
 sha256_file() {
@@ -356,21 +370,11 @@ verify_checksum() {
     log_info "Checksum verification passed"
 }
 
-download_with_fallback() {
-    primary_url="$1"
-    fallback_url="$2"
-    out_file="$3"
+download_file() {
+    source_url="$1"
+    out_file="$2"
 
-    if curl -fsSL "$primary_url" -o "$out_file"; then
-        return 0
-    fi
-
-    log_warn "Primary download failed, trying fallback..."
-    if curl -fsSL "$fallback_url" -o "$out_file"; then
-        return 0
-    fi
-
-    return 1
+    curl -fsSL "$source_url" -o "$out_file"
 }
 
 # Download and install redeven
@@ -386,12 +390,6 @@ install_redeven() {
     GITHUB_SIG_URL="${GITHUB_RELEASES_URL}/download/${LATEST_VERSION}/SHA256SUMS.sig"
     GITHUB_CERT_URL="${GITHUB_RELEASES_URL}/download/${LATEST_VERSION}/SHA256SUMS.pem"
 
-    CLOUDFLARE_BASE_URL="${REDEVEN_PACKAGE_MIRROR_BASE_URL}/release-assets/${LATEST_VERSION}"
-    CLOUDFLARE_DOWNLOAD_URL="${CLOUDFLARE_BASE_URL}/${PACKAGE_NAME}"
-    CLOUDFLARE_SUMS_URL="${CLOUDFLARE_BASE_URL}/SHA256SUMS"
-    CLOUDFLARE_SIG_URL="${CLOUDFLARE_BASE_URL}/SHA256SUMS.sig"
-    CLOUDFLARE_CERT_URL="${CLOUDFLARE_BASE_URL}/SHA256SUMS.pem"
-
     # Create temporary directory
     TMP_DIR=$(mktemp -d)
     trap 'rm -rf "$TMP_DIR"' EXIT
@@ -402,27 +400,26 @@ install_redeven() {
     CERT_PATH="$TMP_DIR/SHA256SUMS.pem"
 
     log_info "Downloading package from GitHub: $GITHUB_DOWNLOAD_URL"
-    if ! download_with_fallback "$GITHUB_DOWNLOAD_URL" "$CLOUDFLARE_DOWNLOAD_URL" "$ARCHIVE_PATH"; then
+    if ! download_file "$GITHUB_DOWNLOAD_URL" "$ARCHIVE_PATH"; then
         log_error "Failed to download release package"
         log_error "GitHub URL: $GITHUB_DOWNLOAD_URL"
-        log_error "external delivery URL: $CLOUDFLARE_DOWNLOAD_URL"
         exit 1
     fi
 
     log_info "Downloading release checksums"
-    if ! download_with_fallback "$GITHUB_SUMS_URL" "$CLOUDFLARE_SUMS_URL" "$SUMS_PATH"; then
+    if ! download_file "$GITHUB_SUMS_URL" "$SUMS_PATH"; then
         log_error "Failed to download SHA256SUMS"
         exit 1
     fi
 
     log_info "Downloading release signature"
-    if ! download_with_fallback "$GITHUB_SIG_URL" "$CLOUDFLARE_SIG_URL" "$SIG_PATH"; then
+    if ! download_file "$GITHUB_SIG_URL" "$SIG_PATH"; then
         log_error "Failed to download SHA256SUMS.sig"
         exit 1
     fi
 
     log_info "Downloading release certificate"
-    if ! download_with_fallback "$GITHUB_CERT_URL" "$CLOUDFLARE_CERT_URL" "$CERT_PATH"; then
+    if ! download_file "$GITHUB_CERT_URL" "$CERT_PATH"; then
         log_error "Failed to download SHA256SUMS.pem"
         exit 1
     fi
@@ -487,16 +484,13 @@ install_ripgrep() {
     fi
 
     RG_GITHUB_URL="${RG_GITHUB_RELEASES_URL}/download/${RG_VERSION}/${RG_ARCHIVE_NAME}"
-    RG_FALLBACK_URL="${RG_MIRROR_BASE_URL}/v${RG_VERSION}/${RG_ARCHIVE_NAME}"
-
     RG_TMP_DIR=$(mktemp -d)
     RG_ARCHIVE_PATH="${RG_TMP_DIR}/${RG_ARCHIVE_NAME}"
 
     log_info "Downloading ripgrep package from GitHub: $RG_GITHUB_URL"
-    if ! download_with_fallback "$RG_GITHUB_URL" "$RG_FALLBACK_URL" "$RG_ARCHIVE_PATH"; then
+    if ! download_file "$RG_GITHUB_URL" "$RG_ARCHIVE_PATH"; then
         log_error "Failed to download ripgrep package"
         log_error "GitHub URL: $RG_GITHUB_URL"
-        log_error "external delivery URL: $RG_FALLBACK_URL"
         rm -rf "$RG_TMP_DIR"
         exit 1
     fi

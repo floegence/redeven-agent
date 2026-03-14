@@ -17,7 +17,7 @@ type controlplaneOrigin struct {
 func parseControlplaneBase(raw string) (controlplaneOrigin, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		// Local UI mode does not require a control plane. Keep the service usable
+		// Local UI mode does not require a remote control-plane connection. Keep the service usable
 		// without a configured controlplane base.
 		return controlplaneOrigin{}, nil
 	}

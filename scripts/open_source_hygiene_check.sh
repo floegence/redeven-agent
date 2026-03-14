@@ -34,7 +34,8 @@ repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
 selected_files="$(mktemp)"
-trap 'rm -f "$selected_files"' EXIT
+existing_files="$(mktemp)"
+trap 'rm -f "$selected_files" "$existing_files"' EXIT
 
 if [ "$mode" = "--all" ]; then
   git ls-files -z >"$selected_files"
@@ -47,15 +48,26 @@ if [ ! -s "$selected_files" ]; then
   exit 0
 fi
 
+while IFS= read -r -d '' file_path; do
+  case "$file_path" in
+    scripts/open_source_hygiene_check.sh|.githooks/pre-commit)
+      continue
+      ;;
+  esac
+  if [ -e "$file_path" ]; then
+    printf '%s\0' "$file_path" >>"$existing_files"
+  fi
+done <"$selected_files"
+
 failed=0
 
 run_pattern_check() {
   local pattern="$1"
   local title="$2"
-  if xargs -0 rg -n --pcre2 \
-    --glob '!scripts/open_source_hygiene_check.sh' \
-    --glob '!.githooks/pre-commit' \
-    "$pattern" <"$selected_files"; then
+  if [ ! -s "$existing_files" ]; then
+    return 0
+  fi
+  if xargs -0 rg -n --pcre2 "$pattern" <"$existing_files"; then
     echo "[ERROR] ${title}" >&2
     failed=1
   fi
@@ -69,23 +81,26 @@ run_pattern_check "(?i)(sessionStorage|localStorage)\\.setItem\\([^\\n]*(token|s
 run_pattern_check "(?i)\\b(redeven\\.com|version\\.agent\\.redeven\\.com|agent\\.package\\.redeven\\.com)\\b" \
   "Production domain literals are not allowed in this public repository."
 
-# Rule 3: block external delivery route/zone values unless they are example.invalid placeholders.
+# Rule 3: block internal delivery pipeline vocabulary from the public repo.
+run_pattern_check "(?i)\\b(downstream automation|release hook|REDEVEN_RELEASE_HOOK_PATTERN|release_published|release-assets|downstream deployment automation|version endpoint|installer wrapper)\\b" \
+  "Internal delivery pipeline details must not appear in this public repository."
+
+# Rule 4: block internal control-plane service names in public docs/comments.
+run_pattern_check "\\b(control plane|service metadata)\\b" \
+  "Internal service names should not appear in this public repository; use generic control-plane terminology."
+
+# Rule 5: block private delivery assets from being tracked again.
 while IFS= read -r -d '' file_path; do
+  [ -e "$file_path" ] || continue
   case "$file_path" in
-    *wrangler.toml)
-      if rg -n --pcre2 '^\s*pattern\s*=\s*"(?![^"]*example\.invalid)[^"]+"' "$file_path"; then
-        echo "[ERROR] external delivery route pattern must use example.invalid placeholders: $file_path" >&2
-        failed=1
-      fi
-      if rg -n --pcre2 '^\s*zone_(name|id)\s*=\s*"(?!example\.invalid")[^"]+"' "$file_path"; then
-        echo "[ERROR] external delivery zone bindings must use example.invalid placeholders: $file_path" >&2
-        failed=1
-      fi
+    deployment/private-delivery/workers/*|scripts/publish_delivery_branch.sh|scripts/sync_release_assets.sh)
+      echo "[ERROR] Private delivery assets do not belong in this public repository: $file_path" >&2
+      failed=1
       ;;
   esac
 done <"$selected_files"
 
-# Rule 4: secret scan must be clean.
+# Rule 6: secret scan must be clean.
 if ! gitleaks detect --source . --no-git --redact --exit-code 1 --config .gitleaks.toml >/dev/null; then
   echo "[ERROR] gitleaks detected potential secrets." >&2
   failed=1

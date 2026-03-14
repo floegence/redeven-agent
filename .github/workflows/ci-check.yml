@@ -55,7 +55,6 @@ jobs:
       - name: Shell script syntax check
         run: |
           sh -n scripts/install.sh
-          bash -n scripts/publish_delivery_branch.sh
           sh -n scripts/generate_release_notes.sh
           bash -n scripts/open_source_hygiene_check.sh
           bash -n scripts/install_git_hooks.sh

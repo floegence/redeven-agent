@@ -74,7 +74,7 @@ type Options struct {
 	// It is forwarded to internal gateways (e.g. /_redeven_proxy/* hardening) so the Local UI works
 	// without affecting Standard Mode origin checks.
 	LocalUIAllowedOrigins []string
-	// ControlChannelEnabled indicates whether the agent should connect to the control plane control channel.
+	// ControlChannelEnabled indicates whether the agent should connect to the remote control channel.
 	//
 	// In Local mode, this should be false even when the config is fully bootstrapped.
 	ControlChannelEnabled bool
@@ -84,7 +84,7 @@ type Options struct {
 	BuildTime string
 
 	// OnControlConnected is called once after the agent successfully connects to the
-	// control plane control channel and completes the initial register call.
+	// remote control channel and completes the initial register call.
 	//
 	// This hook is intended for CLI UX (e.g., printing the environment access URL)
 	// and must not be used for authorization decisions.

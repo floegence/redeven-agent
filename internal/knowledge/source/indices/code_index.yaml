@@ -18,5 +18,3 @@ paths:
     - K-KNOW-001
   redeven-agent/scripts/build_knowledge_bundle.sh:
     - K-KNOW-001
-  redeven-agent/scripts/sync_release_assets.sh:
-    - K-REL-001
