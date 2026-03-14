@@ -7,7 +7,7 @@ This document defines the release process for `redeven-agent`.
 - Deterministic versioned artifacts (`vX.Y.Z`)
 - Verifiable supply chain (`SHA256SUMS` + signature)
 - Keyless signing (GitHub OIDC + Cosign)
-- external delivery package mirror parity with GitHub Release artifacts
+- Public release contract that stays auditable from this repository alone
 
 ## Release trigger
 
@@ -19,7 +19,7 @@ It runs automatically when a tag that matches `v*` is pushed.
 
 Each GitHub Release must include both:
 
-1. A curated operator-facing preface (install/upgrade commands, asset list, verification snippet, mirror context).
+1. A curated operator-facing preface (install/upgrade commands, asset list, verification snippet).
 2. The GitHub auto-generated change list (PR and commit summary).
 
 Implementation in this repository:
@@ -55,46 +55,6 @@ Verification is bound to:
 
 This is the same identity constraint used by `install.sh`.
 
-## downstream automation dispatch (automatic)
-
-The release workflow sends a `release hook` event after GitHub Release is published.
-
-Event contract:
-
-- Event type: `release_published`
-- Payload fields:
-  - `release_repo` (value: `${{ github.repository }}`)
-  - `release_tag` (value: `${{ github.ref_name }}`)
-  - `recommended_version` (default: same as `release_tag`)
-
-Required repository secrets:
-
-- `REDEVEN_RELEASE_HOOK_TOKEN`
-- `REDEVEN_RELEASE_HOOK_TARGET` (format: `owner/repo`)
-
-Failure policy:
-
-- If dispatch fails, `.github/workflows/release.yml` fails at `Notify downstream automation`.
-- GitHub Release tag and published assets stay immutable.
-
-## external delivery package mirror + version endpoint (handled by downstream automation)
-
-external delivery mirror sync and manifest deployment run in the downstream automation repository.
-
-downstream automation workflow responsibilities:
-
-1. Download release assets from GitHub Release.
-2. Verify `SHA256SUMS` and Cosign signature.
-3. Upload verified assets to package mirror path:
-   - `release-assets/<tag>/...`
-4. Re-download uploaded files and verify SHA256 parity.
-5. Deploy the version-manifest Worker after package mirror verification succeeds.
-
-Manifest endpoint served by Worker:
-
-- URL shape: `https://<manifest-host>/v1/manifest.json`
-- Worker source of truth is in the downstream automation repository.
-
 ## Install script delivery
 
 The installer script source of truth is in this repository:
@@ -103,42 +63,9 @@ The installer script source of truth is in this repository:
 
 `install.sh` download strategy:
 
-- Primary: GitHub Release assets
-- Fallback: external delivery package mirror (`<package-mirror-host>`)
-
-## Installer wrapper deployment (automatic on tag)
-
-external delivery Worker deployment for `<install-host>/install.sh` is managed by **downstream deployment automation** (GitHub integration).
-GitHub Actions automatically updates the `release` branch to the tagged commit during the release workflow, and Workers Builds deploys from that branch.
-
-Worker files:
-
-- generator: `deployment/private-delivery/workers/install-agent/generate-worker.js`
-- generated bundle: `deployment/private-delivery/workers/install-agent/dist/install-worker.mjs`
-- wrangler config: `deployment/private-delivery/workers/install-agent/wrangler.toml`
-
-### One-time external delivery setup (installer wrapper)
-
-Configure the Worker build in external delivery Dashboard:
-
-1. Connect repository: `<your-redeven-agent-repository>`.
-2. Set production branch to `release`.
-3. Set project root to `deployment/private-delivery/workers/install-agent`.
-4. Build command: `node generate-worker.js`.
-5. Deploy command: `npx wrangler deploy --config wrangler.toml`.
-
-This setup ensures merges into `main` do not deploy the installer wrapper.
-
-### Tag-driven installer wrapper rollout (automatic)
-
-On every `v*` tag push:
-
-1. `.github/workflows/release.yml` runs.
-2. The workflow runs `./scripts/publish_delivery_branch.sh "${GITHUB_REF_NAME}" release`.
-3. `release` is force-updated to the tagged commit.
-4. downstream deployment automation deploys from `release`.
-
-No manual approval step is required in the normal release path.
+- GitHub Release assets only
+- Latest version resolved via GitHub Releases API unless `REDEVEN_VERSION` is explicitly provided
+- Installer script can be fetched directly from this repository (for example via raw GitHub content)
 
 ## Local verification example
 
@@ -165,3 +92,4 @@ sha256sum -c SHA256SUMS
 - If the workflow identity changes (repo/path/workflow name), update the identity regex in:
   - `docs/RELEASE.md`
   - `scripts/install.sh`
+- Keep downstream packaging or deployment logic outside this public repository.

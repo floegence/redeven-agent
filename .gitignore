@@ -17,9 +17,6 @@ npm-debug.log*
 internal/envapp/ui/dist/
 internal/codeapp/ui/dist/
 
-# external delivery Wrangler
-.wrangler
-
 # Local agent blueprint draft (do not commit)
 .agent.md
 

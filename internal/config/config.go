@@ -67,7 +67,7 @@ func (c *Config) ValidateLocalMinimal() error {
 	return nil
 }
 
-// ValidateRemoteStrict validates the fields required to connect to a control plane control channel.
+// ValidateRemoteStrict validates the fields required to connect to the remote control channel.
 //
 // This is the standard mode requirements: the agent must be fully bootstrapped.
 func (c *Config) ValidateRemoteStrict() error {

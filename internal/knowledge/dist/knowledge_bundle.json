@@ -15,7 +15,7 @@
     "flowersec": "workspace",
     "redeven-agent": "main"
   },
-  "source_sha256": "a622301a5a72b32ff15d0780cf983b506c98a3ad00a6a923eea55beb5d951535",
+  "source_sha256": "af140644b2e0503bfed37073120db48bf68672552ee57571796fc03b7de52c85",
   "cards": [
     {
       "id": "K-AGENT-001",
@@ -153,7 +153,7 @@
     {
       "id": "K-REL-001",
       "version": 1,
-      "title": "Release pipeline ships and mirrors knowledge bundle verification assets",
+      "title": "Release pipeline ships knowledge bundle verification assets",
       "status": "stable",
       "owners": [
         "deployment"
@@ -162,10 +162,10 @@
         "release",
         "security"
       ],
-      "summary": "Release builds publish knowledge bundle manifest and checksum files, and mirror sync verifies uploaded assets before declaring success.",
-      "mechanism": "Release workflow collects bundle verification files into artifacts, signs combined checksums, and R2 sync script re-downloads mirrored files to confirm byte-level integrity.",
-      "boundaries": "If manifest/checksum artifacts are omitted or mirror verification is skipped, downstream installers lose auditable integrity guarantees.",
-      "invalid_conditions": "This card becomes invalid if release or mirror workflows stop publishing or validating knowledge bundle verification artifacts.",
+      "summary": "Release builds publish knowledge bundle manifest and checksum files alongside release checksums and signatures.",
+      "mechanism": "Release workflow collects bundle verification files into artifacts and signs combined checksums so downstream consumers can verify integrity from GitHub Release alone.",
+      "boundaries": "If manifest/checksum artifacts are omitted, downstream installers lose auditable integrity guarantees.",
+      "invalid_conditions": "This card becomes invalid if release workflows stop publishing knowledge bundle verification artifacts.",
       "evidence": [
         {
           "repo": "redeven-agent",
@@ -178,18 +178,6 @@
           "path": ".github/workflows/release.yml",
           "line": 109,
           "note": "Release checksums include bundle manifest and hash files."
-        },
-        {
-          "repo": "redeven-agent",
-          "path": "scripts/sync_release_assets.sh",
-          "line": 85,
-          "note": "Mirror sync requires knowledge bundle verification assets."
-        },
-        {
-          "repo": "redeven-agent",
-          "path": "scripts/sync_release_assets.sh",
-          "line": 147,
-          "note": "Mirror sync re-downloads uploaded files for integrity checks."
         }
       ],
       "source_card_id": "K-REL-001"
@@ -296,9 +284,6 @@
       ],
       "redeven-agent/scripts/build_knowledge_bundle.sh": [
         "K-KNOW-001"
-      ],
-      "redeven-agent/scripts/sync_release_assets.sh": [
-        "K-REL-001"
       ]
     }
   }

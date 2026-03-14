@@ -4,8 +4,7 @@ set -eu
 release_tag="${1:-${RELEASE_TAG:-}}"
 output_path="${2:-${RELEASE_NOTES_PATH:-dist/RELEASE_NOTES.md}}"
 repo="${GITHUB_REPOSITORY:-floegence/redeven-agent}"
-install_script_url="${INSTALL_SCRIPT_URL:-https://install.example.invalid/install.sh}"
-version_manifest_url="${VERSION_MANIFEST_URL:-https://version.agent.example.invalid/v1/manifest.json}"
+install_script_url="${INSTALL_SCRIPT_URL:-}"
 
 validate_release_tag() {
   case "$1" in
@@ -28,6 +27,10 @@ if ! validate_release_tag "$release_tag"; then
   exit 1
 fi
 
+if [ -z "$install_script_url" ]; then
+  install_script_url="https://raw.githubusercontent.com/${repo}/${release_tag}/scripts/install.sh"
+fi
+
 output_dir=$(dirname "$output_path")
 mkdir -p "$output_dir"
 
@@ -48,7 +51,7 @@ cat > "$output_path" <<NOTES
 
 - Version: \`${release_tag}\`
 - Release date (UTC): ${release_date}
-- Primary package source: GitHub Release assets (external delivery mirror sync runs after release)
+- Package source: GitHub Release assets
 
 ## Install / Upgrade
 
@@ -91,9 +94,8 @@ sha256sum -c SHA256SUMS
 
 ## Notes For Operators
 
-- Installer download order: GitHub Release first, external delivery package mirror fallback.
-- Version manifest endpoint: ${version_manifest_url}
-- If you need deployment details, see \`docs/RELEASE.md\` in this repository.
+- This public repository defines the GitHub Release contract and verification flow only.
+- If you need installation details, see \`docs/RELEASE.md\` in this repository.
 ${compare_line}
 
 ---

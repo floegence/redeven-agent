@@ -142,10 +142,9 @@ Multi-environment mode uses isolated state per environment:
 ## Operations and Release
 
 - GitHub Release remains the source of truth for versioned binaries and checksums.
-- On `v*` tag push, `Release Agent` publishes GitHub Release assets and then sends a `release hook` event to the downstream automation repository.
-- downstream automation workflow handles package mirror mirror sync (`release-assets/<tag>/...`) and version-manifest Worker deployment for `https://<manifest-host>/v1/manifest.json`.
-- `install.sh` downloads from GitHub first, then falls back to external delivery mirror.
-- Installer worker deployment (`https://<install-host>/install.sh`) stays on downstream deployment automation; the release workflow automatically force-updates `release` on every `v*` tag push.
+- On `v*` tag push, `Release Agent` publishes GitHub Release assets, checksums, signatures, and release notes.
+- `scripts/install.sh` resolves versions from GitHub Releases and downloads release assets directly from GitHub.
+- This public repository documents only the public release contract. Any downstream packaging or deployment wrappers are intentionally out of scope here.
 
 Release details:
 
