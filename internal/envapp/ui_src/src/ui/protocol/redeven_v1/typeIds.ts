@@ -55,6 +55,7 @@ export const redevenV1TypeIds = {
     subscribeThread: 6009,
     threadRewind: 6010,
     stopThread: 6011,
+    submitStructuredPromptResponse: 6012,
   },
   sessions: {
     listActive: 5001,
