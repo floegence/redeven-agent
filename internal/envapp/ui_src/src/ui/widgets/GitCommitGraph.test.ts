@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 
+import { render } from 'solid-js/web';
 import { describe, expect, it } from 'vitest';
 import type { GitCommitSummary } from '../protocol/redeven_v1';
-import { buildCommitGraphRows } from './GitCommitGraph';
+import { GitCommitGraph, buildCommitGraphRows } from './GitCommitGraph';
 
 function commit(hash: string, parents: string[], subject: string): GitCommitSummary {
   return {
@@ -35,5 +36,41 @@ describe('buildCommitGraphRows', () => {
     expect(new Set(rows.map((row) => row.columns))).toEqual(new Set([2]));
     expect(rows[0]?.afterLanes[1]?.colorIndex).toBe(rows[2]?.nodeColorIndex);
     expect(rows[0]?.nodeColorIndex).toBe(rows[1]?.nodeColorIndex);
+  });
+});
+
+describe('GitCommitGraph layout', () => {
+  it('anchors nodes to the commit subject row and keeps SVG height explicit', () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+
+    const dispose = render(() => GitCommitGraph({
+      commits: [
+        commit('commit003', ['commit002'], 'Latest commit'),
+        commit('commit002', ['commit001'], 'Previous commit'),
+        commit('commit001', [], 'Root commit'),
+      ],
+      selectedCommitHash: 'commit002',
+    }), host);
+
+    try {
+      const svg = host.querySelector('svg');
+      expect(svg?.getAttribute('class')).toContain('absolute top-0 left-0');
+      expect(svg?.getAttribute('style')).toContain('height: 102px;');
+      expect(svg?.getAttribute('height')).toBe('102');
+
+      const outerNodes = Array.from(host.querySelectorAll('circle[r="6.5"]'));
+      expect(outerNodes.map((node) => node.getAttribute('cy'))).toEqual(['10', '44', '78']);
+
+      const content = host.querySelector('[data-commit-graph-row="commit003"] > div.relative.z-20.grid.min-w-0') as HTMLDivElement | null;
+      expect(content).toBeTruthy();
+      expect(content?.getAttribute('style')).toContain('height: 34px;');
+      expect(content?.getAttribute('style')).toContain('padding-top: 3px;');
+      expect(content?.getAttribute('style')).toContain('padding-bottom: 6px;');
+      expect(content?.getAttribute('style')).toContain('grid-template-rows: 14px 10px;');
+      expect(content?.getAttribute('style')).toContain('gap: 1px;');
+    } finally {
+      dispose();
+    }
   });
 });
