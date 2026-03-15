@@ -29,6 +29,8 @@ import type {
   GitCheckoutBranchResponse,
   GitCommitWorkspaceRequest,
   GitCommitWorkspaceResponse,
+  GitDeleteBranchRequest,
+  GitDeleteBranchResponse,
   GitFetchRepoRequest,
   GitFetchRepoResponse,
   GitGetBranchCompareRequest,
@@ -85,6 +87,7 @@ import { fromWireFsCopyResponse, fromWireFsDeleteResponse, fromWireFsListRespons
 import {
   fromWireGitCheckoutBranchResponse,
   fromWireGitCommitWorkspaceResponse,
+  fromWireGitDeleteBranchResponse,
   fromWireGitFetchRepoResponse,
   fromWireGitGetBranchCompareResponse,
   fromWireGitGetCommitDetailResponse,
@@ -99,6 +102,7 @@ import {
   fromWireGitUnstageWorkspaceResponse,
   toWireGitCheckoutBranchRequest,
   toWireGitCommitWorkspaceRequest,
+  toWireGitDeleteBranchRequest,
   toWireGitFetchRepoRequest,
   toWireGitGetBranchCompareRequest,
   toWireGitGetCommitDetailRequest,
@@ -145,6 +149,8 @@ import type {
   wire_git_checkout_branch_resp,
   wire_git_commit_workspace_req,
   wire_git_commit_workspace_resp,
+  wire_git_delete_branch_req,
+  wire_git_delete_branch_resp,
   wire_git_fetch_repo_req,
   wire_git_fetch_repo_resp,
   wire_git_get_branch_compare_req,
@@ -196,6 +202,7 @@ export type RedevenV1Rpc = {
     pullRepo: (req: GitPullRepoRequest) => Promise<GitPullRepoResponse>;
     pushRepo: (req: GitPushRepoRequest) => Promise<GitPushRepoResponse>;
     checkoutBranch: (req: GitCheckoutBranchRequest) => Promise<GitCheckoutBranchResponse>;
+    deleteBranch: (req: GitDeleteBranchRequest) => Promise<GitDeleteBranchResponse>;
     listBranches: (req: GitListBranchesRequest) => Promise<GitListBranchesResponse>;
     listCommits: (req: GitListCommitsRequest) => Promise<GitListCommitsResponse>;
     getCommitDetail: (req: GitGetCommitDetailRequest) => Promise<GitGetCommitDetailResponse>;
@@ -347,6 +354,11 @@ export function createRedevenV1Rpc(helpers: RpcHelpers): RedevenV1Rpc {
         const payload = toWireGitCheckoutBranchRequest(req);
         const resp = await call<wire_git_checkout_branch_req, wire_git_checkout_branch_resp>(redevenV1TypeIds.git.checkoutBranch, payload);
         return fromWireGitCheckoutBranchResponse(resp);
+      },
+      deleteBranch: async (req) => {
+        const payload = toWireGitDeleteBranchRequest(req);
+        const resp = await call<wire_git_delete_branch_req, wire_git_delete_branch_resp>(redevenV1TypeIds.git.deleteBranch, payload);
+        return fromWireGitDeleteBranchResponse(resp);
       },
       listBranches: async (req) => {
         const payload = toWireGitListBranchesRequest(req);

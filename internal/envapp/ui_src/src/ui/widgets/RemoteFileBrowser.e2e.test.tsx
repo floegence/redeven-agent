@@ -31,6 +31,7 @@ const gitWorkspaceRenderStore = vi.hoisted(() => ({
     pullBusy: boolean;
     pushBusy: boolean;
     checkoutBusy: boolean;
+    deleteBusy: boolean;
   }>,
 }));
 
@@ -57,6 +58,7 @@ const mockRpc = vi.hoisted(() => ({
     pullRepo: vi.fn(),
     pushRepo: vi.fn(),
     checkoutBranch: vi.fn(),
+    deleteBranch: vi.fn(),
   },
 }));
 
@@ -156,10 +158,12 @@ vi.mock('./GitWorkspace', () => ({
     pullBusy?: boolean;
     pushBusy?: boolean;
     checkoutBusy?: boolean;
+    deleteBusy?: boolean;
     onFetch?: () => void;
     onPull?: () => void;
     onPush?: () => void;
     onCheckoutBranch?: (branch: { name?: string; fullName?: string; kind?: string }) => void;
+    onDeleteBranch?: (branch: { name?: string; fullName?: string; kind?: string }) => void;
   }) => {
     onMount(() => {
       workspaceLifecycleStore.gitMounts += 1;
@@ -180,6 +184,7 @@ vi.mock('./GitWorkspace', () => ({
         pullBusy: Boolean(props.pullBusy),
         pushBusy: Boolean(props.pushBusy),
         checkoutBusy: Boolean(props.checkoutBusy),
+        deleteBusy: Boolean(props.deleteBusy),
       });
     });
 
@@ -199,6 +204,16 @@ vi.mock('./GitWorkspace', () => ({
           })}
         >
           mock-checkout
+        </button>
+        <button
+          type="button"
+          onClick={() => props.onDeleteBranch?.({
+            name: 'feature/demo',
+            fullName: 'refs/heads/feature/demo',
+            kind: 'local',
+          })}
+        >
+          mock-delete-branch
         </button>
       </div>
     );
@@ -331,6 +346,11 @@ beforeEach(() => {
     repoRootPath: '/workspace/repo',
     headRef: 'feature/demo',
     headCommit: 'fedcba9',
+  });
+  mockRpc.git.deleteBranch.mockResolvedValue({
+    repoRootPath: '/workspace/repo',
+    headRef: 'main',
+    headCommit: 'abc1234',
   });
 });
 
@@ -505,6 +525,41 @@ describe('RemoteFileBrowser persistence', () => {
       });
       expect(notificationStore.success).toContainEqual({ title: 'Checked out', message: 'feature/demo is now active.' });
       expect(gitWorkspaceRenderStore.snapshots.some((item) => item.checkoutBusy)).toBe(true);
+      expect(gitWorkspaceRenderStore.snapshots.every((item) => !item.repoInfoLoading && !item.repoSummaryLoading && !item.workspaceLoading && !item.branchesLoading && !item.listLoading)).toBe(true);
+    } finally {
+      dispose();
+    }
+  });
+
+  it('keeps branch delete on local busy state and shows a toast without global reload flags', async () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+
+    const dispose = render(() => (
+      <LayoutProvider>
+        <EnvContext.Provider value={createEnvContext()}>
+          <RemoteFileBrowser widgetId="widget-1" />
+        </EnvContext.Provider>
+      </LayoutProvider>
+    ), host);
+
+    try {
+      await flush();
+      gitWorkspaceRenderStore.snapshots = [];
+
+      const deleteButton = Array.from(host.querySelectorAll('button')).find((node) => node.textContent === 'mock-delete-branch') as HTMLButtonElement | undefined;
+      expect(deleteButton).toBeTruthy();
+      deleteButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await flush();
+
+      expect(mockRpc.git.deleteBranch).toHaveBeenCalledWith({
+        repoRootPath: '/workspace/repo',
+        name: 'feature/demo',
+        fullName: 'refs/heads/feature/demo',
+        kind: 'local',
+      });
+      expect(notificationStore.success).toContainEqual({ title: 'Deleted', message: 'feature/demo was removed.' });
+      expect(gitWorkspaceRenderStore.snapshots.some((item) => item.deleteBusy)).toBe(true);
       expect(gitWorkspaceRenderStore.snapshots.every((item) => !item.repoInfoLoading && !item.repoSummaryLoading && !item.workspaceLoading && !item.branchesLoading && !item.listLoading)).toBe(true);
     } finally {
       dispose();

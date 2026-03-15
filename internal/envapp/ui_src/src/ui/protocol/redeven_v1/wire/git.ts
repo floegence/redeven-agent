@@ -143,6 +143,19 @@ export type wire_git_checkout_branch_resp = {
   head_commit?: string;
 };
 
+export type wire_git_delete_branch_req = {
+  repo_root_path: string;
+  name?: string;
+  full_name?: string;
+  kind?: string;
+};
+
+export type wire_git_delete_branch_resp = {
+  repo_root_path: string;
+  head_ref?: string;
+  head_commit?: string;
+};
+
 export type wire_git_branch_summary = {
   name?: string;
   full_name?: string;

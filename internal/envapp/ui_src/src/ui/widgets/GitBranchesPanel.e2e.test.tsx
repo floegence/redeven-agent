@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockGetCommitDetail = vi.fn();
 const mockGetBranchCompare = vi.fn();
+const mockListWorkspaceChanges = vi.fn();
 
 vi.mock('../protocol/redeven_v1', async () => {
   const actual = await vi.importActual<typeof import('../protocol/redeven_v1')>('../protocol/redeven_v1');
@@ -16,7 +17,7 @@ vi.mock('../protocol/redeven_v1', async () => {
       git: {
         getCommitDetail: mockGetCommitDetail,
         getBranchCompare: mockGetBranchCompare,
-        listWorkspaceChanges: vi.fn(),
+        listWorkspaceChanges: mockListWorkspaceChanges,
       },
     }),
   };
@@ -28,6 +29,7 @@ import { GitBranchesPanel } from './GitBranchesPanel';
 beforeEach(() => {
   mockGetCommitDetail.mockReset();
   mockGetBranchCompare.mockReset();
+  mockListWorkspaceChanges.mockReset();
   mockGetCommitDetail.mockResolvedValue({
     repoRootPath: '/workspace/repo',
     commit: {
@@ -57,6 +59,14 @@ beforeEach(() => {
       },
     ],
   });
+  mockListWorkspaceChanges.mockResolvedValue({
+    repoRootPath: '/workspace/repo-linked',
+    summary: { stagedCount: 0, unstagedCount: 0, untrackedCount: 0, conflictedCount: 0 },
+    staged: [],
+    unstaged: [],
+    untracked: [],
+    conflicted: [],
+  });
 
   Object.defineProperty(window, 'matchMedia', {
     writable: true,
@@ -80,6 +90,7 @@ afterEach(() => {
 describe('GitBranchesPanel interactions', () => {
   it('renders status as the default branch detail view', () => {
     let checkoutCount = 0;
+    let deleteCount = 0;
     const host = document.createElement('div');
     document.body.appendChild(host);
 
@@ -125,6 +136,9 @@ describe('GitBranchesPanel interactions', () => {
                 onCheckoutBranch={() => {
                   checkoutCount += 1;
                 }}
+                onDeleteBranch={() => {
+                  deleteCount += 1;
+                }}
               />
             </div>
           </ProtocolProvider>
@@ -137,16 +151,22 @@ describe('GitBranchesPanel interactions', () => {
       expect(host.textContent).toContain('History');
       expect(host.textContent).toContain('Compare');
       expect(host.textContent).toContain('Checkout');
+      expect(host.textContent).toContain('Delete');
       expect(host.textContent).toContain('src/linked.ts');
       expect(host.textContent).toContain('Upstream origin/feature/demo');
       expect(host.textContent).not.toContain('Current · Upstream origin/feature/demo');
       expect(host.textContent).toContain('Staged');
       expect(host.textContent).toContain('View Diff');
+      expect(host.textContent).toContain('Switch to another branch before deleting it.');
       expect(host.textContent).not.toContain('pending review');
       const checkoutButton = Array.from(host.querySelectorAll('button')).find((node) => node.textContent?.includes('Checkout')) as HTMLButtonElement | undefined;
+      const deleteButton = Array.from(host.querySelectorAll('button')).find((node) => node.textContent?.trim() === 'Delete') as HTMLButtonElement | undefined;
       expect(checkoutButton).toBeTruthy();
+      expect(deleteButton).toBeTruthy();
       expect(checkoutButton?.disabled).toBe(true);
+      expect(deleteButton?.disabled).toBe(true);
       expect(checkoutCount).toBe(0);
+      expect(deleteCount).toBe(0);
     } finally {
       dispose();
     }
@@ -154,6 +174,7 @@ describe('GitBranchesPanel interactions', () => {
 
   it('enables checkout for a non-current remote branch', () => {
     let checkoutBranch: string | undefined;
+    let deleteBranch: string | undefined;
     const host = document.createElement('div');
     document.body.appendChild(host);
 
@@ -178,6 +199,9 @@ describe('GitBranchesPanel interactions', () => {
                 onCheckoutBranch={(branch) => {
                   checkoutBranch = branch.name;
                 }}
+                onDeleteBranch={(branch) => {
+                  deleteBranch = branch.name;
+                }}
               />
             </div>
           </ProtocolProvider>
@@ -187,10 +211,114 @@ describe('GitBranchesPanel interactions', () => {
 
     try {
       const checkoutButton = Array.from(host.querySelectorAll('button')).find((node) => node.textContent?.includes('Checkout')) as HTMLButtonElement | undefined;
+      const deleteButton = Array.from(host.querySelectorAll('button')).find((node) => node.textContent?.trim() === 'Delete') as HTMLButtonElement | undefined;
       expect(checkoutButton).toBeTruthy();
+      expect(deleteButton).toBeFalsy();
       expect(checkoutButton?.disabled).toBe(false);
       checkoutButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
       expect(checkoutBranch).toBe('origin/feature/demo');
+      expect(deleteBranch).toBeUndefined();
+    } finally {
+      dispose();
+    }
+  });
+
+  it('disables delete for a linked worktree branch and shows the reason', () => {
+    let deleteCount = 0;
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+
+    const dispose = render(() => (
+      <LayoutProvider>
+        <NotificationProvider>
+          <ProtocolProvider contract={redevenV1Contract}>
+            <div class="h-[640px]">
+              <GitBranchesPanel
+                repoRootPath="/workspace/repo"
+                selectedBranch={{
+                  name: 'feature/linked',
+                  fullName: 'refs/heads/feature/linked',
+                  kind: 'local',
+                  worktreePath: '/workspace/repo-linked',
+                }}
+                branches={{
+                  repoRootPath: '/workspace/repo',
+                  currentRef: 'main',
+                  local: [
+                    { name: 'main', fullName: 'refs/heads/main', kind: 'local', current: true },
+                    { name: 'feature/linked', fullName: 'refs/heads/feature/linked', kind: 'local', worktreePath: '/workspace/repo-linked' },
+                  ],
+                  remote: [],
+                }}
+                onDeleteBranch={() => {
+                  deleteCount += 1;
+                }}
+              />
+            </div>
+          </ProtocolProvider>
+        </NotificationProvider>
+      </LayoutProvider>
+    ), host);
+
+    try {
+      const deleteButton = Array.from(host.querySelectorAll('button')).find((node) => node.textContent?.trim() === 'Delete') as HTMLButtonElement | undefined;
+      expect(deleteButton).toBeTruthy();
+      expect(deleteButton?.disabled).toBe(true);
+      expect(host.textContent).toContain('linked worktree');
+      expect(host.textContent).toContain('/workspace/repo-linked');
+      expect(deleteCount).toBe(0);
+    } finally {
+      dispose();
+    }
+  });
+
+  it('opens a confirmation dialog before deleting a local branch', async () => {
+    let deletedBranch: string | undefined;
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+
+    const dispose = render(() => (
+      <LayoutProvider>
+        <NotificationProvider>
+          <ProtocolProvider contract={redevenV1Contract}>
+            <div class="h-[640px]">
+              <GitBranchesPanel
+                repoRootPath="/workspace/repo"
+                selectedBranch={{
+                  name: 'feature/demo',
+                  fullName: 'refs/heads/feature/demo',
+                  kind: 'local',
+                }}
+                branches={{
+                  repoRootPath: '/workspace/repo',
+                  currentRef: 'main',
+                  local: [
+                    { name: 'main', fullName: 'refs/heads/main', kind: 'local', current: true },
+                    { name: 'feature/demo', fullName: 'refs/heads/feature/demo', kind: 'local' },
+                  ],
+                  remote: [],
+                }}
+                onDeleteBranch={(branch) => {
+                  deletedBranch = branch.name;
+                }}
+              />
+            </div>
+          </ProtocolProvider>
+        </NotificationProvider>
+      </LayoutProvider>
+    ), host);
+
+    try {
+      const deleteButton = Array.from(host.querySelectorAll('button')).find((node) => node.textContent?.trim() === 'Delete') as HTMLButtonElement | undefined;
+      expect(deleteButton).toBeTruthy();
+      deleteButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+
+      expect(document.body.textContent).toContain('Delete local branch');
+      const confirmButton = Array.from(document.body.querySelectorAll('button')).find((node) => node.textContent?.trim() === 'Delete Branch') as HTMLButtonElement | undefined;
+      expect(confirmButton).toBeTruthy();
+      confirmButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      expect(deletedBranch).toBe('feature/demo');
     } finally {
       dispose();
     }

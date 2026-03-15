@@ -178,6 +178,7 @@ describe('browser workspace layout wiring', () => {
     expect(branchesSrc).toContain('Load More');
     expect(branchesSrc).toContain('View Diff');
     expect(branchesSrc).toContain('Checkout');
+    expect(branchesSrc).toContain('Delete');
     expect(branchesSrc).toContain('flex min-h-0 flex-1 flex-col overflow-hidden px-4 pt-2 pb-4');
     expect(branchesSrc).toContain('flex min-h-0 flex-1 flex-col gap-3');
     expect(branchesSrc).toContain('min-h-0 flex-1 overflow-auto');
