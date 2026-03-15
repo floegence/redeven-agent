@@ -17,8 +17,10 @@ import { Sidebar, SidebarContent, SidebarItem, SidebarItemList, SidebarSection }
 import { Button, Card, Checkbox, ConfirmDialog, Dialog, Input, Select } from '@floegence/floe-webapp-core/ui';
 import { useProtocol } from '@floegence/floe-webapp-protocol';
 
+import { useAgentUpdateContext } from '../maintenance/AgentUpdateContext';
+import { isReleaseVersion } from '../maintenance/agentVersion';
+import { formatAgentStatusLabel, formatUnknownError } from '../maintenance/shared';
 import { fetchGatewayJSON } from '../services/gatewayApi';
-import { getAgentLatestVersion, getEnvironment } from '../services/controlplaneApi';
 import { FlowerIcon } from '../icons/FlowerIcon';
 import { useRedevenRpc } from '../protocol/redeven_v1/hooks';
 import { useEnvContext, type EnvSettingsSection } from './EnvContext';
@@ -28,7 +30,6 @@ import { useEnvContext, type EnvSettingsSection } from './EnvContext';
 // ============================================================================
 
 type ViewMode = 'ui' | 'json';
-type MaintenanceKind = 'upgrade' | 'restart';
 
 type PermissionSet = Readonly<{ read: boolean; write: boolean; execute: boolean }>;
 type PermissionPolicy = Readonly<{
@@ -254,7 +255,6 @@ const DEFAULT_CODE_SERVER_PORT_MIN = 20000;
 const DEFAULT_CODE_SERVER_PORT_MAX = 21000;
 const DEFAULT_OPENAI_COMPAT_CONTEXT_WINDOW = 128000;
 const DEFAULT_EFFECTIVE_CONTEXT_WINDOW_PERCENT = 95;
-const RELEASE_VERSION_RE = /^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 const AUTO_SAVE_DELAY_MS = 700;
 const AI_PROVIDER_TYPE_OPTIONS: ReadonlyArray<{ value: AIProviderType; label: string }> = [
   { value: 'openai', label: 'openai' },
@@ -359,18 +359,6 @@ const SETTINGS_NAV_ITEMS: readonly SettingsNavItem[] = [
 
 function settingsSectionElementID(section: EnvSettingsSection): string {
   return `redeven-settings-${section}`;
-}
-
-function isReleaseVersion(raw: string): boolean {
-  const v = String(raw ?? '').trim();
-  if (!v) return false;
-  return RELEASE_VERSION_RE.test(v);
-}
-
-function formatUnknownError(err: unknown): string {
-  if (err instanceof Error) return String(err.message || '').trim();
-  if (typeof err === 'string') return String(err).trim();
-  return '';
 }
 
 function formatSavedTime(unixMs: number | null): string {
@@ -833,6 +821,7 @@ function JSONEditor(props: { value: string; onChange: (v: string) => void; disab
 
 export function EnvSettingsPage() {
   const env = useEnvContext();
+  const agentUpdate = useAgentUpdateContext();
   const protocol = useProtocol();
   const notify = useNotification();
   const rpc = useRedevenRpc();
@@ -899,29 +888,26 @@ export function EnvSettingsPage() {
 
   const canAdmin = createMemo(() => !!env.env()?.permissions?.can_admin || !!env.env()?.permissions?.is_owner);
   const controlplaneStatus = createMemo(() => (env.env()?.status ? String(env.env()!.status) : ''));
+  const latestVersion = createMemo(() => agentUpdate.version.latestMeta());
+  const latestVersionLoading = createMemo(() => agentUpdate.version.latestMetaLoading());
+  const latestVersionError = createMemo(() => agentUpdate.version.latestMetaError());
+  const displayedStatus = createMemo(() => agentUpdate.maintenance.displayedStatus());
+  const maintenanceStage = createMemo(() => agentUpdate.maintenance.stage());
+  const maintenanceError = createMemo(() => agentUpdate.maintenance.error());
+  const maintaining = createMemo(() => agentUpdate.maintenance.maintaining());
+  const isUpgrading = createMemo(() => agentUpdate.maintenance.isUpgrading());
+  const isRestarting = createMemo(() => agentUpdate.maintenance.isRestarting());
 
-  const [agentPingSeq, setAgentPingSeq] = createSignal(0);
-  const [agentPing] = createResource(
-    () => (protocol.status() === 'connected' ? agentPingSeq() : null),
-    async (k) => (k == null ? null : await rpc.sys.ping()),
-  );
-
-  const [latestVersion] = createResource(
-    () => env.env_id().trim() || null,
-    async (id) => (id ? await getAgentLatestVersion(id) : null),
-  );
+  createEffect(() => {
+    const envId = env.env_id().trim();
+    if (!envId) return;
+    void agentUpdate.version.ensureLatestVersionLoaded().catch(() => undefined);
+  });
 
   const [targetVersionInput, setTargetVersionInput] = createSignal('');
-  const preferredUpgradeVersion = createMemo(() => {
-    const v = latestVersion();
-    if (!v) return '';
-    const preferred = v.recommended_version ? String(v.recommended_version).trim() : '';
-    if (preferred) return preferred;
-    return v.latest_version ? String(v.latest_version).trim() : '';
-  });
+  const preferredUpgradeVersion = createMemo(() => agentUpdate.version.preferredTargetVersion());
   const targetUpgradeVersion = createMemo(() => String(targetVersionInput() ?? '').trim());
   const targetUpgradeVersionValid = createMemo(() => isReleaseVersion(targetUpgradeVersion()));
-  const latestVersionError = createMemo(() => formatUnknownError(latestVersion.error));
 
   createEffect(() => {
     const preferred = preferredUpgradeVersion();
@@ -932,27 +918,7 @@ export function EnvSettingsPage() {
 
   const [upgradeOpen, setUpgradeOpen] = createSignal(false);
   const [restartOpen, setRestartOpen] = createSignal(false);
-
-  const [maintenanceKind, setMaintenanceKind] = createSignal<MaintenanceKind | null>(null);
-  const maintaining = createMemo(() => maintenanceKind() !== null);
-  const isUpgrading = createMemo(() => maintenanceKind() === 'upgrade');
-  const isRestarting = createMemo(() => maintenanceKind() === 'restart');
-
-  const [maintenanceError, setMaintenanceError] = createSignal<string | null>(null);
-  const [maintenancePolledStatus, setMaintenancePolledStatus] = createSignal<string | null>(null);
-
-  const displayedStatus = createMemo(() => {
-    const st = maintaining() && maintenancePolledStatus() ? String(maintenancePolledStatus()) : controlplaneStatus();
-    return st || 'unknown';
-  });
-
-  const statusLabel = createMemo(() => {
-    const st = displayedStatus();
-    if (st === 'online') return 'Online';
-    if (st === 'offline') return 'Offline';
-    if (!st || st === 'unknown') return 'Unknown';
-    return `${st.slice(0, 1).toUpperCase()}${st.slice(1)}`;
-  });
+  const statusLabel = createMemo(() => formatAgentStatusLabel(displayedStatus()));
 
   const agentCardBadge = createMemo(() => {
     if (isUpgrading()) return 'Updating';
@@ -970,8 +936,6 @@ export function EnvSettingsPage() {
   const canStartUpgrade = createMemo(() => {
     if (maintaining()) return false;
     if (protocol.status() !== 'connected') return false;
-    if (latestVersion.loading) return false;
-    if (latestVersionError()) return false;
     if (!targetUpgradeVersionValid()) return false;
     if (!canAdmin()) return false;
     return controlplaneStatus() === 'online';
@@ -984,174 +948,20 @@ export function EnvSettingsPage() {
     return controlplaneStatus() === 'online';
   });
 
-  const maintenanceStage = createMemo(() => {
-    const kind = maintenanceKind();
-    if (!kind) return null;
-    if (protocol.status() === 'connected') {
-      if (kind === 'upgrade') return 'Downloading and installing update...';
-      return 'Restarting agent...';
-    }
-    const st = maintenancePolledStatus();
-    if (st && st !== 'online') return 'Agent restarting...';
-    if (st === 'online') return 'Reconnecting...';
-    return 'Waiting for agent...';
-  });
-
-  const sleep = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
-
-  let maintenanceAbort = false;
-  onCleanup(() => {
-    maintenanceAbort = true;
-  });
-
-  const startMaintenance = async (kind: MaintenanceKind) => {
-    if (maintaining()) return;
-    setMaintenanceError(null);
-    setMaintenancePolledStatus(null);
-
-    const envId = env.env_id().trim();
-    if (!envId) {
-      const msg = 'Missing env context. Please reopen from the Redeven Portal.';
-      setMaintenanceError(msg);
-      notify.error(kind === 'upgrade' ? 'Update failed' : 'Restart failed', msg);
-      return;
-    }
-
-    if (!canAdmin()) {
-      const msg = 'Admin permission required.';
-      setMaintenanceError(msg);
-      notify.error(kind === 'upgrade' ? 'Update failed' : 'Restart failed', msg);
-      return;
-    }
-
-    const requestedVersion = kind === 'upgrade' ? targetUpgradeVersion() : '';
-    if (kind === 'upgrade') {
-      if (latestVersion.loading) {
-        const msg = 'Latest version metadata is still loading.';
-        setMaintenanceError(msg);
-        notify.error('Update failed', msg);
-        return;
-      }
-      if (latestVersionError()) {
-        const msg = 'Latest version metadata is unavailable. Please retry after refresh.';
-        setMaintenanceError(msg);
-        notify.error('Update failed', msg);
-        return;
-      }
-      if (!isReleaseVersion(requestedVersion)) {
-        const msg = 'Target version must be a valid release tag (for example: v1.2.3).';
-        setMaintenanceError(msg);
-        notify.error('Update failed', msg);
-        return;
-      }
-    }
-
-    setMaintenanceKind(kind);
-
-    const beforeVersion = kind === 'upgrade' && agentPing()?.version ? String(agentPing()!.version) : '';
-
-    let started = false;
+  const startUpgrade = async () => {
     try {
-      const resp =
-        kind === 'upgrade'
-          ? await rpc.sys.upgrade({ targetVersion: requestedVersion })
-          : await rpc.sys.restart();
-      if (!resp?.ok) {
-        const msg = resp?.message ? String(resp.message) : kind === 'upgrade' ? 'Upgrade rejected.' : 'Restart rejected.';
-        setMaintenanceError(msg);
-        notify.error(kind === 'upgrade' ? 'Update failed' : 'Restart failed', msg);
-        setMaintenanceKind(null);
-        return;
-      }
-      started = true;
-      notify.success(
-        kind === 'upgrade' ? 'Update started' : 'Restart started',
-        kind === 'upgrade'
-          ? `Target version: ${requestedVersion}`
-          : resp?.message
-            ? String(resp.message)
-            : 'The agent will restart shortly.',
-      );
-    } catch (e) {
-      const msg = formatUnknownError(e);
-      // If the call fails due to a disconnect, assume the upgrade has started.
-      if (protocol.status() !== 'connected') {
-        started = true;
-        notify.info(kind === 'upgrade' ? 'Update started' : 'Restart started', 'Waiting for agent restart...');
-      } else {
-        setMaintenanceError(msg || 'Request failed.');
-        notify.error(kind === 'upgrade' ? 'Update failed' : 'Restart failed', msg || 'Request failed.');
-        setMaintenanceKind(null);
-        return;
-      }
+      await agentUpdate.maintenance.startUpgrade(targetUpgradeVersion());
     } finally {
       setUpgradeOpen(false);
-      setRestartOpen(false);
-    }
-
-    if (!started) {
-      setMaintenanceKind(null);
-      return;
-    }
-
-    const startedAt = Date.now();
-    const timeoutMs = kind === 'upgrade' ? 10 * 60 * 1000 : 5 * 60 * 1000;
-    const pollIntervalMs = 1500;
-    let sawDisconnect = false;
-
-    for (;;) {
-      if (maintenanceAbort) return;
-
-      if (Date.now() - startedAt > timeoutMs) {
-        const msg = 'Timed out waiting for the agent to restart.';
-        setMaintenanceError(msg);
-        notify.error(kind === 'upgrade' ? 'Update timed out' : 'Restart timed out', msg);
-        setMaintenanceKind(null);
-        return;
-      }
-
-      if (protocol.status() !== 'connected') {
-        sawDisconnect = true;
-      }
-
-      try {
-        const detail = await getEnvironment(envId);
-        const st = detail?.status ? String(detail.status) : null;
-        if (st) setMaintenancePolledStatus(st);
-      } catch {
-        // Ignore transient control plane failures; keep polling.
-      }
-
-      if (sawDisconnect && maintenancePolledStatus() === 'online') {
-        try {
-          await env.connect();
-        } catch {
-          // Ignore and continue polling.
-        }
-      }
-
-      if (sawDisconnect && protocol.status() === 'connected') {
-        try {
-          const p = await rpc.sys.ping();
-          const v = p?.version ? String(p.version) : '';
-          setAgentPingSeq((n) => n + 1);
-
-          setMaintenanceKind(null);
-
-          if (kind === 'upgrade' && beforeVersion && v && v !== beforeVersion) notify.success('Updated', `Agent updated to ${v}.`);
-          else notify.success('Reconnected', 'Agent is back online.');
-          return;
-        } catch {
-          // Still reconnecting; keep polling.
-        }
-      }
-
-      await sleep(pollIntervalMs);
     }
   };
-
-  const startUpgrade = async () => startMaintenance('upgrade');
-  const startRestart = async () => startMaintenance('restart');
+  const startRestart = async () => {
+    try {
+      await agentUpdate.maintenance.startRestart();
+    } finally {
+      setRestartOpen(false);
+    }
+  };
 
   const connectOverlayMessage = createMemo(() => (maintaining() ? 'Agent restarting...' : 'Connecting to agent...'));
 
@@ -3129,11 +2939,11 @@ export function EnvSettingsPage() {
           <div class="grid grid-cols-3 gap-3">
             <div class="p-3 rounded-lg bg-muted/30 border border-border">
               <div class="text-[11px] font-medium text-muted-foreground mb-1">Current</div>
-              <div class="text-sm font-mono font-medium">{agentPing()?.version ? String(agentPing()!.version) : '—'}</div>
+              <div class="text-sm font-mono font-medium">{agentUpdate.version.currentVersion() || '—'}</div>
             </div>
             <div class="p-3 rounded-lg bg-muted/30 border border-border">
               <div class="text-[11px] font-medium text-muted-foreground mb-1">Latest</div>
-              <div class="text-sm font-mono font-medium">{latestVersion()?.latest_version ? String(latestVersion()!.latest_version) : latestVersion.loading ? 'Loading...' : '—'}</div>
+              <div class="text-sm font-mono font-medium">{latestVersion()?.latest_version ? String(latestVersion()!.latest_version) : latestVersionLoading() ? 'Loading...' : '—'}</div>
             </div>
             <div class="p-3 rounded-lg bg-muted/30 border border-border">
               <div class="text-[11px] font-medium text-muted-foreground mb-1">Status</div>
@@ -3153,7 +2963,7 @@ export function EnvSettingsPage() {
                 placeholder="v1.2.3"
                 size="sm"
                 class="w-full"
-                disabled={maintaining() || latestVersion.loading}
+                disabled={maintaining()}
               />
             </div>
             <Show when={targetUpgradeVersion() && !targetUpgradeVersionValid()}>

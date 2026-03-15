@@ -37,7 +37,12 @@ import { EnvSettingsPage } from './pages/EnvSettingsPage';
 import { hasRWXPermissions } from './pages/aiPermissions';
 import { redevenDeckWidgets } from './deck/redevenDeckWidgets';
 import { useRedevenRpc } from './protocol/redeven_v1';
+import { AgentUpdateContext } from './maintenance/AgentUpdateContext';
+import { createAgentMaintenanceController } from './maintenance/createAgentMaintenanceController';
+import { createAgentUpdatePromptCoordinator } from './maintenance/createAgentUpdatePromptCoordinator';
+import { createAgentVersionModel } from './maintenance/createAgentVersionModel';
 import { AuditLogDialog } from './widgets/AuditLogDialog';
+import { AgentUpdateFloatingPrompt } from './widgets/AgentUpdateFloatingPrompt';
 import { AskFlowerComposerWindow } from './widgets/AskFlowerComposerWindow';
 import { buildAskFlowerDraftMarkdown } from './utils/askFlowerContextTemplate';
 import { resolveSuggestedWorkingDirAbsolute } from './utils/askFlowerPath';
@@ -242,7 +247,7 @@ export function EnvAppShell() {
 
   const [envId, setEnvId] = createSignal(getEnvPublicIDFromSession());
 
-  const [env] = createResource<EnvironmentDetail | null, string | null>(
+  const [env, { refetch: refetchEnv }] = createResource<EnvironmentDetail | null, string | null>(
     () => {
       const id = envId() || null;
       if (!id) return null;
@@ -255,6 +260,8 @@ export function EnvAppShell() {
   const [manualError, setManualError] = createSignal<string | null>(null);
   const [auditOpen, setAuditOpen] = createSignal(false);
   const canViewAudit = createMemo(() => Boolean(env()?.permissions?.can_admin));
+  const canAdmin = createMemo(() => Boolean(env()?.permissions?.can_admin || env()?.permissions?.is_owner));
+  const controlplaneStatus = createMemo(() => String(env()?.status ?? '').trim());
   const canUseFlower = createMemo(() => env.state === 'ready' && hasRWXPermissions(env()));
 
   const [pendingAutoOpenAI, setPendingAutoOpenAI] = createSignal(false);
@@ -624,6 +631,45 @@ export function EnvAppShell() {
 
   const connect = async () => runConnect((config) => protocol.connect(config));
   const reconnect = async () => runConnect((config) => protocol.reconnect(config));
+
+  const currentPingSource = createMemo(() => {
+    if (accessGateVisible()) return null;
+    if (protocol.status() !== 'connected') return null;
+    return protocol.client() ?? null;
+  });
+
+  const agentVersionModel = createAgentVersionModel({
+    envId,
+    currentPingSource,
+    rpc,
+  });
+
+  const agentMaintenanceController = createAgentMaintenanceController({
+    envId,
+    canAdmin,
+    controlplaneStatus,
+    protocolStatus: () => protocol.status(),
+    currentVersion: agentVersionModel.currentVersion,
+    connect,
+    notify,
+    rpc,
+    refetchCurrentVersion: agentVersionModel.refetchCurrentVersion,
+    refetchEnvironment: async () => {
+      const next = await refetchEnv();
+      return next ?? null;
+    },
+  });
+
+  const agentUpdatePrompt = createAgentUpdatePromptCoordinator({
+    envId,
+    isLocalMode,
+    accessGateVisible,
+    protocolStatus: () => protocol.status(),
+    canAdmin,
+    envStatus: controlplaneStatus,
+    version: agentVersionModel,
+    maintenance: agentMaintenanceController,
+  });
 
   const submitAccessUnlock = async (event?: SubmitEvent) => {
     event?.preventDefault();
@@ -1299,108 +1345,128 @@ export function EnvAppShell() {
         focusAIThread,
       }}
     >
-      <FloeRegistryRuntime components={components()}>
-        <AIChatProviderBridge>
-        <Shell
-          sidebarMode="auto"
-          sidebarContent={(activeTab) => activeTab === 'ai' && canUseFlower() ? <AIChatSidebar /> : <></>}
-          logo={
-            <Tooltip content="Back to dashboard" placement="bottom" delay={0}>
-              <button
-                type="button"
-                class="flex items-center justify-center w-8 h-8 rounded cursor-pointer hover:bg-muted/60 transition-colors"
-                onClick={() => window.location.assign(`${consoleOrigin()}/dashboard`)}
-                aria-label="Back to dashboard"
-              >
-                <img src={`${import.meta.env.BASE_URL}logo.png`} alt="Redeven" class="w-6 h-6 object-contain" />
-              </button>
-            </Tooltip>
-          }
-          activityItems={activityItems()}
-          activityBottomItems={activityBottomItems()}
-          activityBottomItemsMobileMode="topBar"
-          topBarActions={
-            <div class="flex items-center gap-1">
-              <Tooltip content="Command palette" placement="bottom" delay={0}>
-                <button
-                  type="button"
-                  class="flex items-center justify-center w-8 h-8 rounded cursor-pointer hover:bg-muted/60 transition-colors"
-                  onClick={() => cmd.open()}
-                  aria-label="Command palette"
-                >
-                  <Search class="w-4 h-4" />
-                </button>
-              </Tooltip>
-              <Tooltip content="Toggle theme" placement="bottom" delay={0}>
-                <button
-                  type="button"
-                  class="flex items-center justify-center w-8 h-8 rounded cursor-pointer hover:bg-muted/60 transition-colors"
-                  onClick={() => theme.toggleTheme()}
-                  aria-label="Toggle theme"
-                >
-                  {theme.resolvedTheme() === 'light' ? <Moon class="w-4 h-4" /> : <Sun class="w-4 h-4" />}
-                </button>
-              </Tooltip>
-            </div>
-          }
-          bottomBarItems={
-            <>
-              <div class="flex items-center gap-2 min-w-0">
-                <BottomBarItem class="min-w-0">
-                  <span class="truncate">{envName()}</span>
-                </BottomBarItem>
-                <BottomBarItem class="min-w-0">
-                  <span class="truncate">{envId() || '(missing env id)'}</span>
-                </BottomBarItem>
-              </div>
-              <div class="flex items-center gap-2">
-                <StatusIndicator status={status()} label={statusLabel()} />
-                <Tooltip content={canViewAudit() ? 'Audit log' : 'Admin required'} placement="top" delay={0}>
-                  <BottomBarItem
-                    onClick={canViewAudit() ? () => setAuditOpen(true) : undefined}
-                    class={canViewAudit() ? undefined : 'opacity-60 pointer-events-none'}
+      <AgentUpdateContext.Provider
+        value={{
+          version: agentVersionModel,
+          maintenance: agentMaintenanceController,
+        }}
+      >
+        <FloeRegistryRuntime components={components()}>
+          <AIChatProviderBridge>
+            <Shell
+              sidebarMode="auto"
+              sidebarContent={(activeTab) => activeTab === 'ai' && canUseFlower() ? <AIChatSidebar /> : <></>}
+              logo={
+                <Tooltip content="Back to dashboard" placement="bottom" delay={0}>
+                  <button
+                    type="button"
+                    class="flex items-center justify-center w-8 h-8 rounded cursor-pointer hover:bg-muted/60 transition-colors"
+                    onClick={() => window.location.assign(`${consoleOrigin()}/dashboard`)}
+                    aria-label="Back to dashboard"
                   >
-                    Audit log
-                  </BottomBarItem>
+                    <img src={`${import.meta.env.BASE_URL}logo.png`} alt="Redeven" class="w-6 h-6 object-contain" />
+                  </button>
                 </Tooltip>
-                <BottomBarItem
-                  onClick={reconnectDisabled() ? undefined : () => void reconnect()}
-                  class={reconnectDisabled() ? 'opacity-60 pointer-events-none' : undefined}
-                >
-                  {reconnectLabel()}
-                </BottomBarItem>
+              }
+              activityItems={activityItems()}
+              activityBottomItems={activityBottomItems()}
+              activityBottomItemsMobileMode="topBar"
+              topBarActions={
+                <div class="flex items-center gap-1">
+                  <Tooltip content="Command palette" placement="bottom" delay={0}>
+                    <button
+                      type="button"
+                      class="flex items-center justify-center w-8 h-8 rounded cursor-pointer hover:bg-muted/60 transition-colors"
+                      onClick={() => cmd.open()}
+                      aria-label="Command palette"
+                    >
+                      <Search class="w-4 h-4" />
+                    </button>
+                  </Tooltip>
+                  <Tooltip content="Toggle theme" placement="bottom" delay={0}>
+                    <button
+                      type="button"
+                      class="flex items-center justify-center w-8 h-8 rounded cursor-pointer hover:bg-muted/60 transition-colors"
+                      onClick={() => theme.toggleTheme()}
+                      aria-label="Toggle theme"
+                    >
+                      {theme.resolvedTheme() === 'light' ? <Moon class="w-4 h-4" /> : <Sun class="w-4 h-4" />}
+                    </button>
+                  </Tooltip>
+                </div>
+              }
+              bottomBarItems={
+                <>
+                  <div class="flex items-center gap-2 min-w-0">
+                    <BottomBarItem class="min-w-0">
+                      <span class="truncate">{envName()}</span>
+                    </BottomBarItem>
+                    <BottomBarItem class="min-w-0">
+                      <span class="truncate">{envId() || '(missing env id)'}</span>
+                    </BottomBarItem>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <StatusIndicator status={status()} label={statusLabel()} />
+                    <Tooltip content={canViewAudit() ? 'Audit log' : 'Admin required'} placement="top" delay={0}>
+                      <BottomBarItem
+                        onClick={canViewAudit() ? () => setAuditOpen(true) : undefined}
+                        class={canViewAudit() ? undefined : 'opacity-60 pointer-events-none'}
+                      >
+                        Audit log
+                      </BottomBarItem>
+                    </Tooltip>
+                    <BottomBarItem
+                      onClick={reconnectDisabled() ? undefined : () => void reconnect()}
+                      class={reconnectDisabled() ? 'opacity-60 pointer-events-none' : undefined}
+                    >
+                      {reconnectLabel()}
+                    </BottomBarItem>
+                  </div>
+                </>
+              }
+            >
+              <div class="h-full min-h-0 overflow-hidden flex flex-col">
+                <Show when={connectError()}>
+                  <Panel class="h-auto rounded-none border-0 border-b border-error/40">
+                    <PanelContent class="p-3 text-xs">
+                      <div class="text-error font-medium">Connection failed</div>
+                      <div class="text-muted-foreground break-words">{connectError()}</div>
+                    </PanelContent>
+                  </Panel>
+                </Show>
+
+                <div class="flex-1 min-h-0 overflow-hidden relative">
+                  <Show when={accessGateVisible()} fallback={<ActivityAppsMain activeId={() => layout.sidebarActiveTab()} />}>
+                    {accessGatePanel()}
+                  </Show>
+                </div>
               </div>
-            </>
-          }
-        >
-          <div class="h-full min-h-0 overflow-hidden flex flex-col">
-            <Show when={connectError()}>
-              <Panel class="h-auto rounded-none border-0 border-b border-error/40">
-                <PanelContent class="p-3 text-xs">
-                  <div class="text-error font-medium">Connection failed</div>
-                  <div class="text-muted-foreground break-words">{connectError()}</div>
-                </PanelContent>
-              </Panel>
-            </Show>
 
-            <div class="flex-1 min-h-0 overflow-hidden relative">
-              <Show when={accessGateVisible()} fallback={<ActivityAppsMain activeId={() => layout.sidebarActiveTab()} />}>
-                {accessGatePanel()}
-              </Show>
-            </div>
-          </div>
-
-          <AuditLogDialog open={auditOpen()} envId={envId()} onClose={() => setAuditOpen(false)} />
-          <AskFlowerComposerWindow
-            open={askFlowerComposerOpen()}
-            intent={askFlowerComposerIntent()}
-            anchor={askFlowerComposerAnchor()}
-            onClose={closeAskFlowerComposer}
-            onSend={submitAskFlowerComposer}
-          />
-        </Shell>
-        </AIChatProviderBridge>
-      </FloeRegistryRuntime>
+              <AuditLogDialog open={auditOpen()} envId={envId()} onClose={() => setAuditOpen(false)} />
+              <AgentUpdateFloatingPrompt
+                open={agentUpdatePrompt.visible()}
+                mode={agentUpdatePrompt.mode()}
+                currentVersion={agentUpdatePrompt.currentVersion()}
+                targetVersion={agentUpdatePrompt.targetVersion()}
+                latestMessage={agentUpdatePrompt.latestMessage()}
+                stage={agentUpdatePrompt.stage()}
+                error={agentUpdatePrompt.error()}
+                onClose={agentUpdatePrompt.dismiss}
+                onUpdateNow={agentUpdatePrompt.startRecommendedUpgrade}
+                onRetry={agentUpdatePrompt.retry}
+                onSkip={agentUpdatePrompt.skipCurrentVersion}
+              />
+              <AskFlowerComposerWindow
+                open={askFlowerComposerOpen()}
+                intent={askFlowerComposerIntent()}
+                anchor={askFlowerComposerAnchor()}
+                onClose={closeAskFlowerComposer}
+                onSend={submitAskFlowerComposer}
+              />
+            </Shell>
+          </AIChatProviderBridge>
+        </FloeRegistryRuntime>
+      </AgentUpdateContext.Provider>
     </EnvContext.Provider>
   );
 }
