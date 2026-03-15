@@ -8,15 +8,19 @@ const getLocalRuntimeMock = vi.fn();
 const getLocalAccessStatusMock = vi.fn();
 const unlockLocalAccessMock = vi.fn();
 const getEnvironmentMock = vi.fn();
+const getAgentLatestVersionMock = vi.fn();
 const getGatewayAccessStatusMock = vi.fn();
 const unlockGatewayAccessMock = vi.fn();
 const mintLocalDirectConnectInfoMock = vi.fn();
 const mintEnvProxyEntryTicketMock = vi.fn();
 const mintEnvEntryTicketForAppMock = vi.fn();
 const channelInitEntryMock = vi.fn();
-const getEnvPublicIDFromSessionMock = vi.fn(() => '');
+const getEnvPublicIDFromSessionMock = vi.fn(() => 'env_remote');
 
-const connectMock = vi.fn(async (_config: Record<string, unknown>) => {
+let protocolStatus: 'connected' | 'disconnected' | 'connecting' | 'error' = 'disconnected';
+let protocolClient: unknown = null;
+
+const connectMock = vi.fn(async () => {
   protocolStatus = 'connected';
   protocolClient = { id: 'client-1' };
 });
@@ -28,14 +32,8 @@ const disconnectMock = vi.fn(() => {
   protocolStatus = 'disconnected';
   protocolClient = null;
 });
-const accessStatusMock = vi.fn(async () => ({ passwordRequired: true, unlocked: resumeCalls.length > 0 }));
-const accessResumeMock = vi.fn(async ({ token }: { token: string }) => {
-  resumeCalls.push(token);
-});
-
-let protocolStatus: 'connected' | 'disconnected' | 'connecting' | 'error' = 'disconnected';
-let protocolClient: unknown = null;
-let resumeCalls: string[] = [];
+const accessStatusMock = vi.fn(async () => ({ passwordRequired: false, unlocked: true }));
+const accessResumeMock = vi.fn(async () => undefined);
 
 vi.mock('@floegence/floe-webapp-core', () => ({
   useCommand: () => ({ open: vi.fn(), registerAll: () => () => {} }),
@@ -104,7 +102,9 @@ vi.mock('./protocol/redeven_v1', () => ({
       resume: accessResumeMock,
     },
     sys: {
-      ping: vi.fn(async () => undefined),
+      ping: vi.fn(async () => ({ serverTimeMs: Date.now(), version: 'v1.0.0' })),
+      upgrade: vi.fn(async () => ({ ok: true })),
+      restart: vi.fn(async () => ({ ok: true })),
     },
     ai: {
       subscribeThread: vi.fn(async () => undefined),
@@ -115,6 +115,7 @@ vi.mock('./protocol/redeven_v1', () => ({
 
 vi.mock('./services/controlplaneApi', () => ({
   channelInitEntry: channelInitEntryMock,
+  getAgentLatestVersion: getAgentLatestVersionMock,
   getEnvPublicIDFromSession: getEnvPublicIDFromSessionMock,
   getLocalAccessStatus: getLocalAccessStatusMock,
   getLocalRuntime: getLocalRuntimeMock,
@@ -142,8 +143,8 @@ vi.mock('./pages/EnvSettingsPage', () => ({ EnvSettingsPage: () => <div /> }));
 vi.mock('./pages/aiPermissions', () => ({ hasRWXPermissions: () => true }));
 vi.mock('./deck/redevenDeckWidgets', () => ({ redevenDeckWidgets: [] }));
 vi.mock('./widgets/AuditLogDialog', () => ({ AuditLogDialog: () => <div /> }));
-vi.mock('./widgets/AgentUpdateFloatingPrompt', () => ({ AgentUpdateFloatingPrompt: () => <div /> }));
 vi.mock('./widgets/AskFlowerComposerWindow', () => ({ AskFlowerComposerWindow: () => <div /> }));
+vi.mock('./widgets/AgentUpdateFloatingPrompt', () => ({ AgentUpdateFloatingPrompt: () => <div /> }));
 vi.mock('./utils/askFlowerContextTemplate', () => ({ buildAskFlowerDraftMarkdown: () => '' }));
 vi.mock('./utils/askFlowerPath', () => ({ resolveSuggestedWorkingDirAbsolute: () => '' }));
 vi.mock('./services/gatewayApi', () => ({
@@ -165,6 +166,13 @@ async function flushAsync(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+async function flushUntil(predicate: () => boolean, maxTurns: number = 8): Promise<void> {
+  for (let index = 0; index < maxTurns; index += 1) {
+    await flushAsync();
+    if (predicate()) return;
+  }
+}
+
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
   let reject!: (reason?: unknown) => void;
@@ -184,20 +192,16 @@ beforeEach(() => {
   vi.clearAllMocks();
   protocolStatus = 'disconnected';
   protocolClient = null;
-  resumeCalls = [];
-  getLocalRuntimeMock.mockResolvedValue({ mode: 'local', env_public_id: 'env_local', direct_ws_url: 'ws://localhost/_redeven_direct/ws' });
-  getLocalAccessStatusMock
-    .mockResolvedValueOnce({ password_required: true, unlocked: false })
-    .mockResolvedValueOnce({ password_required: true, unlocked: true });
+
+  getLocalRuntimeMock.mockResolvedValue(null);
+  getLocalAccessStatusMock.mockResolvedValue({ password_required: false, unlocked: true });
   unlockLocalAccessMock.mockResolvedValue({ unlocked: true, resume_token: 'resume123' });
-  getGatewayAccessStatusMock
-    .mockResolvedValueOnce({ password_required: true, unlocked: false })
-    .mockResolvedValueOnce({ password_required: true, unlocked: true });
+  getGatewayAccessStatusMock.mockResolvedValue({ password_required: false, unlocked: true });
   unlockGatewayAccessMock.mockResolvedValue({ unlocked: true, resume_token: 'resume123' });
   getEnvironmentMock.mockResolvedValue({
-    public_id: 'env_local',
-    name: 'Local agent',
-    namespace_public_id: 'ns_local',
+    public_id: 'env_remote',
+    name: 'Remote env',
+    namespace_public_id: 'ns_remote',
     status: 'online',
     lifecycle_status: 'running',
     permissions: { can_read: true, can_write: true, can_execute: true, can_admin: true, is_owner: true },
@@ -209,17 +213,13 @@ beforeEach(() => {
     channel_init_expire_at_unix_s: 1,
     default_suite: 1,
   });
-  channelInitEntryMock.mockReturnValue({ endpointId: 'env_local' });
+  channelInitEntryMock.mockReturnValue({ endpointId: 'env_remote' });
 });
 
-describe('EnvAppShell local access gate', () => {
-
-  it('keeps the app blocked until access resume finishes', async () => {
-    const resumeDeferred = deferred<void>();
-    accessResumeMock.mockImplementationOnce(async ({ token }: { token: string }) => {
-      resumeCalls.push(token);
-      await resumeDeferred.promise;
-    });
+describe('EnvAppShell update prompt orchestration', () => {
+  it('keeps the shell interactive while latest-version polling runs asynchronously', async () => {
+    const latestDeferred = deferred<any>();
+    getAgentLatestVersionMock.mockReturnValue(latestDeferred.promise);
 
     const host = document.createElement('div');
     document.body.appendChild(host);
@@ -228,93 +228,24 @@ describe('EnvAppShell local access gate', () => {
     const dispose = render(() => <EnvAppShell />, host);
 
     try {
-      await flushAsync();
-
-      const input = host.querySelector('input[type="password"]') as HTMLInputElement | null;
-      expect(input).toBeTruthy();
-      input!.value = 'secret';
-      input!.dispatchEvent(new Event('input', { bubbles: true }));
-
-      const form = host.querySelector('form');
-      expect(form).toBeTruthy();
-      form!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-
-      await flushAsync();
-      await flushAsync();
-
-      expect(accessResumeMock).toHaveBeenCalledWith({ token: 'resume123' });
-      expect(host.textContent).toContain('Preparing secure session');
-      expect(host.textContent).not.toContain('activity main');
-
-      resumeDeferred.resolve();
-      await flushAsync();
-      await flushAsync();
+      await flushUntil(() => (host.textContent ?? '').includes('activity main'));
 
       expect(host.textContent).toContain('activity main');
-      expect(host.textContent).not.toContain('Preparing secure session');
+      expect(connectMock).toHaveBeenCalled();
+
+      latestDeferred.resolve({
+        latest_version: 'v1.1.0',
+        recommended_version: 'v1.1.0',
+        cache_ttl_ms: 300_000,
+      });
+      await flushAsync();
     } finally {
       dispose();
     }
   });
 
-  it('waits for password unlock before connecting the local agent', async () => {
-    const host = document.createElement('div');
-    document.body.appendChild(host);
-
-    const { EnvAppShell } = await import('./EnvAppShell');
-    const dispose = render(() => <EnvAppShell />, host);
-
-    try {
-      await flushAsync();
-
-      expect(host.textContent).toContain('Unlock local agent');
-      expect(connectMock).not.toHaveBeenCalled();
-      expect(mintLocalDirectConnectInfoMock).not.toHaveBeenCalled();
-
-      const input = host.querySelector('input[type="password"]') as HTMLInputElement | null;
-      expect(input).toBeTruthy();
-      input!.value = 'secret';
-      input!.dispatchEvent(new Event('input', { bubbles: true }));
-
-      const form = host.querySelector('form');
-      expect(form).toBeTruthy();
-      form!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-
-      await flushAsync();
-      await flushAsync();
-
-      expect(unlockLocalAccessMock).toHaveBeenCalledWith('secret');
-      expect(connectMock).toHaveBeenCalledTimes(1);
-      const localConnectConfig = connectMock.mock.calls[0]?.[0];
-      expect(localConnectConfig).toMatchObject({
-        mode: 'direct',
-        observer: expect.any(Object),
-        connect: { keepaliveIntervalMs: 15_000 },
-        getDirectInfo: expect.any(Function),
-        autoReconnect: {
-          enabled: true,
-          maxAttempts: 1_000_000,
-          initialDelayMs: 500,
-          maxDelayMs: 30_000,
-        },
-      });
-      expect(localConnectConfig).not.toHaveProperty('directInfo');
-      expect(mintLocalDirectConnectInfoMock).not.toHaveBeenCalled();
-      expect(accessResumeMock).toHaveBeenCalledWith({ token: 'resume123' });
-      expect(resumeCalls).toEqual(['resume123']);
-      expect(host.textContent).not.toContain('Unlock local agent');
-      expect(host.textContent).toContain('activity main');
-    } finally {
-      dispose();
-    }
-  });
-});
-
-
-describe('EnvAppShell remote access gate', () => {
-  it('waits for password unlock before connecting the remote agent', async () => {
-    getLocalRuntimeMock.mockResolvedValue(null);
-    getEnvPublicIDFromSessionMock.mockReturnValue('env_demo');
+  it('does not query the latest version before the access gate is cleared', async () => {
+    getGatewayAccessStatusMock.mockResolvedValueOnce({ password_required: true, unlocked: false });
 
     const host = document.createElement('div');
     document.body.appendChild(host);
@@ -324,40 +255,10 @@ describe('EnvAppShell remote access gate', () => {
 
     try {
       await flushAsync();
-
-      expect(host.textContent).toContain('Unlock agent');
-      expect(connectMock).not.toHaveBeenCalled();
-      expect(getEnvironmentMock).not.toHaveBeenCalled();
-
-      const input = host.querySelector('input[type="password"]') as HTMLInputElement | null;
-      expect(input).toBeTruthy();
-      input!.value = 'secret';
-      input!.dispatchEvent(new Event('input', { bubbles: true }));
-
-      const form = host.querySelector('form');
-      expect(form).toBeTruthy();
-      form!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-
-      await flushAsync();
       await flushAsync();
 
-      expect(unlockGatewayAccessMock).toHaveBeenCalledWith('secret');
-      expect(connectMock).toHaveBeenCalledTimes(1);
-      const remoteConnectConfig = connectMock.mock.calls[0]?.[0];
-      expect(remoteConnectConfig).toMatchObject({
-        mode: 'tunnel',
-        observer: expect.any(Object),
-        getGrant: expect.any(Function),
-        autoReconnect: {
-          enabled: true,
-          maxAttempts: 1_000_000,
-          initialDelayMs: 500,
-          maxDelayMs: 30_000,
-        },
-      });
-      expect(accessResumeMock).toHaveBeenCalledWith({ token: 'resume123' });
-      expect(host.textContent).toContain('activity main');
-      expect(host.textContent).not.toContain('Unlock agent');
+      expect(host.querySelector('input[type="password"]')).toBeTruthy();
+      expect(getAgentLatestVersionMock).not.toHaveBeenCalled();
     } finally {
       dispose();
     }
