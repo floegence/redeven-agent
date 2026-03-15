@@ -145,6 +145,19 @@ export type GitCheckoutBranchResponse = {
   headCommit?: string;
 };
 
+export type GitDeleteBranchRequest = {
+  repoRootPath: string;
+  name?: string;
+  fullName?: string;
+  kind?: 'local' | 'remote' | string;
+};
+
+export type GitDeleteBranchResponse = {
+  repoRootPath: string;
+  headRef?: string;
+  headCommit?: string;
+};
+
 export type GitBranchSummary = {
   name?: string;
   fullName?: string;

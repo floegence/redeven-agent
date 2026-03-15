@@ -1,7 +1,7 @@
 import { For, Show, createEffect, createMemo, createSignal } from 'solid-js';
 import { cn, useLayout } from '@floegence/floe-webapp-core';
 import { ChevronRight } from '@floegence/floe-webapp-core/icons';
-import { Button, Dialog } from '@floegence/floe-webapp-core/ui';
+import { Button, ConfirmDialog, Dialog } from '@floegence/floe-webapp-core/ui';
 import { useRedevenRpc, type GitBranchSummary, type GitCommitFileSummary, type GitCommitSummary, type GitGetBranchCompareResponse, type GitListBranchesResponse, type GitListWorkspaceChangesResponse, type GitRepoSummaryResponse, type GitWorkspaceChange, type GitWorkspaceSection } from '../protocol/redeven_v1';
 import {
   allGitBranches,
@@ -63,7 +63,9 @@ export interface GitBranchesPanelProps {
   onSelectCommit?: (hash: string) => void;
   onLoadMore?: () => void;
   checkoutBusy?: boolean;
+  deleteBusy?: boolean;
   onCheckoutBranch?: (branch: GitBranchSummary) => void;
+  onDeleteBranch?: (branch: GitBranchSummary) => void;
 }
 
 function formatAbsoluteTime(ms?: number): string {
@@ -712,6 +714,7 @@ export function GitBranchesPanel(props: GitBranchesPanelProps) {
   const [diffDialogOpen, setDiffDialogOpen] = createSignal(false);
   const [diffDialogItem, setDiffDialogItem] = createSignal<GitWorkspaceChange | null>(null);
   const [compareDialogOpen, setCompareDialogOpen] = createSignal(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = createSignal(false);
 
   let statusReqSeq = 0;
 
@@ -732,6 +735,22 @@ export function GitBranchesPanel(props: GitBranchesPanelProps) {
     || (props.selectedBranch.kind === 'local' && props.selectedBranch.worktreePath)
   );
   const checkoutLabel = () => (props.checkoutBusy ? 'Checking Out...' : 'Checkout');
+  const deleteAvailable = () => Boolean(props.onDeleteBranch && props.selectedBranch?.kind === 'local');
+  const deleteDisabledReason = () => {
+    const branch = props.selectedBranch;
+    if (!branch || branch.kind !== 'local') return '';
+    if (branch.current) return 'Switch to another branch before deleting it.';
+    const worktreePath = String(branch.worktreePath ?? '').trim();
+    if (worktreePath) return `This branch is checked out in a linked worktree: ${worktreePath}`;
+    return '';
+  };
+  const deleteDisabled = () => Boolean(
+    !deleteAvailable()
+    || props.deleteBusy
+    || props.selectedBranch?.current
+    || props.selectedBranch?.worktreePath
+  );
+  const deleteLabel = () => (props.deleteBusy ? 'Deleting...' : 'Delete');
 
   createEffect(() => {
     const branch = props.selectedBranch;
@@ -784,6 +803,11 @@ export function GitBranchesPanel(props: GitBranchesPanelProps) {
     if (!diffDialogOpen()) return;
     if (diffDialogItem()) return;
     setDiffDialogOpen(false);
+  });
+
+  createEffect(() => {
+    props.selectedBranch?.fullName;
+    setDeleteDialogOpen(false);
   });
 
   const renderStatus = () => {
@@ -924,40 +948,60 @@ export function GitBranchesPanel(props: GitBranchesPanelProps) {
                       </div>
                     </GitLabelBlock>
 
-                    <div class="flex shrink-0 flex-wrap items-center justify-end gap-2">
-                      <Show when={props.onCheckoutBranch}>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          class="rounded-md bg-background/80"
-                          disabled={checkoutDisabled()}
-                          onClick={() => props.selectedBranch && props.onCheckoutBranch?.(props.selectedBranch)}
-                        >
-                          {checkoutLabel()}
-                        </Button>
-                      </Show>
+                    <div class="flex shrink-0 flex-col items-end gap-1.5">
+                      <div class="flex flex-wrap items-center justify-end gap-2">
+                        <Show when={props.onCheckoutBranch}>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            class="rounded-md bg-background/80"
+                            disabled={checkoutDisabled()}
+                            onClick={() => props.selectedBranch && props.onCheckoutBranch?.(props.selectedBranch)}
+                          >
+                            {checkoutLabel()}
+                          </Button>
+                        </Show>
 
-                      <div class="inline-flex rounded-md border border-border/65 bg-muted/[0.14] p-0.5" role="tablist" aria-label="Branch detail tabs">
-                        <For each={(['status', 'history'] as GitBranchSubview[])}>
-                          {(view) => {
-                            const active = () => branchSubview() === view;
-                            return (
-                              <button
-                                type="button"
-                                role="tab"
-                                aria-selected={active()}
-                                class={cn(
-                                  'rounded px-3 py-1.5 text-xs font-medium transition-colors duration-150',
-                                  active() ? 'git-browser-selection-chip' : 'text-muted-foreground hover:bg-background/80 hover:text-foreground'
-                                )}
-                                onClick={() => props.onSelectBranchSubview?.(view)}
-                              >
-                                {branchSubviewLabel(view)}
-                              </button>
-                            );
-                          }}
-                        </For>
+                        <Show when={deleteAvailable()}>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            class="rounded-md bg-background/80 text-destructive hover:text-destructive"
+                            disabled={deleteDisabled()}
+                            onClick={() => setDeleteDialogOpen(true)}
+                          >
+                            {deleteLabel()}
+                          </Button>
+                        </Show>
+
+                        <div class="inline-flex rounded-md border border-border/65 bg-muted/[0.14] p-0.5" role="tablist" aria-label="Branch detail tabs">
+                          <For each={(['status', 'history'] as GitBranchSubview[])}>
+                            {(view) => {
+                              const active = () => branchSubview() === view;
+                              return (
+                                <button
+                                  type="button"
+                                  role="tab"
+                                  aria-selected={active()}
+                                  class={cn(
+                                    'rounded px-3 py-1.5 text-xs font-medium transition-colors duration-150',
+                                    active() ? 'git-browser-selection-chip' : 'text-muted-foreground hover:bg-background/80 hover:text-foreground'
+                                  )}
+                                  onClick={() => props.onSelectBranchSubview?.(view)}
+                                >
+                                  {branchSubviewLabel(view)}
+                                </button>
+                              );
+                            }}
+                          </For>
+                        </div>
                       </div>
+
+                      <Show when={deleteDisabledReason()}>
+                        <div class="max-w-[24rem] text-right text-[11px] leading-relaxed text-muted-foreground">
+                          {deleteDisabledReason()}
+                        </div>
+                      </Show>
                     </div>
                   </div>
                 </div>
@@ -1001,6 +1045,31 @@ export function GitBranchesPanel(props: GitBranchesPanelProps) {
         description={diffDialogItem() ? changeSecondaryPath(diffDialogItem()) : 'Review the selected branch status diff.'}
         emptyMessage="Select a branch status file to inspect its diff."
       />
+
+      <ConfirmDialog
+        open={deleteDialogOpen()}
+        onOpenChange={(open) => {
+          if (!open) setDeleteDialogOpen(false);
+        }}
+        title="Delete branch"
+        confirmText="Delete Branch"
+        variant="destructive"
+        loading={props.deleteBusy}
+        onConfirm={() => {
+          const branch = props.selectedBranch;
+          setDeleteDialogOpen(false);
+          if (branch) props.onDeleteBranch?.(branch);
+        }}
+      >
+        <div class="space-y-2 text-sm text-foreground">
+          <div>
+            Delete local branch <span class="font-semibold">"{branchDisplayName(props.selectedBranch)}"</span>?
+          </div>
+          <div class="text-[11px] leading-relaxed text-muted-foreground">
+            Git will refuse the action if the branch is not fully merged.
+          </div>
+        </div>
+      </ConfirmDialog>
     </div>
   );
 }

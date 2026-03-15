@@ -432,6 +432,117 @@ func TestCheckoutBranch_RemoteCreatesTrackingBranch(t *testing.T) {
 	}
 }
 
+func TestDeleteBranch_DeletesMergedLocalBranch(t *testing.T) {
+	t.Parallel()
+	fixture := createTestRepoFixture(t)
+	compare := createComparisonBranchFixture(t, fixture.Root, fixture.BinaryCommit)
+	runGitFixture(t, fixture.Root, "merge", "--ff-only", compare.Branch)
+
+	svc := NewService(fixture.Root)
+	repo, err := svc.resolveExplicitRepo(context.Background(), fixture.Root)
+	if err != nil {
+		t.Fatalf("resolveExplicitRepo: %v", err)
+	}
+
+	resp, err := svc.deleteBranch(context.Background(), repo, compare.Branch, "refs/heads/"+compare.Branch, "local")
+	if err != nil {
+		t.Fatalf("deleteBranch(local): %v", err)
+	}
+	if resp.HeadRef != compare.BaseBranch {
+		t.Fatalf("HeadRef=%q, want %q", resp.HeadRef, compare.BaseBranch)
+	}
+	if gitRefExists(context.Background(), fixture.Root, "refs/heads/"+compare.Branch) {
+		t.Fatalf("expected branch %q to be deleted", compare.Branch)
+	}
+}
+
+func TestDeleteBranch_RejectsCurrentBranch(t *testing.T) {
+	t.Parallel()
+	fixture := createTestRepoFixture(t)
+	svc := NewService(fixture.Root)
+	repo, err := svc.resolveExplicitRepo(context.Background(), fixture.Root)
+	if err != nil {
+		t.Fatalf("resolveExplicitRepo: %v", err)
+	}
+
+	_, err = svc.deleteBranch(context.Background(), repo, repo.headRef, "refs/heads/"+repo.headRef, "local")
+	if err == nil {
+		t.Fatalf("expected deleting current branch to fail")
+	}
+	if !strings.Contains(err.Error(), "cannot delete the current branch") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestDeleteBranch_RejectsUnmergedBranch(t *testing.T) {
+	t.Parallel()
+	fixture := createTestRepoFixture(t)
+	compare := createComparisonBranchFixture(t, fixture.Root, fixture.UpdateCommit)
+	svc := NewService(fixture.Root)
+	repo, err := svc.resolveExplicitRepo(context.Background(), fixture.Root)
+	if err != nil {
+		t.Fatalf("resolveExplicitRepo: %v", err)
+	}
+
+	_, err = svc.deleteBranch(context.Background(), repo, compare.Branch, "refs/heads/"+compare.Branch, "local")
+	if err == nil {
+		t.Fatalf("expected deleting unmerged branch to fail")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "not fully merged") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestDeleteBranch_RejectsLinkedWorktreeBranch(t *testing.T) {
+	t.Parallel()
+	fixture := createTestRepoFixture(t)
+	compare := createComparisonBranchFixture(t, fixture.Root, fixture.UpdateCommit)
+	serviceRoot := filepath.Dir(fixture.Root)
+	worktree := filepath.Join(serviceRoot, "compare-wt")
+	runGitFixture(t, fixture.Root, "worktree", "add", worktree, compare.Branch)
+
+	svc := NewService(serviceRoot)
+	repo, err := svc.resolveExplicitRepo(context.Background(), fixture.Root)
+	if err != nil {
+		t.Fatalf("resolveExplicitRepo: %v", err)
+	}
+
+	_, err = svc.deleteBranch(context.Background(), repo, compare.Branch, "refs/heads/"+compare.Branch, "local")
+	if err == nil {
+		t.Fatalf("expected deleting linked worktree branch to fail")
+	}
+	if !strings.Contains(err.Error(), "checked out in worktree") || !strings.Contains(err.Error(), worktree) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestDeleteBranch_RejectsRemoteBranch(t *testing.T) {
+	t.Parallel()
+	fixture := createTestRepoFixture(t)
+	remote := createRemoteSyncFixture(t, fixture.Root)
+	svc := NewService(fixture.Root)
+	repo, err := svc.resolveExplicitRepo(context.Background(), fixture.Root)
+	if err != nil {
+		t.Fatalf("resolveExplicitRepo: %v", err)
+	}
+	if _, err := svc.fetchRepo(context.Background(), repo); err != nil {
+		t.Fatalf("fetchRepo: %v", err)
+	}
+	repo, err = svc.resolveExplicitRepo(context.Background(), fixture.Root)
+	if err != nil {
+		t.Fatalf("resolveExplicitRepo(after fetch): %v", err)
+	}
+
+	remoteName := "origin/" + remote.RemoteFeatureBranch
+	_, err = svc.deleteBranch(context.Background(), repo, remoteName, "refs/remotes/"+remoteName, "remote")
+	if err == nil {
+		t.Fatalf("expected deleting remote branch to fail")
+	}
+	if !strings.Contains(err.Error(), "remote branches cannot be deleted here") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestListCommits_PaginatesNewestFirst(t *testing.T) {
 	t.Parallel()
 	fixture := createTestRepoFixture(t)

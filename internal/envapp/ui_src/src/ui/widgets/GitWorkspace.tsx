@@ -68,10 +68,12 @@ export interface GitWorkspaceProps {
   pullBusy?: boolean;
   pushBusy?: boolean;
   checkoutBusy?: boolean;
+  deleteBusy?: boolean;
   onFetch?: () => void;
   onPull?: () => void;
   onPush?: () => void;
   onCheckoutBranch?: (branch: GitBranchSummary) => void;
+  onDeleteBranch?: (branch: GitBranchSummary) => void;
   showMobileSidebarButton?: boolean;
   onToggleSidebar?: () => void;
   onRefresh?: () => void;
@@ -158,7 +160,9 @@ export function GitWorkspace(props: GitWorkspaceProps) {
           onSelectCommit={props.onSelectCommit}
           onLoadMore={props.onLoadMore}
           checkoutBusy={props.checkoutBusy}
+          deleteBusy={props.deleteBusy}
           onCheckoutBranch={props.onCheckoutBranch}
+          onDeleteBranch={props.onDeleteBranch}
           commitMessage={props.commitMessage}
           commitBusy={props.commitBusy}
           onCommitMessageChange={props.onCommitMessageChange}

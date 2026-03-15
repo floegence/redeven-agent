@@ -95,6 +95,19 @@ type checkoutBranchResp struct {
 	HeadCommit   string `json:"head_commit,omitempty"`
 }
 
+type deleteBranchReq struct {
+	RepoRootPath string `json:"repo_root_path"`
+	Name         string `json:"name,omitempty"`
+	FullName     string `json:"full_name,omitempty"`
+	Kind         string `json:"kind,omitempty"`
+}
+
+type deleteBranchResp struct {
+	RepoRootPath string `json:"repo_root_path"`
+	HeadRef      string `json:"head_ref,omitempty"`
+	HeadCommit   string `json:"head_commit,omitempty"`
+}
+
 type listBranchesReq struct {
 	RepoRootPath string `json:"repo_root_path"`
 }

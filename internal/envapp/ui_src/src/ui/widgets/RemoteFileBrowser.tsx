@@ -95,7 +95,7 @@ const PAGE_SIDEBAR_WIDTH_STORAGE_KEY = 'redeven:remote-file-browser:page-sidebar
 const PAGE_MODE_STORAGE_KEY_PREFIX = 'redeven:remote-file-browser:page-mode:';
 const GIT_SUBVIEW_STORAGE_KEY_PREFIX = 'redeven:remote-file-browser:git-subview:';
 
-type GitMutationScope = 'stage' | 'unstage' | 'commit' | 'fetch' | 'pull' | 'push' | 'checkout' | '';
+type GitMutationScope = 'stage' | 'unstage' | 'commit' | 'fetch' | 'pull' | 'push' | 'checkout' | 'deleteBranch' | '';
 
 type GitMutationRepoResponse = {
   repoRootPath: string;
@@ -663,9 +663,11 @@ export function RemoteFileBrowser(props: RemoteFileBrowserProps = {}) {
               : scope === 'pull'
                 ? 'Pull failed'
                 : scope === 'push'
-                  ? 'Push failed'
-                  : scope === 'checkout'
-                    ? 'Checkout failed'
+                ? 'Push failed'
+                : scope === 'checkout'
+                  ? 'Checkout failed'
+                  : scope === 'deleteBranch'
+                    ? 'Delete failed'
                     : 'Git request failed';
       notification.error(title, message || 'Request failed.');
       return false;
@@ -912,6 +914,47 @@ export function RemoteFileBrowser(props: RemoteFileBrowserProps = {}) {
       (resp) => {
         void refreshGitStateAfterMutation('checkout', resp);
         notification.success('Checked out', `${resp.headRef || branch.name || 'branch'} is now active.`);
+      },
+    );
+  };
+
+  const refreshGitStateAfterBranchDelete = async (resp: GitMutationRepoResponse) => {
+    applyGitMutationRepoState(resp);
+
+    const repoRootPath = String(resp.repoRootPath ?? '').trim() || resolveActiveRepoRootPath();
+    if (!repoRootPath) return;
+
+    const branchesResp = await loadGitBranches({ silent: true, repoRootPath });
+    if (gitSubview() !== 'branches' || selectedGitBranchSubview() !== 'history') {
+      return;
+    }
+
+    const nextBranches = branchesResp ?? gitBranches();
+    const nextBranch = findGitBranchByKey(nextBranches, selectedGitBranchName()) ?? pickDefaultGitBranch(nextBranches);
+    const nextRef = String(nextBranch?.name ?? '').trim();
+    lastGitCommitContextKey = '';
+    if (!nextRef) {
+      resetGitCommitSidebar();
+      return;
+    }
+    await loadGitCommits(true, nextRef, { silent: true, repoRootPath });
+  };
+
+  const handleDeleteBranch = async (branch: GitBranchSummary) => {
+    const repoRootPath = String(repoInfo()?.repoRootPath ?? '').trim();
+    if (!repoRootPath) return;
+    await runGitMutation(
+      'deleteBranch',
+      branchIdentity(branch),
+      () => rpc.git.deleteBranch({
+        repoRootPath,
+        name: branch.name,
+        fullName: branch.fullName,
+        kind: branch.kind,
+      }),
+      (resp) => {
+        void refreshGitStateAfterBranchDelete(resp);
+        notification.success('Deleted', `${branch.name || 'Branch'} was removed.`);
       },
     );
   };
@@ -2327,10 +2370,12 @@ export function RemoteFileBrowser(props: RemoteFileBrowserProps = {}) {
                       pullBusy={gitMutationScope() === 'pull'}
                       pushBusy={gitMutationScope() === 'push'}
                       checkoutBusy={gitMutationScope() === 'checkout'}
+                      deleteBusy={gitMutationScope() === 'deleteBranch'}
                       onFetch={() => { void handleFetchRepo(); }}
                       onPull={() => { void handlePullRepo(); }}
                       onPush={() => { void handlePushRepo(); }}
                       onCheckoutBranch={(branch) => { void handleCheckoutBranch(branch); }}
+                      onDeleteBranch={(branch) => { void handleDeleteBranch(branch); }}
                       showMobileSidebarButton={layout.isMobile() && Boolean(props.widgetId)}
                       onToggleSidebar={togglePageSidebar}
                       onRefresh={() => { void refreshGitWorkbench(); }}

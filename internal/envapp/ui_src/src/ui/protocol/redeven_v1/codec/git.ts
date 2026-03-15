@@ -1,6 +1,8 @@
 import type {
   GitCheckoutBranchRequest,
   GitCheckoutBranchResponse,
+  GitDeleteBranchRequest,
+  GitDeleteBranchResponse,
   GitBranchSummary,
   GitCommitWorkspaceRequest,
   GitCommitWorkspaceResponse,
@@ -38,6 +40,8 @@ import type {
 import type {
   wire_git_checkout_branch_req,
   wire_git_checkout_branch_resp,
+  wire_git_delete_branch_req,
+  wire_git_delete_branch_resp,
   wire_git_branch_summary,
   wire_git_commit_workspace_req,
   wire_git_commit_workspace_resp,
@@ -398,6 +402,23 @@ export function toWireGitCheckoutBranchRequest(req: GitCheckoutBranchRequest): w
 }
 
 export function fromWireGitCheckoutBranchResponse(resp: wire_git_checkout_branch_resp): GitCheckoutBranchResponse {
+  return {
+    repoRootPath: String(resp?.repo_root_path ?? ''),
+    headRef: typeof resp?.head_ref === 'string' ? resp.head_ref : undefined,
+    headCommit: typeof resp?.head_commit === 'string' ? resp.head_commit : undefined,
+  };
+}
+
+export function toWireGitDeleteBranchRequest(req: GitDeleteBranchRequest): wire_git_delete_branch_req {
+  return {
+    repo_root_path: req.repoRootPath,
+    name: typeof req.name === 'string' ? req.name : undefined,
+    full_name: typeof req.fullName === 'string' ? req.fullName : undefined,
+    kind: typeof req.kind === 'string' ? req.kind : undefined,
+  };
+}
+
+export function fromWireGitDeleteBranchResponse(resp: wire_git_delete_branch_resp): GitDeleteBranchResponse {
   return {
     repoRootPath: String(resp?.repo_root_path ?? ''),
     headRef: typeof resp?.head_ref === 'string' ? resp.head_ref : undefined,

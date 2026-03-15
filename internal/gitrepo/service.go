@@ -30,6 +30,7 @@ const (
 	TypeID_GIT_PULL_REPO         uint32 = 1112
 	TypeID_GIT_PUSH_REPO         uint32 = 1113
 	TypeID_GIT_CHECKOUT_BRANCH   uint32 = 1114
+	TypeID_GIT_DELETE_BRANCH     uint32 = 1115
 
 	defaultCommitPageSize = 50
 	maxCommitPageSize     = 200
@@ -335,6 +336,24 @@ func (s *Service) RegisterWithAccessGate(r *rpc.Router, meta *session.Meta, gate
 			return nil, classifyRepoRPCError(err)
 		}
 		resp, err := s.checkoutBranch(ctx, repo, req.Name, req.FullName, req.Kind)
+		if err != nil {
+			return nil, classifyGitMutationRPCError(err)
+		}
+		return resp, nil
+	})
+
+	accessgate.RegisterTyped[deleteBranchReq, deleteBranchResp](r, TypeID_GIT_DELETE_BRANCH, gate, meta, accessgate.RPCAccessProtected, func(ctx context.Context, req *deleteBranchReq) (*deleteBranchResp, error) {
+		if meta == nil || !meta.CanWrite {
+			return nil, &rpc.Error{Code: 403, Message: "write permission denied"}
+		}
+		if req == nil {
+			req = &deleteBranchReq{}
+		}
+		repo, err := s.resolveExplicitRepo(ctx, req.RepoRootPath)
+		if err != nil {
+			return nil, classifyRepoRPCError(err)
+		}
+		resp, err := s.deleteBranch(ctx, repo, req.Name, req.FullName, req.Kind)
 		if err != nil {
 			return nil, classifyGitMutationRPCError(err)
 		}
@@ -654,6 +673,18 @@ func classifyGitMutationRPCError(err error) *rpc.Error {
 		return &rpc.Error{Code: 400, Message: "git user.name and user.email are required before committing"}
 	case strings.Contains(lower, "nothing to commit"):
 		return &rpc.Error{Code: 400, Message: "no staged changes to commit"}
+	case strings.Contains(lower, "target branch does not exist"):
+		return &rpc.Error{Code: 404, Message: "target branch does not exist"}
+	case strings.Contains(lower, "remote branches cannot be deleted here"):
+		return &rpc.Error{Code: 400, Message: "remote branches cannot be deleted here"}
+	case strings.Contains(lower, "cannot delete the current branch"):
+		return &rpc.Error{Code: 400, Message: "cannot delete the current branch"}
+	case strings.Contains(lower, "checked out in worktree"):
+		return &rpc.Error{Code: 400, Message: message}
+	case strings.Contains(lower, "checked out at"):
+		return &rpc.Error{Code: 400, Message: message}
+	case strings.Contains(lower, "not fully merged"):
+		return &rpc.Error{Code: 400, Message: message}
 	default:
 		return classifyGitRPCError(err)
 	}

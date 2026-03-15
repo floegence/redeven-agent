@@ -50,7 +50,9 @@ export interface GitWorkbenchProps {
   onSelectCommit?: (hash: string) => void;
   onLoadMore?: () => void;
   checkoutBusy?: boolean;
+  deleteBusy?: boolean;
   onCheckoutBranch?: (branch: GitBranchSummary) => void;
+  onDeleteBranch?: (branch: GitBranchSummary) => void;
   commitMessage?: string;
   commitBusy?: boolean;
   onCommitMessageChange?: (value: string) => void;
@@ -229,7 +231,9 @@ export function GitWorkbench(props: GitWorkbenchProps) {
             onSelectCommit={props.onSelectCommit}
             onLoadMore={props.onLoadMore}
             checkoutBusy={props.checkoutBusy}
+            deleteBusy={props.deleteBusy}
             onCheckoutBranch={props.onCheckoutBranch}
+            onDeleteBranch={props.onDeleteBranch}
           />
         </Show>
 

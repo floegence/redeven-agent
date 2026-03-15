@@ -3,7 +3,9 @@ package gitrepo
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path"
+	"path/filepath"
 	"strings"
 
 	"github.com/floegence/redeven-agent/internal/gitutil"
@@ -12,6 +14,10 @@ import (
 type checkoutBranchTarget struct {
 	LocalName  string
 	RemoteName string
+}
+
+type deleteBranchTarget struct {
+	LocalName string
 }
 
 func normalizeGitPathspecs(paths []string) ([]string, error) {
@@ -195,6 +201,44 @@ func (s *Service) checkoutBranch(ctx context.Context, repo repoContext, name str
 	}, nil
 }
 
+func (s *Service) deleteBranch(ctx context.Context, repo repoContext, name string, fullName string, kind string) (*deleteBranchResp, error) {
+	target, err := normalizeDeleteBranchTarget(name, fullName, kind)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(repo.headRef) == target.LocalName {
+		return nil, errors.New("cannot delete the current branch")
+	}
+
+	localRef := "refs/heads/" + target.LocalName
+	if !gitRefExists(ctx, repo.repoRootReal, localRef) {
+		return nil, errors.New("target branch does not exist")
+	}
+
+	if bindings, err := readWorktreeBindings(ctx, repo.repoRootReal); err == nil {
+		bindings = s.filterAccessibleWorktreeBindings(ctx, bindings)
+		if binding, ok := bindings[localRef]; ok {
+			worktreePath := filepath.Clean(strings.TrimSpace(binding.Path))
+			if worktreePath != "" && worktreePath != filepath.Clean(repo.repoRootReal) {
+				return nil, fmt.Errorf("branch is checked out in worktree %s", worktreePath)
+			}
+		}
+	}
+
+	if _, err := gitutil.RunCombinedOutput(ctx, repo.repoRootReal, nil, "branch", "-d", target.LocalName); err != nil {
+		return nil, err
+	}
+	updatedRepo, err := s.loadRepoContext(ctx, repo.repoRootReal)
+	if err != nil {
+		return nil, err
+	}
+	return &deleteBranchResp{
+		RepoRootPath: updatedRepo.repoRootReal,
+		HeadRef:      updatedRepo.headRef,
+		HeadCommit:   updatedRepo.headCommit,
+	}, nil
+}
+
 func gitRefExists(ctx context.Context, repoRoot string, ref string) bool {
 	ref = strings.TrimSpace(ref)
 	if ref == "" {
@@ -243,6 +287,29 @@ func normalizeCheckoutBranchTarget(name string, fullName string, kind string) (c
 		}
 		return checkoutBranchTarget{LocalName: localName}, nil
 	}
+}
+
+func normalizeDeleteBranchTarget(name string, fullName string, kind string) (deleteBranchTarget, error) {
+	fullName = strings.TrimSpace(fullName)
+	switch {
+	case strings.HasPrefix(fullName, "refs/heads/"):
+		localName, err := normalizeGitRef(strings.TrimPrefix(fullName, "refs/heads/"))
+		if err != nil {
+			return deleteBranchTarget{}, err
+		}
+		return deleteBranchTarget{LocalName: localName}, nil
+	case strings.HasPrefix(fullName, "refs/remotes/"):
+		return deleteBranchTarget{}, errors.New("remote branches cannot be deleted here")
+	}
+
+	if strings.TrimSpace(kind) == "remote" {
+		return deleteBranchTarget{}, errors.New("remote branches cannot be deleted here")
+	}
+	localName, err := normalizeGitRef(name)
+	if err != nil {
+		return deleteBranchTarget{}, err
+	}
+	return deleteBranchTarget{LocalName: localName}, nil
 }
 
 func trackingBranchNameFromRemote(remoteName string) string {
