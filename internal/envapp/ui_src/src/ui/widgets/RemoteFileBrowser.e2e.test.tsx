@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { LayoutProvider } from '@floegence/floe-webapp-core';
-import { createEffect, createResource, createSignal, onCleanup, onMount } from 'solid-js';
+import { createEffect, createResource, createSignal, onCleanup, onMount, type JSX } from 'solid-js';
 import { render } from 'solid-js/web';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -122,7 +122,13 @@ vi.mock('../protocol/redeven_v1', async () => {
 });
 
 vi.mock('./FileBrowserWorkspace', () => ({
-  FileBrowserWorkspace: (props: { mode: string; currentPath: string; onModeChange?: (mode: string) => void }) => {
+  FileBrowserWorkspace: (props: {
+    mode: string;
+    currentPath: string;
+    resetKey?: number;
+    toolbarEndActions?: JSX.Element;
+    onModeChange?: (mode: string) => void;
+  }) => {
     const [localCount, setLocalCount] = createSignal(0);
 
     onMount(() => {
@@ -136,6 +142,7 @@ vi.mock('./FileBrowserWorkspace', () => ({
     return (
       <div data-testid="files-workspace">
         <div>files:{props.mode}:{props.currentPath}:{localCount()}</div>
+        <div>{props.toolbarEndActions}</div>
         <button type="button" onClick={() => setLocalCount((count) => count + 1)}>mock-files-bump</button>
         <button type="button" onClick={() => props.onModeChange?.('git')}>mock-to-git</button>
       </div>
@@ -271,6 +278,7 @@ beforeEach(() => {
   widgetStateStore.values = {
     'widget-1': {
       lastPathByEnv: { 'env-1': '/workspace/repo/src' },
+      showHiddenByEnv: { 'env-1': false },
       pageModeByEnv: { 'env-1': 'git' },
       gitSubviewByEnv: { 'env-1': 'history' },
     },
@@ -388,6 +396,33 @@ describe('RemoteFileBrowser persistence', () => {
     }
   });
 
+  it('restores the persisted hidden-file preference on mount', async () => {
+    widgetStateStore.values['widget-1'] = {
+      lastPathByEnv: { 'env-1': '/workspace/repo/src' },
+      showHiddenByEnv: { 'env-1': true },
+      pageModeByEnv: { 'env-1': 'files' },
+      gitSubviewByEnv: { 'env-1': 'changes' },
+    };
+
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+
+    const dispose = render(() => (
+      <LayoutProvider>
+        <EnvContext.Provider value={createEnvContext()}>
+          <RemoteFileBrowser widgetId="widget-1" />
+        </EnvContext.Provider>
+      </LayoutProvider>
+    ), host);
+
+    try {
+      await flush();
+      expect(mockRpc.fs.list).toHaveBeenCalledWith({ path: '/workspace/repo/src', showHidden: true });
+    } finally {
+      dispose();
+    }
+  });
+
   it('does not rewrite widget persistence while restoring state on mount', async () => {
     const host = document.createElement('div');
     document.body.appendChild(host);
@@ -460,6 +495,57 @@ describe('RemoteFileBrowser persistence', () => {
       expect(workspaceLifecycleStore.filesUnmounts).toBe(0);
       expect(filesWorkspace?.parentElement?.style.display).toBe('block');
       expect(filesWorkspace?.textContent).toContain('files:files:/workspace/repo/src:1');
+    } finally {
+      dispose();
+    }
+  });
+
+  it('falls back to the nearest visible ancestor when hidden files are disabled from a hidden path', async () => {
+    widgetStateStore.values['widget-1'] = {
+      lastPathByEnv: { 'env-1': '/workspace/src/.cache/config' },
+      showHiddenByEnv: { 'env-1': true },
+      pageModeByEnv: { 'env-1': 'files' },
+      gitSubviewByEnv: { 'env-1': 'changes' },
+    };
+
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+
+    const dispose = render(() => (
+      <LayoutProvider>
+        <EnvContext.Provider value={createEnvContext()}>
+          <RemoteFileBrowser widgetId="widget-1" />
+        </EnvContext.Provider>
+      </LayoutProvider>
+    ), host);
+
+    try {
+      await flush();
+      mockRpc.fs.list.mockClear();
+      widgetStateStore.updateCalls = [];
+
+      const moreButton = document.body.querySelector('button[aria-label="More file browser options"]') as HTMLButtonElement | null;
+      expect(moreButton).toBeTruthy();
+      moreButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await flush();
+
+      const showHiddenItem = Array.from(document.body.querySelectorAll('button')).find((node) => node.textContent?.includes('Show hidden files')) as HTMLButtonElement | undefined;
+      expect(showHiddenItem).toBeTruthy();
+      showHiddenItem!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await flush();
+
+      expect(mockRpc.fs.list).toHaveBeenLastCalledWith({ path: '/workspace/src', showHidden: false });
+      expect(host.textContent).toContain('files:files:/workspace/src:0');
+      expect(widgetStateStore.updateCalls).toContainEqual({
+        widgetId: 'widget-1',
+        key: 'showHiddenByEnv',
+        value: { 'env-1': false },
+      });
+      expect(widgetStateStore.updateCalls).toContainEqual({
+        widgetId: 'widget-1',
+        key: 'lastPathByEnv',
+        value: { 'env-1': '/workspace/src' },
+      });
     } finally {
       dispose();
     }

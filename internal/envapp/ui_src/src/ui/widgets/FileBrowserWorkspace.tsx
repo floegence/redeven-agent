@@ -1,4 +1,4 @@
-import { Show, createMemo, onCleanup, onMount } from 'solid-js';
+import { Show, createMemo, onCleanup, onMount, type JSX } from 'solid-js';
 import { useFileBrowserDrag } from '@floegence/floe-webapp-core';
 import { Files as FilesIcon, Search, ArrowUp } from '@floegence/floe-webapp-core/icons';
 import {
@@ -47,6 +47,7 @@ export interface FileBrowserWorkspaceProps {
   onPathChange?: (path: string, source: 'user' | 'programmatic') => void;
   onOpen?: (item: FileItem) => void;
   onDragMove?: (items: FileItem[], targetPath: string) => void;
+  toolbarEndActions?: JSX.Element;
   contextMenuCallbacks?: ContextMenuCallbacks;
   overrideContextMenuItems?: ContextMenuItem[];
   class?: string;
@@ -55,6 +56,7 @@ export interface FileBrowserWorkspaceProps {
 interface FileWorkspaceHeaderProps {
   showMobileSidebarButton?: boolean;
   onToggleSidebar?: () => void;
+  toolbarEndActions?: JSX.Element;
 }
 
 function FileWorkspaceHeader(props: FileWorkspaceHeaderProps) {
@@ -100,15 +102,21 @@ function FileWorkspaceHeader(props: FileWorkspaceHeaderProps) {
           />
         </label>
 
-        <SegmentedControl
-          size="sm"
-          value={browser.viewMode()}
-          onChange={(value) => browser.setViewMode(value === 'grid' ? 'grid' : 'list')}
-          options={[
-            { value: 'list', label: 'List' },
-            { value: 'grid', label: 'Grid' },
-          ]}
-        />
+        <div class="ml-auto flex items-center gap-1.5">
+          <SegmentedControl
+            size="sm"
+            value={browser.viewMode()}
+            onChange={(value) => browser.setViewMode(value === 'grid' ? 'grid' : 'list')}
+            options={[
+              { value: 'list', label: 'List' },
+              { value: 'grid', label: 'Grid' },
+            ]}
+          />
+
+          <Show when={props.toolbarEndActions}>
+            <div class="flex items-center gap-1">{props.toolbarEndActions}</div>
+          </Show>
+        </div>
       </div>
 
       <div class="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
@@ -222,6 +230,7 @@ function FileBrowserWorkspaceInner(props: Omit<FileBrowserWorkspaceProps, 'files
           <FileWorkspaceHeader
             showMobileSidebarButton={props.showMobileSidebarButton}
             onToggleSidebar={props.onToggleSidebar}
+            toolbarEndActions={props.toolbarEndActions}
           />
           <div
             ref={(el) => {
@@ -244,8 +253,6 @@ function FileBrowserWorkspaceInner(props: Omit<FileBrowserWorkspaceProps, 'files
 }
 
 export function FileBrowserWorkspace(props: FileBrowserWorkspaceProps) {
-  void props.resetKey;
-
   const displayFiles = createMemo(() => mapFileItemsToDisplayPath(props.files, props.homePath));
   const displayCurrentPath = createMemo(() => toFileBrowserDisplayPath(props.currentPath, props.homePath));
   const displayInitialPath = createMemo(() => toFileBrowserDisplayPath(props.initialPath, props.homePath));
@@ -257,39 +264,42 @@ export function FileBrowserWorkspace(props: FileBrowserWorkspaceProps) {
   };
 
   return (
-    <FileBrowserProvider
-      files={displayFiles()}
-      path={displayCurrentPath()}
-      initialPath={displayInitialPath()}
-      initialViewMode="list"
-      persistenceKey={props.persistenceKey}
-      homeLabel="Home"
-      onNavigate={(path) => props.onNavigate?.(toAbsolutePath(path))}
-      onPathChange={(path, source) => props.onPathChange?.(toAbsolutePath(path), source)}
-      onOpen={(item) => props.onOpen?.(mapFileItemToAbsolutePath(item, props.homePath))}
-    >
-      <FileBrowserWorkspaceInner
-        mode={props.mode}
-        onModeChange={props.onModeChange}
-        gitHistoryDisabled={props.gitHistoryDisabled}
-        width={props.width}
-        open={props.open}
-        resizable={props.resizable}
-        onResize={props.onResize}
-        onClose={props.onClose}
-        showMobileSidebarButton={props.showMobileSidebarButton}
-        onToggleSidebar={props.onToggleSidebar}
-        instanceId={props.instanceId}
-        onDragMove={props.onDragMove
-          ? (items, targetPath) => props.onDragMove?.(
-              items.map((item) => mapFileItemToAbsolutePath(item, props.homePath)),
-              toAbsolutePath(targetPath),
-            )
-          : undefined}
-        contextMenuCallbacks={displayContextMenuCallbacks()}
-        overrideContextMenuItems={displayOverrideContextMenuItems()}
-        class={props.class}
-      />
-    </FileBrowserProvider>
+    <Show when={props.resetKey + 1} keyed>
+      <FileBrowserProvider
+        files={displayFiles()}
+        path={displayCurrentPath()}
+        initialPath={displayInitialPath()}
+        initialViewMode="list"
+        persistenceKey={props.persistenceKey}
+        homeLabel="Home"
+        onNavigate={(path) => props.onNavigate?.(toAbsolutePath(path))}
+        onPathChange={(path, source) => props.onPathChange?.(toAbsolutePath(path), source)}
+        onOpen={(item) => props.onOpen?.(mapFileItemToAbsolutePath(item, props.homePath))}
+      >
+        <FileBrowserWorkspaceInner
+          mode={props.mode}
+          onModeChange={props.onModeChange}
+          gitHistoryDisabled={props.gitHistoryDisabled}
+          width={props.width}
+          open={props.open}
+          resizable={props.resizable}
+          onResize={props.onResize}
+          onClose={props.onClose}
+          showMobileSidebarButton={props.showMobileSidebarButton}
+          onToggleSidebar={props.onToggleSidebar}
+          instanceId={props.instanceId}
+          onDragMove={props.onDragMove
+            ? (items, targetPath) => props.onDragMove?.(
+                items.map((item) => mapFileItemToAbsolutePath(item, props.homePath)),
+                toAbsolutePath(targetPath),
+              )
+            : undefined}
+          toolbarEndActions={props.toolbarEndActions}
+          contextMenuCallbacks={displayContextMenuCallbacks()}
+          overrideContextMenuItems={displayOverrideContextMenuItems()}
+          class={props.class}
+        />
+      </FileBrowserProvider>
+    </Show>
   );
 }
