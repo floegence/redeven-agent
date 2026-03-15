@@ -299,12 +299,15 @@ describe('GitBranchesPanel interactions', () => {
       await Promise.resolve();
 
       expect(deleteCount).toBe(1);
-      expect(document.body.textContent).toContain('Delete Branch Review');
+      expect(document.body.textContent).toContain('Delete Branch');
       expect(document.body.textContent).toContain('/workspace/repo-linked');
-      expect(document.body.textContent).toContain('scratch.txt');
+      expect(document.body.textContent).toContain('Files discarded');
+      expect(document.body.textContent).toContain('1 file');
+      expect(document.body.textContent).toContain('1 untracked');
       expect(document.body.textContent).toContain('Safe delete ready');
       expect(document.body.textContent).toContain('Delete Confirmation');
       expect(document.body.textContent).toContain('Approve permanent file discard');
+      expect(document.body.textContent).not.toContain('scratch.txt');
       expect(host.textContent).toContain('linked worktree');
       expect(host.textContent).toContain('/workspace/repo-linked');
       const footer = Array.from(document.body.querySelectorAll('div')).find((node) => node.className.includes('border-t border-border/60 bg-background/88 px-4 pt-3 pb-4')) as HTMLDivElement | undefined;
@@ -444,6 +447,8 @@ describe('GitBranchesPanel interactions', () => {
       expect(requestedBranch).toBe('feature/demo');
       expect(document.body.textContent).toContain('Delete Branch');
       expect(document.body.textContent).toContain('Delete base main');
+      expect(document.body.textContent).toContain('Files discarded');
+      expect(document.body.textContent).toContain('None');
       expect(document.body.textContent).toContain('Safe delete ready');
       expect(document.body.textContent).toContain('Delete Confirmation');
       const footer = Array.from(document.body.querySelectorAll('div')).find((node) => node.className.includes('border-t border-border/60 bg-background/88 px-4 pt-3 pb-4')) as HTMLDivElement | undefined;

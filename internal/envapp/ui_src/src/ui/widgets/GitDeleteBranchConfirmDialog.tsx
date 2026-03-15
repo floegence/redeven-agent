@@ -50,7 +50,7 @@ export function GitDeleteBranchConfirmDialog(props: GitDeleteBranchConfirmDialog
         if (!open) props.onClose();
       }}
       title="Delete Branch"
-      description="Confirm the local branch deletion after reviewing the safe delete status."
+      description="This action removes only the local branch reference."
       footer={(
         <div class="border-t border-border/60 bg-background/88 px-4 pt-3 pb-4 backdrop-blur supports-[backdrop-filter]:bg-background/78">
           <div class="flex w-full flex-col-reverse gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
@@ -106,14 +106,14 @@ export function GitDeleteBranchConfirmDialog(props: GitDeleteBranchConfirmDialog
             <Show when={props.branch && preview()} fallback={<GitStatePane message="Choose a branch to review its deletion plan." class="m-4" surface />}>
               <div class="flex flex-col gap-3 px-4 pt-2 pb-4">
                 <GitSection
-                  label="Delete Plan"
-                  tone={preview()?.safeDeleteAllowed ? 'neutral' : 'warning'}
-                  description="This flow removes only the local branch reference. Your current working tree stays intact."
-                  aside={<GitMetaPill tone={preview()?.safeDeleteAllowed ? 'success' : 'warning'}>{preview()?.safeDeleteAllowed ? 'Safe delete ready' : 'Review blocked'}</GitMetaPill>}
+                  label="Delete Impact"
+                  tone="warning"
+                  description="Only the branch reference is affected."
+                  aside={<GitMetaPill tone={canConfirm() ? 'success' : 'warning'}>{canConfirm() ? 'Ready to delete' : 'Blocked'}</GitMetaPill>}
                   class="border-border/70 shadow-sm shadow-black/5 ring-1 ring-black/[0.02]"
                   bodyClass="space-y-3"
                 >
-                  <GitLabelBlock label="Branch" tone={preview()?.safeDeleteAllowed ? 'neutral' : 'warning'}>
+                  <GitLabelBlock label="Branch" tone="warning">
                     <div class="flex flex-wrap items-center gap-2.5">
                       <GitPrimaryTitle>{branchName()}</GitPrimaryTitle>
                       <Show when={preview()?.safeDeleteBaseRef}>
@@ -123,34 +123,20 @@ export function GitDeleteBranchConfirmDialog(props: GitDeleteBranchConfirmDialog
                       </Show>
                     </div>
                     <div class="text-[11px] leading-relaxed text-muted-foreground">
-                      Git will refuse the delete if this branch is not fully merged into the selected base reference.
+                      Deleting this branch does not remove any worktree or local files.
                     </div>
                   </GitLabelBlock>
 
                   <GitStatStrip
-                    columnsClass="grid-cols-1 gap-1 sm:grid-cols-3"
+                    columnsClass="grid-cols-1 gap-1 sm:grid-cols-2"
                     items={[
                       { label: 'Branch', value: branchName() },
                       { label: 'Scope', value: 'Local branch only' },
+                      { label: 'Files discarded', value: 'None' },
                       { label: 'Delete status', value: deleteStatusValue() },
                     ]}
                   />
-                </GitSection>
 
-                <GitSection
-                  label="Delete Safety"
-                  tone={preview()?.safeDeleteAllowed && !blockingReason() ? 'success' : 'warning'}
-                  description={preview()?.safeDeleteAllowed && !blockingReason()
-                    ? 'The branch passed Git safe delete checks and can be removed.'
-                    : 'Git safe delete has not cleared yet, so the action remains unavailable.'}
-                  aside={(
-                    <div class="inline-flex items-center gap-1.5">
-                      <Shield class="h-3.5 w-3.5 shrink-0" />
-                      <span>{preview()?.safeDeleteAllowed && !blockingReason() ? 'Ready' : 'Blocked'}</span>
-                    </div>
-                  )}
-                  bodyClass="space-y-3"
-                >
                   <Show
                     when={preview()?.safeDeleteAllowed}
                     fallback={<GitSubtleNote class="border-warning/25 bg-warning/10 text-warning-foreground">{preview()?.safeDeleteReason || 'Safe delete is blocked.'}</GitSubtleNote>}
@@ -178,24 +164,15 @@ export function GitDeleteBranchConfirmDialog(props: GitDeleteBranchConfirmDialog
                 <GitSection
                   label="Delete Confirmation"
                   tone="warning"
-                  description="This flow removes only the local branch reference."
-                  aside={<GitMetaPill tone={canConfirm() ? 'warning' : 'neutral'}>Local branch only</GitMetaPill>}
+                  description="Confirm the local branch deletion."
+                  aside={<GitMetaPill tone="warning">Local branch only</GitMetaPill>}
                   bodyClass="space-y-3"
                 >
-                  <GitStatStrip
-                    columnsClass="grid-cols-1 gap-1 sm:grid-cols-3"
-                    items={[
-                      { label: 'Branch action', value: 'Delete local branch' },
-                      { label: 'Worktree action', value: 'No linked worktree cleanup' },
-                      { label: 'File impact', value: 'Keep current files' },
-                    ]}
-                  />
-
                   <GitSubtleNote class="border-border/55 bg-background/72 text-foreground">
                     <div class="flex items-start gap-2">
                       <Trash class="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
                       <span>
-                        Confirming this dialog deletes the local branch reference only. No linked worktree cleanup or file discard is involved.
+                        Confirming this dialog deletes only the local branch reference. Your current working tree stays intact.
                       </span>
                     </div>
                   </GitSubtleNote>
