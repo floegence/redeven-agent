@@ -1,10 +1,10 @@
-import { For, Show, createEffect, createSignal, onCleanup, untrack } from 'solid-js';
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, untrack } from 'solid-js';
 import { useDeck, useLayout, useNotification, useResolvedFloeConfig } from '@floegence/floe-webapp-core';
 import { KeepAliveStack } from '@floegence/floe-webapp-core/layout';
-import { ArrowRightLeft, Copy, Folder, Pencil, Sparkles, Trash } from '@floegence/floe-webapp-core/icons';
+import { ArrowRightLeft, Copy, Folder, MoreHorizontal, Pencil, Sparkles, Trash } from '@floegence/floe-webapp-core/icons';
 import { type ContextMenuCallbacks, type ContextMenuItem, type FileItem } from '@floegence/floe-webapp-core/file-browser';
 import { LoadingOverlay } from '@floegence/floe-webapp-core/loading';
-import { Button, ConfirmDialog, DirectoryPicker, FileSavePicker, FloatingWindow } from '@floegence/floe-webapp-core/ui';
+import { Button, ConfirmDialog, DirectoryPicker, Dropdown, FileSavePicker, FloatingWindow, type DropdownItem } from '@floegence/floe-webapp-core/ui';
 import type { Client } from '@floegence/flowersec-core';
 import type { JsonFrameChannel } from '@floegence/flowersec-core/streamio';
 import { RpcError, useProtocol } from '@floegence/floe-webapp-protocol';
@@ -94,6 +94,8 @@ const PAGE_SIDEBAR_MAX_WIDTH = 520;
 const PAGE_SIDEBAR_WIDTH_STORAGE_KEY = 'redeven:remote-file-browser:page-sidebar-width';
 const PAGE_MODE_STORAGE_KEY_PREFIX = 'redeven:remote-file-browser:page-mode:';
 const GIT_SUBVIEW_STORAGE_KEY_PREFIX = 'redeven:remote-file-browser:git-subview:';
+const SHOW_HIDDEN_STORAGE_KEY_PREFIX = 'redeven:remote-file-browser:show-hidden:';
+const SHOW_HIDDEN_DROPDOWN_ITEM_ID = 'show-hidden-files';
 
 type GitMutationScope = 'stage' | 'unstage' | 'commit' | 'fetch' | 'pull' | 'push' | 'checkout' | 'deleteBranch' | '';
 
@@ -126,6 +128,30 @@ function normalizeGitSubview(value: unknown): GitWorkbenchSubview {
     default:
       return 'changes';
   }
+}
+
+function normalizeShowHidden(value: unknown): boolean {
+  return value === true;
+}
+
+function visibleBrowserPath(path: string, rootPath: string): string {
+  const normalizedPath = normalizePath(path);
+  const normalizedRoot = normalizePath(rootPath);
+  if (normalizedPath === normalizedRoot) return normalizedRoot;
+  if (normalizedRoot !== '/' && !normalizedPath.startsWith(`${normalizedRoot}/`)) return normalizedRoot;
+
+  const relativePath = normalizedRoot === '/'
+    ? normalizedPath
+    : normalizedPath.slice(normalizedRoot.length);
+  const parts = relativePath.split('/').filter(Boolean);
+
+  let cursor = normalizedRoot;
+  for (const part of parts) {
+    if (part.startsWith('.')) return cursor;
+    cursor = cursor === '/' ? `/${part}` : `${cursor}/${part}`;
+  }
+
+  return normalizedPath;
 }
 
 export interface RemoteFileBrowserProps {
@@ -222,6 +248,7 @@ export function RemoteFileBrowser(props: RemoteFileBrowserProps = {}) {
   const [lastLoadedBrowserPath, setLastLoadedBrowserPath] = createSignal('');
 
   const [agentHomePathAbs, setAgentHomePathAbs] = createSignal('');
+  const [showHidden, setShowHidden] = createSignal(false);
   const [pageMode, setPageMode] = createSignal<BrowserPageMode>('files');
   const [repoInfo, setRepoInfo] = createSignal<GitResolveRepoResponse | null>(null);
   const [repoInfoLoading, setRepoInfoLoading] = createSignal(false);
@@ -313,6 +340,18 @@ export function RemoteFileBrowser(props: RemoteFileBrowserProps = {}) {
     cleanupPreview();
   });
 
+  const resetFileBrowser = () => {
+    setFileBrowserResetSeq((value) => value + 1);
+  };
+
+  const clearDirectoryState = () => {
+    dirReqSeq += 1;
+    cache = new Map();
+    setFiles([]);
+    setLoading(false);
+    setLastLoadedBrowserPath('');
+  };
+
   const readPersistedLastPath = (id: string): string => {
     const eid = id.trim();
     if (!eid) return '';
@@ -385,6 +424,41 @@ export function RemoteFileBrowser(props: RemoteFileBrowserProps = {}) {
     }
 
     floe.persist.debouncedSave(`files:lastTargetPath:${eid}`, next);
+  };
+
+  const readPersistedShowHidden = (id: string): boolean => {
+    const eid = id.trim();
+    if (!eid) return false;
+
+    if (props.widgetId) {
+      const state = deck.getWidgetState(props.widgetId);
+      const byEnv = (state as any).showHiddenByEnv;
+      if (byEnv && typeof byEnv === 'object' && !Array.isArray(byEnv)) {
+        return normalizeShowHidden((byEnv as any)[eid]);
+      }
+      return false;
+    }
+
+    return normalizeShowHidden(floe.persist.load<boolean>(`${SHOW_HIDDEN_STORAGE_KEY_PREFIX}${eid}`, false));
+  };
+
+  const writePersistedShowHidden = (id: string, value: boolean) => {
+    const eid = id.trim();
+    if (!eid) return;
+    const next = normalizeShowHidden(value);
+
+    if (props.widgetId) {
+      const state = deck.getWidgetState(props.widgetId);
+      const prevRaw = (state as any).showHiddenByEnv;
+      const prev =
+        prevRaw && typeof prevRaw === 'object' && !Array.isArray(prevRaw)
+          ? (prevRaw as Record<string, boolean>)
+          : {};
+      deck.updateWidgetState(props.widgetId, 'showHiddenByEnv', { ...prev, [eid]: next });
+      return;
+    }
+
+    floe.persist.debouncedSave(`${SHOW_HIDDEN_STORAGE_KEY_PREFIX}${eid}`, next);
   };
 
 
@@ -1156,6 +1230,72 @@ export function RemoteFileBrowser(props: RemoteFileBrowserProps = {}) {
     }
   };
 
+  const fileBrowserMoreItems = createMemo<DropdownItem[]>(() => [
+    {
+      id: SHOW_HIDDEN_DROPDOWN_ITEM_ID,
+      label: 'Show hidden files',
+    },
+  ]);
+
+  const handleFileBrowserMoreSelect = (itemId: string) => {
+    if (itemId !== SHOW_HIDDEN_DROPDOWN_ITEM_ID) return;
+
+    const id = envId();
+    if (!id) return;
+
+    void (async () => {
+      let rootPath = '';
+      try {
+        rootPath = normalizePath(await resolveFsRootAbs());
+      } catch (error) {
+        notifyPathLoadFailure({
+          status: 'transport_error',
+          message: error instanceof Error ? error.message : 'Failed to resolve home directory.',
+        });
+        return;
+      }
+
+      const nextShowHidden = !showHidden();
+      const currentPath = normalizeAbsolutePath(currentBrowserPath()) || rootPath;
+      const nextPath = nextShowHidden
+        ? normalizePath(currentPath)
+        : visibleBrowserPath(currentPath, rootPath);
+
+      writePersistedShowHidden(id, nextShowHidden);
+      writePersistedLastPath(id, nextPath);
+      setShowHidden(nextShowHidden);
+      setCurrentBrowserPath(nextPath);
+      clearDirectoryState();
+      resetFileBrowser();
+
+      await loadPathOrFallback(nextPath, {
+        fallbackPath: rootPath,
+        persistEnvId: id,
+        resetOnFallback: false,
+      });
+    })();
+  };
+
+  const fileBrowserToolbarEndActions = () => (
+    <Dropdown
+      trigger={(
+        <Button
+          size="xs"
+          variant="outline"
+          class="cursor-pointer px-2"
+          aria-label="More file browser options"
+          title="More options"
+        >
+          <MoreHorizontal class="size-3.5" />
+        </Button>
+      )}
+      items={fileBrowserMoreItems()}
+      value={showHidden() ? SHOW_HIDDEN_DROPDOWN_ITEM_ID : undefined}
+      onSelect={handleFileBrowserMoreSelect}
+      align="end"
+    />
+  );
+
   createEffect(() => {
     floe.persist.debouncedSave(PAGE_SIDEBAR_WIDTH_STORAGE_KEY, browserSidebarWidth());
   });
@@ -1164,17 +1304,15 @@ export function RemoteFileBrowser(props: RemoteFileBrowserProps = {}) {
     const id = envId();
     const restored = untrack(() => ({
       nextPath: id ? readPersistedLastPath(id) : '',
+      nextShowHidden: id ? readPersistedShowHidden(id) : false,
       nextMode: id ? readPersistedPageMode(id) : 'files',
       nextSubview: id ? readPersistedGitSubview(id) : 'changes',
     }));
 
-    dirReqSeq += 1;
-    cache = new Map();
-    setFiles([]);
-    setLoading(false);
+    clearDirectoryState();
     setCurrentBrowserPath(restored.nextPath);
-    setLastLoadedBrowserPath('');
     setAgentHomePathAbs('');
+    setShowHidden(restored.nextShowHidden);
     setGitSubview(restored.nextSubview);
     setPageMode(restored.nextMode);
     closePageSidebar();
@@ -1185,7 +1323,7 @@ export function RemoteFileBrowser(props: RemoteFileBrowserProps = {}) {
     resetGitCommitSidebar();
     resetGitWorkbenchData();
     setDragMoveLoading(false);
-    setFileBrowserResetSeq(0);
+    resetFileBrowser();
 
     repoReqSeq += 1;
     previewReqSeq += 1;
@@ -1209,7 +1347,7 @@ export function RemoteFileBrowser(props: RemoteFileBrowserProps = {}) {
     }
 
     try {
-      const resp = await rpc.fs.list({ path: p, showHidden: false });
+      const resp = await rpc.fs.list({ path: p, showHidden: showHidden() });
       if (seq !== dirReqSeq) return { status: 'canceled' };
 
       const entries = resp?.entries ?? [];
@@ -1273,6 +1411,38 @@ export function RemoteFileBrowser(props: RemoteFileBrowserProps = {}) {
   const notifyPathLoadFailure = (result: PathLoadResult) => {
     if (result.status === 'canceled' || result.status === 'invalid_path') return;
     notification.error('Failed to load directory', result.message ?? 'Unable to load directory.');
+  };
+
+  const loadPathOrFallback = async (
+    requestedPath: string,
+    options: {
+      fallbackPath?: string;
+      persistEnvId?: string;
+      resetOnFallback?: boolean;
+    } = {},
+  ): Promise<void> => {
+    const normalizedRequestedPath = normalizePath(requestedPath);
+    const normalizedFallbackPath = options.fallbackPath
+      ? normalizePath(options.fallbackPath)
+      : '';
+    const result = await loadPathChain(normalizedRequestedPath);
+    if (result.status === 'ok' || result.status === 'canceled') return;
+
+    if (result.status === 'invalid_path' && normalizedFallbackPath && normalizedFallbackPath !== normalizedRequestedPath) {
+      if (options.persistEnvId) {
+        writePersistedLastPath(options.persistEnvId, normalizedFallbackPath);
+      }
+      setCurrentBrowserPath(normalizedFallbackPath);
+      if (options.resetOnFallback !== false) {
+        resetFileBrowser();
+      }
+
+      const fallbackResult = await loadPathChain(normalizedFallbackPath);
+      if (fallbackResult.status !== 'ok') notifyPathLoadFailure(fallbackResult);
+      return;
+    }
+
+    notifyPathLoadFailure(result);
   };
 
   const openPreview = async (item: FileItem) => {
@@ -1540,7 +1710,7 @@ export function RemoteFileBrowser(props: RemoteFileBrowserProps = {}) {
 
     const client = protocol.client();
     if (!client) {
-      setFileBrowserResetSeq((v) => v + 1);
+      resetFileBrowser();
       notification.error('Move failed', 'Connection is not ready.');
       return;
     }
@@ -1576,7 +1746,7 @@ export function RemoteFileBrowser(props: RemoteFileBrowserProps = {}) {
       if (failures.length > 0) {
         // FileBrowser drag uses optimistic UI updates; when the RPC fails we need to remount
         // the FileBrowser to clear those optimistic ops and show the real state again.
-        setFileBrowserResetSeq((v) => v + 1);
+        resetFileBrowser();
 
         const prefix = okCount > 0
           ? `${okCount} moved, ${failures.length} failed.`
@@ -1803,20 +1973,20 @@ export function RemoteFileBrowser(props: RemoteFileBrowserProps = {}) {
 
       const rememberedPath = normalizeAbsolutePath(currentBrowserPath());
       const persistedPath = normalizeAbsolutePath(untrack(() => readPersistedLastPath(id)));
-      const startPath = rememberedPath || persistedPath || rootPath;
+      const showHiddenEnabled = untrack(() => showHidden());
+      const requestedStartPath = rememberedPath || persistedPath || rootPath;
+      const startPath = showHiddenEnabled
+        ? normalizePath(requestedStartPath)
+        : visibleBrowserPath(requestedStartPath, rootPath);
+      if (startPath !== requestedStartPath) {
+        writePersistedLastPath(id, startPath);
+      }
       setCurrentBrowserPath(startPath);
 
-      const result = await loadPathChain(startPath);
-      if (result.status === 'ok' || result.status === 'canceled') return;
-      if (result.status === 'invalid_path' && startPath !== rootPath) {
-        writePersistedLastPath(id, rootPath);
-        setCurrentBrowserPath(rootPath);
-        setFileBrowserResetSeq((n) => n + 1);
-        const rootResult = await loadPathChain(rootPath);
-        if (rootResult.status !== 'ok') notifyPathLoadFailure(rootResult);
-        return;
-      }
-      notifyPathLoadFailure(result);
+      await loadPathOrFallback(startPath, {
+        fallbackPath: rootPath,
+        persistEnvId: id,
+      });
     })();
   });
 
@@ -2280,24 +2450,15 @@ export function RemoteFileBrowser(props: RemoteFileBrowserProps = {}) {
                       onClose={closePageSidebar}
                       showMobileSidebarButton={layout.isMobile() && Boolean(props.widgetId)}
                       onToggleSidebar={togglePageSidebar}
+                      toolbarEndActions={fileBrowserToolbarEndActions()}
                       onNavigate={(path) => {
                         const targetPath = normalizePath(path);
                         writePersistedLastPath(id, targetPath);
                         setCurrentBrowserPath(targetPath);
-                        void (async () => {
-                          const result = await loadPathChain(targetPath);
-                          if (result.status === 'ok' || result.status === 'canceled') return;
-                          if (result.status === 'invalid_path') {
-                            const fallbackPath = normalizePath(lastLoadedBrowserPath());
-                            writePersistedLastPath(id, fallbackPath);
-                            setCurrentBrowserPath(fallbackPath);
-                            setFileBrowserResetSeq((n) => n + 1);
-                            const fallbackResult = await loadPathChain(fallbackPath);
-                            if (fallbackResult.status !== 'ok') notifyPathLoadFailure(fallbackResult);
-                            return;
-                          }
-                          notifyPathLoadFailure(result);
-                        })();
+                        void loadPathOrFallback(targetPath, {
+                          fallbackPath: lastLoadedBrowserPath() || agentHomePathAbs(),
+                          persistEnvId: id,
+                        });
                       }}
                       onPathChange={(_path, source) => {
                         if (source === 'user' && layout.isMobile()) {

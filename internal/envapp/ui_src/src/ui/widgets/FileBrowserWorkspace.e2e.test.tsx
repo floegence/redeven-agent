@@ -2,6 +2,7 @@
 
 import { LayoutProvider } from '@floegence/floe-webapp-core';
 import type { FileItem } from '@floegence/floe-webapp-core/file-browser';
+import { createSignal } from 'solid-js';
 import { render } from 'solid-js/web';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -199,6 +200,38 @@ describe('FileBrowserWorkspace interactions', () => {
     }
   });
 
+  it('renders toolbar end actions in the content header', () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+
+    const dispose = render(() => (
+      <LayoutProvider>
+        <div class="h-[560px]">
+          <FileBrowserWorkspace
+            mode="files"
+            onModeChange={() => {}}
+            files={files}
+            currentPath="/"
+            initialPath="/"
+            persistenceKey="test-files-workspace-toolbar-actions"
+            instanceId="test-files-workspace-toolbar-actions"
+            resetKey={0}
+            width={260}
+            open
+            toolbarEndActions={<button type="button">More</button>}
+          />
+        </div>
+      </LayoutProvider>
+    ), host);
+
+    try {
+      const moreButton = Array.from(host.querySelectorAll('button')).find((node) => node.textContent === 'More');
+      expect(moreButton).toBeTruthy();
+    } finally {
+      dispose();
+    }
+  });
+
   it('treats homePath as the navigation root and maps navigate-up back to the absolute home path', async () => {
     let navigatedPath = '';
     const host = document.createElement('div');
@@ -277,6 +310,56 @@ describe('FileBrowserWorkspace interactions', () => {
       expect(scrollRegion?.className).toContain('[touch-action:pan-y_pinch-zoom]');
       expect(scrollRegion?.textContent).toContain('folder-0');
       expect(scrollRegion?.textContent).toContain('folder-23');
+    } finally {
+      dispose();
+    }
+  });
+
+  it('remounts the file browser provider when resetKey changes', async () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    let setResetKey!: (value: number) => void;
+
+    const dispose = render(() => {
+      const [resetKey, updateResetKey] = createSignal(0);
+      setResetKey = updateResetKey;
+
+      return (
+        <LayoutProvider>
+          <div class="h-[560px]">
+            <FileBrowserWorkspace
+              mode="files"
+              onModeChange={() => {}}
+              files={files}
+              currentPath="/"
+              initialPath="/"
+              persistenceKey="test-files-workspace-reset-key"
+              instanceId="test-files-workspace-reset-key"
+              resetKey={resetKey()}
+              width={260}
+              open
+            />
+          </div>
+        </LayoutProvider>
+      );
+    }, host);
+
+    try {
+      const filterInput = host.querySelector('input[aria-label="Filter files"]') as HTMLInputElement | null;
+      expect(filterInput).toBeTruthy();
+      filterInput!.value = 'README';
+      filterInput!.dispatchEvent(new Event('input', { bubbles: true }));
+      await Promise.resolve();
+      expect(filterInput!.value).toBe('README');
+
+      setResetKey(1);
+      await Promise.resolve();
+      await Promise.resolve();
+
+      const nextFilterInput = host.querySelector('input[aria-label="Filter files"]') as HTMLInputElement | null;
+      expect(nextFilterInput).toBeTruthy();
+      expect(nextFilterInput).not.toBe(filterInput);
+      expect(nextFilterInput!.value).toBe('');
     } finally {
       dispose();
     }
