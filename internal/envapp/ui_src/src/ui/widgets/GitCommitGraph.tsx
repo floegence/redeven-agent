@@ -21,7 +21,12 @@ const LANE_WIDTH = 16;
 const GRAPH_PADDING_X = 10;
 const NODE_RADIUS = 4.25;
 const ROW_HEIGHT = 34;
-const MID_Y = ROW_HEIGHT / 2;
+const SUBJECT_ROW_HEIGHT = 14;
+const META_ROW_HEIGHT = 10;
+const ROW_TOP_PADDING = 3;
+const ROW_GAP = 1;
+const ROW_BOTTOM_PADDING = ROW_HEIGHT - ROW_TOP_PADDING - SUBJECT_ROW_HEIGHT - ROW_GAP - META_ROW_HEIGHT;
+const NODE_CENTER_Y = ROW_TOP_PADDING + SUBJECT_ROW_HEIGHT / 2;
 
 const LANE_STROKE_COLORS = [
   'color-mix(in srgb, var(--primary) 78%, transparent)',
@@ -53,8 +58,8 @@ function rowTop(index: number): number {
   return index * ROW_HEIGHT;
 }
 
-function rowMid(index: number): number {
-  return rowTop(index) + MID_Y;
+function rowNodeCenter(index: number): number {
+  return rowTop(index) + NODE_CENTER_Y;
 }
 
 function rowBottom(index: number): number {
@@ -199,12 +204,23 @@ export function GitCommitGraph(props: GitCommitGraphProps) {
   const columns = createMemo(() => rows()[0]?.columns ?? 1);
   const width = createMemo(() => graphWidth(columns()));
   const height = createMemo(() => Math.max(rows().length * ROW_HEIGHT, ROW_HEIGHT));
+  const rowSpacerStyle = {
+    height: `${ROW_HEIGHT}px`,
+  };
+  const rowContentStyle = {
+    height: `${ROW_HEIGHT}px`,
+    'padding-top': `${ROW_TOP_PADDING}px`,
+    'padding-bottom': `${ROW_BOTTOM_PADDING}px`,
+    'grid-template-rows': `${SUBJECT_ROW_HEIGHT}px ${META_ROW_HEIGHT}px`,
+    gap: `${ROW_GAP}px`,
+  };
 
   return (
     <div class={cn('overflow-hidden rounded-md border border-border/55 bg-card', props.class)}>
       <div class="relative">
         <svg
-          class="pointer-events-none absolute inset-y-0 left-0 z-10 border-r border-border/40 bg-muted/[0.14]"
+          class="pointer-events-none absolute top-0 left-0 z-10 border-r border-border/40 bg-muted/[0.14]"
+          style={{ height: `${height()}px` }}
           width={width()}
           height={height()}
           viewBox={`0 0 ${width()} ${height()}`}
@@ -245,7 +261,7 @@ export function GitCommitGraph(props: GitCommitGraphProps) {
                     }
                     return (
                       <path
-                        d={`M ${laneX(beforeIndex())} ${rowLineTop(rowIndex())} L ${laneX(beforeIndex())} ${rowMid(rowIndex())}`}
+                        d={`M ${laneX(beforeIndex())} ${rowLineTop(rowIndex())} L ${laneX(beforeIndex())} ${rowNodeCenter(rowIndex())}`}
                         fill="none"
                         stroke={laneStrokeColor(laneState.colorIndex)}
                         stroke-width="1.65"
@@ -264,7 +280,7 @@ export function GitCommitGraph(props: GitCommitGraphProps) {
                     if (row.parents.includes(laneState.hash)) return null;
                     return (
                       <path
-                        d={`M ${laneX(afterIndex())} ${rowMid(rowIndex())} L ${laneX(afterIndex())} ${rowLineBottom(rowIndex(), rowCount())}`}
+                        d={`M ${laneX(afterIndex())} ${rowNodeCenter(rowIndex())} L ${laneX(afterIndex())} ${rowLineBottom(rowIndex(), rowCount())}`}
                         fill="none"
                         stroke={laneStrokeColor(laneState.colorIndex)}
                         stroke-width="1.65"
@@ -276,7 +292,7 @@ export function GitCommitGraph(props: GitCommitGraphProps) {
 
                 <circle
                   cx={laneX(row.lane)}
-                  cy={rowMid(rowIndex())}
+                  cy={rowNodeCenter(rowIndex())}
                   r={NODE_RADIUS + 2.25}
                   fill={props.selectedCommitHash === row.commit.hash ? 'var(--background)' : 'color-mix(in srgb, var(--background) 90%, transparent)'}
                   stroke={props.selectedCommitHash === row.commit.hash ? 'color-mix(in srgb, var(--primary) 35%, transparent)' : 'var(--background)'}
@@ -284,7 +300,7 @@ export function GitCommitGraph(props: GitCommitGraphProps) {
                 />
                 <circle
                   cx={laneX(row.lane)}
-                  cy={rowMid(rowIndex())}
+                  cy={rowNodeCenter(rowIndex())}
                   r={NODE_RADIUS}
                   fill={laneFillColor(row.nodeColorIndex)}
                   stroke="var(--background)"
@@ -312,17 +328,16 @@ export function GitCommitGraph(props: GitCommitGraphProps) {
                   )}
                   onClick={() => props.onSelect?.(row.commit.hash)}
                 >
-                  <div style={{ height: `${ROW_HEIGHT}px` }} class="relative z-20" aria-hidden="true" />
+                  <div style={rowSpacerStyle} class="relative z-20" aria-hidden="true" />
                   <div
-                    style={{ height: `${ROW_HEIGHT}px` }}
+                    style={rowContentStyle}
                     class={cn(
-                      'relative z-20 min-w-0 px-3 py-1.5 transition-colors duration-150',
-                      'flex flex-col justify-center',
+                      'relative z-20 grid min-w-0 px-3 transition-colors duration-150',
                       selected() ? 'bg-sidebar-accent' : 'bg-transparent group-hover:bg-muted/[0.28]',
                       rowIndex() === rowCount() - 1 ? '' : 'border-b border-border/40',
                     )}
                   >
-                    <div class="flex items-center gap-2 leading-tight">
+                    <div class="flex items-center gap-2 leading-none">
                       <span class={cn('min-w-0 flex-1 truncate text-[11px] font-medium', selected() ? 'text-sidebar-accent-foreground' : 'text-foreground')}>
                         {row.commit.subject || '(no subject)'}
                       </span>
@@ -333,11 +348,11 @@ export function GitCommitGraph(props: GitCommitGraphProps) {
                             ? 'bg-background/18 text-sidebar-accent-foreground/82'
                             : 'bg-muted/[0.26] text-muted-foreground',
                         )}
-                      >
-                        {row.commit.shortHash}
-                      </span>
+                        >
+                          {row.commit.shortHash}
+                        </span>
                     </div>
-                    <div class={cn('mt-0.5 flex flex-wrap items-center gap-1 text-[9px] leading-tight', selected() ? 'text-sidebar-accent-foreground/72' : 'text-muted-foreground')}>
+                    <div class={cn('flex flex-wrap items-center gap-1 text-[9px] leading-none', selected() ? 'text-sidebar-accent-foreground/72' : 'text-muted-foreground')}>
                       <span class="truncate">{row.commit.authorName || 'Unknown author'}</span>
                       <span aria-hidden="true">·</span>
                       <span>{formatRelativeTime(row.commit.authorTimeMs)}</span>
@@ -373,7 +388,7 @@ function ShowCommitTransitions(props: { row: CommitGraphRow; rowIndex: number; r
   return (
     <>
       <path
-        d={`M ${currentX()} ${rowLineTop(props.rowIndex)} L ${currentX()} ${rowMid(props.rowIndex)}`}
+        d={`M ${currentX()} ${rowLineTop(props.rowIndex)} L ${currentX()} ${rowNodeCenter(props.rowIndex)}`}
         fill="none"
         stroke={currentColor()}
         stroke-width="1.85"
@@ -387,7 +402,7 @@ function ShowCommitTransitions(props: { row: CommitGraphRow; rowIndex: number; r
           const colorIndex = index() === 0 ? props.row.nodeColorIndex : (laneState?.colorIndex ?? props.row.nodeColorIndex);
           return (
             <path
-              d={transitionPath(lane(), parentLane, rowMid(props.rowIndex), rowLineBottom(props.rowIndex, props.rowCount))}
+              d={transitionPath(lane(), parentLane, rowNodeCenter(props.rowIndex), rowLineBottom(props.rowIndex, props.rowCount))}
               fill="none"
               stroke={laneStrokeColor(colorIndex)}
               stroke-width={index() === 0 ? '1.95' : '1.65'}
