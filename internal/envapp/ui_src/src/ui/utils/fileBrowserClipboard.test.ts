@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { FileItem } from '@floegence/floe-webapp-core/file-browser';
 import { copyFileBrowserItemNames, describeCopiedFileBrowserItemNames } from './fileBrowserClipboard';
@@ -13,10 +15,26 @@ function stubClipboard(writeText: ReturnType<typeof vi.fn>) {
   });
 }
 
+function stubClipboardUnavailable() {
+  Object.defineProperty(globalThis, 'navigator', {
+    configurable: true,
+    value: {},
+  });
+}
+
+function stubLegacyClipboard(execCommand: ReturnType<typeof vi.fn>) {
+  Object.defineProperty(document, 'execCommand', {
+    configurable: true,
+    value: execCommand,
+  });
+}
+
 describe('fileBrowserClipboard', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     delete (globalThis as { navigator?: Navigator }).navigator;
+    delete (document as Partial<Document> & { execCommand?: (commandId: string) => boolean }).execCommand;
+    document.body.innerHTML = '';
   });
 
   it('copies a single file name and returns the single-name message payload', async () => {
@@ -57,11 +75,37 @@ describe('fileBrowserClipboard', () => {
     expect(writeText).not.toHaveBeenCalled();
   });
 
-  it('fails when the clipboard API is unavailable', async () => {
-    Object.defineProperty(globalThis, 'navigator', {
-      configurable: true,
-      value: {},
-    });
+  it('falls back to the legacy clipboard path when the async clipboard API is unavailable', async () => {
+    const execCommand = vi.fn().mockReturnValue(true);
+    stubClipboardUnavailable();
+    stubLegacyClipboard(execCommand);
+
+    const result = await copyFileBrowserItemNames([
+      { id: '1', name: '.env', type: 'file', path: '/workspace/.env' } satisfies FileItem,
+    ]);
+
+    expect(execCommand).toHaveBeenCalledWith('copy');
+    expect(result).toEqual({ count: 1, firstName: '.env' });
+    expect(document.body.querySelector('textarea')).toBeNull();
+  });
+
+  it('falls back to the legacy clipboard path when clipboard permission is denied', async () => {
+    const writeText = vi.fn().mockRejectedValue(new DOMException('Permission denied', 'NotAllowedError'));
+    const execCommand = vi.fn().mockReturnValue(true);
+    stubClipboard(writeText);
+    stubLegacyClipboard(execCommand);
+
+    const result = await copyFileBrowserItemNames([
+      { id: '1', name: '.env', type: 'file', path: '/workspace/.env' } satisfies FileItem,
+    ]);
+
+    expect(writeText).toHaveBeenCalledWith('.env');
+    expect(execCommand).toHaveBeenCalledWith('copy');
+    expect(result).toEqual({ count: 1, firstName: '.env' });
+  });
+
+  it('fails when no clipboard implementation is available', async () => {
+    stubClipboardUnavailable();
 
     await expect(copyFileBrowserItemNames([
       { id: '1', name: '.env', type: 'file', path: '/workspace/.env' } satisfies FileItem,

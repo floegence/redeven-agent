@@ -25,6 +25,10 @@ const clipboardStore = vi.hoisted(() => ({
   writeText: vi.fn(),
 }));
 
+const legacyClipboardStore = vi.hoisted(() => ({
+  execCommand: vi.fn(),
+}));
+
 const gitWorkspaceRenderStore = vi.hoisted(() => ({
   snapshots: [] as Array<{
     repoInfoLoading: boolean;
@@ -347,6 +351,8 @@ beforeEach(() => {
   notificationStore.warning = [];
   notificationStore.info = [];
   clipboardStore.writeText.mockReset();
+  legacyClipboardStore.execCommand.mockReset();
+  legacyClipboardStore.execCommand.mockReturnValue(true);
   gitWorkspaceRenderStore.snapshots = [];
   workspaceLifecycleStore.filesMounts = 0;
   workspaceLifecycleStore.filesUnmounts = 0;
@@ -358,6 +364,10 @@ beforeEach(() => {
     value: {
       writeText: clipboardStore.writeText,
     },
+  });
+  Object.defineProperty(document, 'execCommand', {
+    configurable: true,
+    value: legacyClipboardStore.execCommand,
   });
 
   mockRpc.fs.list.mockResolvedValue({ entries: [] });
@@ -659,6 +669,45 @@ describe('RemoteFileBrowser persistence', () => {
       await flush();
 
       expect(clipboardStore.writeText).toHaveBeenCalledWith('.env');
+      expect(notificationStore.success).toContainEqual({ title: 'Copied', message: '".env" copied to clipboard.' });
+    } finally {
+      dispose();
+    }
+  });
+
+  it('copies the selected file name with the legacy clipboard fallback when the async clipboard API is unavailable', async () => {
+    widgetStateStore.values['widget-1'] = {
+      lastPathByEnv: { 'env-1': '/workspace/repo/src' },
+      pageModeByEnv: { 'env-1': 'files' },
+      gitSubviewByEnv: { 'env-1': 'changes' },
+    };
+
+    Object.defineProperty(window.navigator, 'clipboard', {
+      configurable: true,
+      value: undefined,
+    });
+
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+
+    const dispose = render(() => (
+      <LayoutProvider>
+        <EnvContext.Provider value={createEnvContext()}>
+          <RemoteFileBrowser widgetId="widget-1" />
+        </EnvContext.Provider>
+      </LayoutProvider>
+    ), host);
+
+    try {
+      await flush();
+
+      const copyNameButton = Array.from(host.querySelectorAll('button')).find((node) => node.textContent === 'mock-copy-name') as HTMLButtonElement | undefined;
+      expect(copyNameButton).toBeTruthy();
+
+      copyNameButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await flush();
+
+      expect(legacyClipboardStore.execCommand).toHaveBeenCalledWith('copy');
       expect(notificationStore.success).toContainEqual({ title: 'Copied', message: '".env" copied to clipboard.' });
     } finally {
       dispose();
