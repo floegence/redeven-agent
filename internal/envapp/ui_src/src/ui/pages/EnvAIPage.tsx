@@ -2582,12 +2582,18 @@ export function EnvAIPage() {
     const status = String(ai.activeThread()?.run_status ?? '').trim().toLowerCase();
     return status === 'waiting_user';
   });
-  const activeQueuedTurnCount = createMemo(() => {
+  const expectedQueuedTurnCount = createMemo(() => {
     const serverCount = Number(ai.activeThread()?.queued_turn_count ?? 0);
-    if (followupsLoading()) {
-      return Number.isFinite(serverCount) && serverCount > 0 ? serverCount : queuedFollowups().length;
+    return Number.isFinite(serverCount) && serverCount > 0 ? Math.floor(serverCount) : 0;
+  });
+  const shouldShowQueuedTurnsPanel = createMemo(() =>
+    queuedFollowups().length > 0 || ((followupsLoading() || !!followupsError()) && expectedQueuedTurnCount() > 0),
+  );
+  const activeQueuedTurnCount = createMemo(() => {
+    if (queuedFollowups().length > 0) {
+      return queuedFollowups().length;
     }
-    return queuedFollowups().length;
+    return shouldShowQueuedTurnsPanel() ? expectedQueuedTurnCount() : 0;
   });
   const queuedTurnHint = createMemo(() =>
     followupsPausedReason() === 'waiting_user'
@@ -5002,7 +5008,7 @@ export function EnvAIPage() {
               </div>
             </Show>
 
-            <Show when={activeQueuedTurnCount() > 0 || followupsLoading() || !!followupsError()}>
+            <Show when={shouldShowQueuedTurnsPanel()}>
               <div class="flower-queued-turns-panel">
                 <div class="flower-queued-turns-header">
                   <div class="flower-queued-turns-header-main">
