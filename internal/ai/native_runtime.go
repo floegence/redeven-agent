@@ -412,6 +412,7 @@ func (p *moonshotProvider) StreamTurn(ctx context.Context, req TurnRequest, onEv
 		Model:             oshared.ChatModel(strings.TrimSpace(req.Model)),
 		Messages:          messages,
 		ParallelToolCalls: openai.Bool(false),
+		StreamOptions:     openai.ChatCompletionStreamOptionsParam{IncludeUsage: openai.Bool(true)},
 	}
 	if req.Budgets.MaxOutputToken > 0 {
 		params.MaxTokens = openai.Int(int64(req.Budgets.MaxOutputToken))
@@ -440,63 +441,200 @@ func (p *moonshotProvider) StreamTurn(ctx context.Context, req TurnRequest, onEv
 		params.Tools = tools
 	}
 
-	resp, err := p.client.Chat.Completions.New(ctx, params)
-	if err != nil {
-		return TurnResult{}, err
-	}
-
+	stream := p.client.Chat.Completions.NewStreaming(ctx, params)
+	var textBuf strings.Builder
+	var reasoningBuf strings.Builder
 	result := TurnResult{
 		FinishReason:    "unknown",
 		RawProviderDiag: map[string]any{},
 	}
-	if rid := strings.TrimSpace(resp.ID); rid != "" {
-		result.RawProviderDiag["response_id"] = rid
-	}
-	result.Usage = TurnUsage{
-		InputTokens:     resp.Usage.PromptTokens,
-		OutputTokens:    resp.Usage.CompletionTokens,
-		ReasoningTokens: resp.Usage.CompletionTokensDetails.ReasoningTokens,
+
+	type partialCall struct {
+		Index   int64
+		CallID  string
+		Name    string
+		Started bool
+		Ended   bool
+		ArgsRaw strings.Builder
+		Args    map[string]any
 	}
 
-	if len(resp.Choices) > 0 {
-		choice := resp.Choices[0]
-		result.FinishReason = mapOpenAIChatFinishReason(choice.FinishReason)
-		if txt := strings.TrimSpace(choice.Message.Content); txt != "" {
-			result.Text = txt
-			emitProviderEvent(onEvent, StreamEvent{Type: StreamEventTextDelta, Text: txt})
+	partials := map[int64]*partialCall{}
+	order := make([]int64, 0, 2)
+	getPartial := func(index int64) *partialCall {
+		if pc := partials[index]; pc != nil {
+			return pc
 		}
-		if reasoning := extractMoonshotChatReasoning(choice.Message); reasoning != "" {
-			result.Reasoning = reasoning
-			emitProviderEvent(onEvent, StreamEvent{Type: StreamEventThinkingDelta, Text: reasoning})
+		pc := &partialCall{Index: index}
+		partials[index] = pc
+		order = append(order, index)
+		return pc
+	}
+	ensureCallID := func(pc *partialCall) string {
+		if pc == nil {
+			return ""
 		}
-		for _, tc := range choice.Message.ToolCalls {
-			callID := strings.TrimSpace(tc.ID)
-			if callID == "" {
-				callID = fmt.Sprintf("moonshot_call_%d", len(result.ToolCalls)+1)
+		if strings.TrimSpace(pc.CallID) == "" {
+			pc.CallID = fmt.Sprintf("moonshot_call_%d", pc.Index+1)
+		}
+		return strings.TrimSpace(pc.CallID)
+	}
+	emitStart := func(pc *partialCall) {
+		if pc == nil || pc.Started {
+			return
+		}
+		callID := ensureCallID(pc)
+		name := strings.TrimSpace(pc.Name)
+		if callID == "" || name == "" {
+			return
+		}
+		pc.Started = true
+		emitProviderEvent(onEvent, StreamEvent{
+			Type: StreamEventToolCallStart,
+			ToolCall: &PartialToolCall{
+				ID:   callID,
+				Name: name,
+			},
+		})
+	}
+	emitDelta := func(pc *partialCall) {
+		if pc == nil {
+			return
+		}
+		callID := ensureCallID(pc)
+		name := strings.TrimSpace(pc.Name)
+		if callID == "" || name == "" {
+			return
+		}
+		raw := strings.TrimSpace(pc.ArgsRaw.String())
+		args := map[string]any{}
+		if raw != "" {
+			_ = json.Unmarshal([]byte(raw), &args)
+		}
+		emitStart(pc)
+		emitProviderEvent(onEvent, StreamEvent{
+			Type: StreamEventToolCallDelta,
+			ToolCall: &PartialToolCall{
+				ID:            callID,
+				Name:          name,
+				ArgumentsJSON: raw,
+				Arguments:     cloneAnyMap(args),
+			},
+		})
+	}
+	emitEnd := func(pc *partialCall) {
+		if pc == nil || pc.Ended {
+			return
+		}
+		callID := ensureCallID(pc)
+		name := strings.TrimSpace(pc.Name)
+		if callID == "" || name == "" {
+			return
+		}
+		raw := strings.TrimSpace(pc.ArgsRaw.String())
+		args := map[string]any{}
+		if raw != "" {
+			_ = json.Unmarshal([]byte(raw), &args)
+		}
+		pc.Args = args
+		pc.Ended = true
+		emitStart(pc)
+		emitProviderEvent(onEvent, StreamEvent{
+			Type: StreamEventToolCallEnd,
+			ToolCall: &PartialToolCall{
+				ID:        callID,
+				Name:      name,
+				Arguments: cloneAnyMap(args),
+			},
+		})
+	}
+
+	for stream.Next() {
+		chunk := stream.Current()
+		if rid := strings.TrimSpace(chunk.ID); rid != "" {
+			result.RawProviderDiag["response_id"] = rid
+		}
+		if chunk.Usage.PromptTokens > 0 || chunk.Usage.CompletionTokens > 0 || chunk.Usage.CompletionTokensDetails.ReasoningTokens > 0 {
+			result.Usage = TurnUsage{
+				InputTokens:     chunk.Usage.PromptTokens,
+				OutputTokens:    chunk.Usage.CompletionTokens,
+				ReasoningTokens: chunk.Usage.CompletionTokensDetails.ReasoningTokens,
 			}
-			name := strings.TrimSpace(tc.Function.Name)
-			if realName, ok := aliasToReal[name]; ok {
-				name = realName
+		}
+		for _, choice := range chunk.Choices {
+			if finish := mapOpenAIChatFinishReason(choice.FinishReason); finish != "unknown" {
+				result.FinishReason = finish
 			}
-			argsRaw := strings.TrimSpace(tc.Function.Arguments)
-			args := map[string]any{}
-			if argsRaw != "" {
-				_ = json.Unmarshal([]byte(argsRaw), &args)
+			delta := choice.Delta
+			if delta.Content != "" {
+				textBuf.WriteString(delta.Content)
+				emitProviderEvent(onEvent, StreamEvent{Type: StreamEventTextDelta, Text: delta.Content})
 			}
-			call := ToolCall{ID: callID, Name: name, Args: args}
-			result.ToolCalls = append(result.ToolCalls, call)
-			emitProviderEvent(onEvent, StreamEvent{Type: StreamEventToolCallStart, ToolCall: &PartialToolCall{ID: call.ID, Name: call.Name}})
-			emitProviderEvent(onEvent, StreamEvent{Type: StreamEventToolCallDelta, ToolCall: &PartialToolCall{ID: call.ID, Name: call.Name, ArgumentsJSON: argsRaw, Arguments: cloneAnyMap(args)}})
-			emitProviderEvent(onEvent, StreamEvent{Type: StreamEventToolCallEnd, ToolCall: &PartialToolCall{ID: call.ID, Name: call.Name, Arguments: cloneAnyMap(args)}})
+			if reasoning := extractMoonshotChatReasoningDelta(delta); reasoning != "" {
+				reasoningBuf.WriteString(reasoning)
+				emitProviderEvent(onEvent, StreamEvent{Type: StreamEventThinkingDelta, Text: reasoning})
+			}
+			for _, tc := range delta.ToolCalls {
+				pc := getPartial(tc.Index)
+				if pc == nil {
+					continue
+				}
+				if id := strings.TrimSpace(tc.ID); id != "" {
+					pc.CallID = id
+				}
+				name := strings.TrimSpace(tc.Function.Name)
+				if realName, ok := aliasToReal[name]; ok {
+					name = realName
+				}
+				if name != "" {
+					pc.Name = name
+				}
+				if argsDelta := tc.Function.Arguments; argsDelta != "" {
+					pc.ArgsRaw.WriteString(argsDelta)
+					emitDelta(pc)
+					continue
+				}
+				emitStart(pc)
+			}
 		}
 	}
+	if err := stream.Err(); err != nil {
+		return TurnResult{}, err
+	}
+
+	sort.SliceStable(order, func(i, j int) bool { return order[i] < order[j] })
+	for _, idx := range order {
+		pc := partials[idx]
+		if pc == nil {
+			continue
+		}
+		emitEnd(pc)
+		if !pc.Ended {
+			continue
+		}
+		result.ToolCalls = append(result.ToolCalls, ToolCall{
+			ID:   ensureCallID(pc),
+			Name: strings.TrimSpace(pc.Name),
+			Args: cloneAnyMap(pc.Args),
+		})
+	}
+
+	result.Text = strings.TrimSpace(textBuf.String())
+	result.Reasoning = strings.TrimSpace(reasoningBuf.String())
 	if len(result.ToolCalls) > 0 {
 		result.FinishReason = "tool_calls"
 	}
 	if result.FinishReason == "unknown" && result.Text != "" {
 		result.FinishReason = "stop"
 	}
-	emitProviderEvent(onEvent, StreamEvent{Type: StreamEventUsage, Usage: &PartialUsage{InputTokens: result.Usage.InputTokens, OutputTokens: result.Usage.OutputTokens, ReasoningTokens: result.Usage.ReasoningTokens}})
+	if result.Text == "" && result.Reasoning == "" && len(result.ToolCalls) == 0 {
+		return TurnResult{}, errors.New("missing streamed response")
+	}
+	emitProviderEvent(onEvent, StreamEvent{Type: StreamEventUsage, Usage: &PartialUsage{
+		InputTokens:     result.Usage.InputTokens,
+		OutputTokens:    result.Usage.OutputTokens,
+		ReasoningTokens: result.Usage.ReasoningTokens,
+	}})
 	emitProviderEvent(onEvent, StreamEvent{Type: StreamEventFinishReason, FinishHint: result.FinishReason})
 	return result, nil
 }
@@ -674,45 +812,43 @@ func buildOpenAIChatMessages(messages []Message) []openai.ChatCompletionMessageP
 	return out
 }
 
-func extractMoonshotChatReasoning(msg openai.ChatCompletionMessage) string {
-	if msg.JSON.ExtraFields == nil {
+func extractMoonshotChatReasoningDelta(delta openai.ChatCompletionChunkChoiceDelta) string {
+	return extractMoonshotReasoningJSON(delta.RawJSON())
+}
+
+func extractMoonshotReasoningJSON(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "null" {
+		return ""
+	}
+	decoded := map[string]any{}
+	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
 		return ""
 	}
 	for _, key := range []string{"reasoning_content", "reasoning"} {
-		field, ok := msg.JSON.ExtraFields[key]
-		if !ok {
-			continue
+		if text := extractMoonshotReasoningValue(decoded[key]); text != "" {
+			return text
 		}
-		raw := strings.TrimSpace(field.Raw())
-		if raw == "" || raw == "null" {
-			continue
+	}
+	return ""
+}
+
+func extractMoonshotReasoningValue(v any) string {
+	switch val := v.(type) {
+	case string:
+		return strings.TrimSpace(val)
+	case []any:
+		parts := make([]string, 0, len(val))
+		for _, item := range val {
+			if text := extractMoonshotReasoningValue(item); text != "" {
+				parts = append(parts, text)
+			}
 		}
-		var decoded any
-		if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
-			if txt := strings.TrimSpace(raw); txt != "" {
-				return txt
-			}
-			continue
-		}
-		switch val := decoded.(type) {
-		case string:
-			if txt := strings.TrimSpace(val); txt != "" {
-				return txt
-			}
-		case []any:
-			parts := make([]string, 0, len(val))
-			for _, item := range val {
-				s, ok := item.(string)
-				if !ok {
-					continue
-				}
-				s = strings.TrimSpace(s)
-				if s != "" {
-					parts = append(parts, s)
-				}
-			}
-			if len(parts) > 0 {
-				return strings.Join(parts, "\n")
+		return strings.Join(parts, "\n")
+	case map[string]any:
+		for _, key := range []string{"text", "content", "reasoning_content", "reasoning"} {
+			if text := extractMoonshotReasoningValue(val[key]); text != "" {
+				return text
 			}
 		}
 	}
