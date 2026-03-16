@@ -3556,9 +3556,8 @@ export function EnvAIPage() {
     resetContextTelemetryState();
     setTodosError('');
     setTodosLoading(true);
-    void loadThreadMessages(tid, { scrollToBottom: true, reset: true }).then(() => {
-      void loadActiveRunSnapshot(tidStr);
-    });
+    void loadThreadMessages(tid, { scrollToBottom: true, reset: true });
+    void loadActiveRunSnapshot(tidStr);
     void loadThreadTodos(tid, { silent: false, notifyError: false });
     void loadFollowups(tidStr);
   });
@@ -3593,9 +3592,8 @@ export function EnvAIPage() {
         setTodosError('');
         setTodosLoading(true);
 
-        void loadThreadMessages(tid, { reset: true }).then(() => {
-          void loadActiveRunSnapshot(tid);
-        });
+        void loadThreadMessages(tid, { reset: true });
+        void loadActiveRunSnapshot(tid);
         void loadThreadTodos(tid, { silent: true, notifyError: false });
         return;
       }
@@ -4254,6 +4252,9 @@ export function EnvAIPage() {
         ai.confirmThreadRun(tid, rid);
         ensureContextRun(rid, { reset: true });
         void loadContextRunEvents(rid, { reset: true });
+        if (tid === String(ai.activeThreadId() ?? '').trim()) {
+          void loadActiveRunSnapshot(tid);
+        }
       }
       ai.bumpThreadsSeq();
       if (responseKind === 'steer' || responseKind === 'queued') {
