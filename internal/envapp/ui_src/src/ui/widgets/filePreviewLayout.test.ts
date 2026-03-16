@@ -12,9 +12,14 @@ function read(relPath: string): string {
 describe('file preview wiring', () => {
   it('keeps shared preview content and switches between dialog and floating window by layout', () => {
     const contentSrc = read('./FilePreviewContent.tsx');
+    const docxPaneSrc = read('./DocxPreviewPane.tsx');
     const surfaceSrc = read('./FilePreviewSurface.tsx');
 
-    expect(contentSrc).toContain("import('docx-preview')");
+    expect(contentSrc).toContain("import { DocxPreviewPane } from './DocxPreviewPane';");
+    expect(contentSrc).toContain('<DocxPreviewPane bytes={props.bytes} />');
+    expect(docxPaneSrc).toContain("import('docx-preview')");
+    expect(docxPaneSrc).toContain('ResizeObserver');
+    expect(docxPaneSrc).toContain('inWrapper: false');
     expect(contentSrc).toContain('Loading file...');
     expect(contentSrc).toContain('Failed to load file');
 
