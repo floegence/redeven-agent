@@ -286,6 +286,8 @@ export interface ChatConfig {
 
 export interface ChatCallbacks {
   onWillSend?: (content: string, attachments: Attachment[], userMessageId: string) => void;
+  // Resolve only after the send has been accepted. Reject on failure so the provider can
+  // roll back the optimistic user message and let the caller restore the draft state.
   onSendMessage?: (
     content: string,
     attachments: Attachment[],
