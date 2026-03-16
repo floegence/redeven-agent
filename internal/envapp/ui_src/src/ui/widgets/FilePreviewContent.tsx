@@ -1,7 +1,8 @@
-import { For, Show, createEffect, createSignal, onCleanup } from 'solid-js';
+import { For, Show } from 'solid-js';
 import type { FileItem } from '@floegence/floe-webapp-core/file-browser';
 import { LoadingOverlay } from '@floegence/floe-webapp-core/loading';
 import type { PreviewMode } from '../utils/filePreview';
+import { DocxPreviewPane } from './DocxPreviewPane';
 
 export interface FilePreviewContentProps {
   item?: FileItem | null;
@@ -19,56 +20,7 @@ export interface FilePreviewContentProps {
 }
 
 export function FilePreviewContent(props: FilePreviewContentProps) {
-  const [docxRenderError, setDocxRenderError] = createSignal<string | null>(null);
-  let docxHost: HTMLDivElement | undefined;
-
-  const resolvedError = () => props.error ?? docxRenderError();
-
-  createEffect(() => {
-    const mode = props.mode;
-    const bytes = props.bytes;
-    const host = docxHost;
-
-    setDocxRenderError(null);
-    if (host) {
-      host.innerHTML = '';
-    }
-    if (mode !== 'docx' || !bytes || !host || props.error) return;
-
-    let disposed = false;
-
-    void (async () => {
-      try {
-        const module = await import('docx-preview');
-        if (disposed) return;
-
-        const renderAsync = (module as any).renderAsync as
-          | ((buffer: ArrayBuffer, container: HTMLElement, styleContainer?: HTMLElement, options?: any) => Promise<void>)
-          | undefined;
-        if (!renderAsync) {
-          throw new Error('renderAsync not found');
-        }
-
-        await renderAsync(bytes.buffer, host, undefined, {
-          className: 'docx-preview-container',
-          inWrapper: true,
-          breakPages: true,
-          ignoreLastRenderedPageBreak: true,
-          useBase64URL: false,
-        });
-      } catch (error) {
-        if (disposed) return;
-        setDocxRenderError(error instanceof Error ? error.message : String(error));
-      }
-    })();
-
-    onCleanup(() => {
-      disposed = true;
-      if (host) {
-        host.innerHTML = '';
-      }
-    });
-  });
+  const resolvedError = () => props.error;
 
   return (
     <div class="flex h-full min-h-0 flex-col overflow-hidden">
@@ -103,7 +55,7 @@ export function FilePreviewContent(props: FilePreviewContentProps) {
         </Show>
 
         <Show when={props.mode === 'docx' && !resolvedError()}>
-          <div ref={docxHost} class="p-3" />
+          <DocxPreviewPane bytes={props.bytes} />
         </Show>
 
         <Show when={props.mode === 'xlsx' && !resolvedError()}>
