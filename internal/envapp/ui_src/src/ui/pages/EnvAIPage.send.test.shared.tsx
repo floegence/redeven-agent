@@ -357,10 +357,27 @@ function inputComposer(host: HTMLElement, value: string) {
   return element;
 }
 
+type SubmitTrigger = 'button' | 'enter';
+
 function clickButton(host: HTMLElement, title: string) {
   const button = Array.from(host.querySelectorAll('button')).find((item) => item.getAttribute('title') === title);
   expect(button).toBeTruthy();
   button!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+}
+
+function submitComposer(host: HTMLElement, trigger: SubmitTrigger, buttonTitle: string) {
+  if (trigger === 'button') {
+    clickButton(host, buttonTitle);
+    return;
+  }
+
+  const textarea = host.querySelector('textarea');
+  expect(textarea).toBeTruthy();
+  textarea!.dispatchEvent(new KeyboardEvent('keydown', {
+    key: 'Enter',
+    bubbles: true,
+    cancelable: true,
+  }));
 }
 
 export function registerEnvAIPageSendTests() {
@@ -399,116 +416,131 @@ export function registerEnvAIPageSendTests() {
   });
 
   describe('EnvAIPage composer send flow', () => {
-    it('sends normal composer messages through sendUserTurn', async () => {
-      const { host, dispose } = await renderPage();
-      try {
-        inputComposer(host, 'hello from Flower');
-        clickButton(host, 'Send message');
-        await flushAsync();
+    ([
+      { trigger: 'button', label: 'send button', buttonTitle: 'Send message' },
+      { trigger: 'enter', label: 'Enter key', buttonTitle: 'Send message' },
+    ] as const).forEach(({ trigger, label, buttonTitle }) => {
+      it(`sends normal composer messages through sendUserTurn via ${label}`, async () => {
+        const { host, dispose } = await renderPage();
+        try {
+          inputComposer(host, 'hello from Flower');
+          submitComposer(host, trigger, buttonTitle);
+          await flushAsync();
 
-        expect(sendUserTurnMock).toHaveBeenCalledTimes(1);
-        expect(sendUserTurnMock).toHaveBeenCalledWith(expect.objectContaining({
-          threadId: 'thread-1',
-          model: 'model-test',
-          input: expect.objectContaining({
-            text: 'hello from Flower',
-          }),
-        }));
-        expect(submitStructuredPromptResponseMock).not.toHaveBeenCalled();
-      } finally {
-        dispose();
-      }
+          expect(sendUserTurnMock).toHaveBeenCalledTimes(1);
+          expect(sendUserTurnMock).toHaveBeenCalledWith(expect.objectContaining({
+            threadId: 'thread-1',
+            model: 'model-test',
+            input: expect.objectContaining({
+              text: 'hello from Flower',
+            }),
+          }));
+          expect(submitStructuredPromptResponseMock).not.toHaveBeenCalled();
+        } finally {
+          dispose();
+        }
+      });
     });
 
-    it('routes waiting-user replies through structured prompt submission when one freeform answer is pending', async () => {
-      aiState.activeThread = {
-        ...(aiState.activeThread as MockThread),
-        run_status: 'waiting_user',
-      };
-      aiState.waitingPrompt = {
-        prompt_id: 'prompt-1',
-        message_id: 'assistant-1',
-        tool_id: 'tool-ask-user',
-        questions: [
-          {
-            id: 'question-1',
-            header: 'Clarify',
-            question: 'What logs should Flower inspect?',
-            is_other: true,
-            is_secret: false,
-            options: [],
-          },
-        ],
-      };
-
-      const { host, dispose } = await renderPage();
-      try {
-        inputComposer(host, 'Please inspect the build logs.');
-        clickButton(host, 'Reply now');
-        await flushAsync();
-
-        expect(submitStructuredPromptResponseMock).toHaveBeenCalledTimes(1);
-        expect(submitStructuredPromptResponseMock).toHaveBeenCalledWith(expect.objectContaining({
-          threadId: 'thread-1',
-          promptId: 'prompt-1',
-          text: '',
-          answers: {
-            'question-1': {
-              answers: ['Please inspect the build logs.'],
+    ([
+      { trigger: 'button', label: 'send button', buttonTitle: 'Reply now' },
+      { trigger: 'enter', label: 'Enter key', buttonTitle: 'Reply now' },
+    ] as const).forEach(({ trigger, label, buttonTitle }) => {
+      it(`routes waiting-user replies through structured prompt submission via ${label}`, async () => {
+        aiState.activeThread = {
+          ...(aiState.activeThread as MockThread),
+          run_status: 'waiting_user',
+        };
+        aiState.waitingPrompt = {
+          prompt_id: 'prompt-1',
+          message_id: 'assistant-1',
+          tool_id: 'tool-ask-user',
+          questions: [
+            {
+              id: 'question-1',
+              header: 'Clarify',
+              question: 'What logs should Flower inspect?',
+              is_other: true,
+              is_secret: false,
+              options: [],
             },
-          },
-        }));
-        expect(sendUserTurnMock).not.toHaveBeenCalled();
-      } finally {
-        dispose();
-      }
+          ],
+        };
+
+        const { host, dispose } = await renderPage();
+        try {
+          inputComposer(host, 'Please inspect the build logs.');
+          submitComposer(host, trigger, buttonTitle);
+          await flushAsync();
+
+          expect(submitStructuredPromptResponseMock).toHaveBeenCalledTimes(1);
+          expect(submitStructuredPromptResponseMock).toHaveBeenCalledWith(expect.objectContaining({
+            threadId: 'thread-1',
+            promptId: 'prompt-1',
+            text: '',
+            answers: {
+              'question-1': {
+                answers: ['Please inspect the build logs.'],
+              },
+            },
+          }));
+          expect(sendUserTurnMock).not.toHaveBeenCalled();
+        } finally {
+          dispose();
+        }
+      });
     });
 
-    it('restores the draft when a waiting-user reply is ambiguous', async () => {
-      aiState.activeThread = {
-        ...(aiState.activeThread as MockThread),
-        run_status: 'waiting_user',
-      };
-      aiState.waitingPrompt = {
-        prompt_id: 'prompt-1',
-        message_id: 'assistant-1',
-        tool_id: 'tool-ask-user',
-        questions: [
-          {
-            id: 'question-1',
-            header: 'Scope',
-            question: 'Which subsystem should Flower inspect?',
-            is_other: true,
-            is_secret: false,
-            options: [],
-          },
-          {
-            id: 'question-2',
-            header: 'Mode',
-            question: 'Should Flower patch or only review?',
-            is_other: false,
-            is_secret: false,
-            options: [
-              { option_id: 'plan', label: 'Plan' },
-              { option_id: 'act', label: 'Act' },
-            ],
-          },
-        ],
-      };
+    ([
+      { trigger: 'button', label: 'send button', buttonTitle: 'Reply now' },
+      { trigger: 'enter', label: 'Enter key', buttonTitle: 'Reply now' },
+    ] as const).forEach(({ trigger, label, buttonTitle }) => {
+      it(`restores the draft when a waiting-user reply is ambiguous via ${label}`, async () => {
+        aiState.activeThread = {
+          ...(aiState.activeThread as MockThread),
+          run_status: 'waiting_user',
+        };
+        aiState.waitingPrompt = {
+          prompt_id: 'prompt-1',
+          message_id: 'assistant-1',
+          tool_id: 'tool-ask-user',
+          questions: [
+            {
+              id: 'question-1',
+              header: 'Scope',
+              question: 'Which subsystem should Flower inspect?',
+              is_other: true,
+              is_secret: false,
+              options: [],
+            },
+            {
+              id: 'question-2',
+              header: 'Mode',
+              question: 'Should Flower patch or only review?',
+              is_other: false,
+              is_secret: false,
+              options: [
+                { option_id: 'plan', label: 'Plan' },
+                { option_id: 'act', label: 'Act' },
+              ],
+            },
+          ],
+        };
 
-      const { host, dispose } = await renderPage();
-      try {
-        const textarea = inputComposer(host, 'Check the backend service.');
-        clickButton(host, 'Reply now');
-        await flushAsync();
+        const { host, dispose } = await renderPage();
+        try {
+          const textarea = inputComposer(host, 'Check the backend service.');
+          submitComposer(host, trigger, buttonTitle);
+          await flushAsync();
 
-        expect(submitStructuredPromptResponseMock).not.toHaveBeenCalled();
-        expect(sendUserTurnMock).not.toHaveBeenCalled();
-        expect(notificationErrorMock).toHaveBeenCalledWith('Input required', 'Resolve all requested input fields before replying.');
-        expect(textarea.value).toBe('Check the backend service.');
-      } finally {
-        dispose();
-      }
+          expect(submitStructuredPromptResponseMock).not.toHaveBeenCalled();
+          expect(sendUserTurnMock).not.toHaveBeenCalled();
+          expect(notificationErrorMock).toHaveBeenCalledWith('Input required', 'Resolve all requested input fields before replying.');
+          expect(textarea.value).toBe('Check the backend service.');
+        } finally {
+          dispose();
+        }
+      });
     });
   });
 }

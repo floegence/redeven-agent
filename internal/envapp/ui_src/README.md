@@ -12,13 +12,15 @@ Notes:
 - The Redeven web app that opens the Env App stays outside this repository.
 - This Env App contains the **env details** features (Deck/Terminal/Monitor/File Browser/Codespaces/Ports/Flower).
 
-## Build
+## Verification
 
 From this directory:
 
 ```bash
 pnpm install --frozen-lockfile
 pnpm run lint
+pnpm run test
+pnpm run test:browser
 pnpm run typecheck
 pnpm run build
 ```
