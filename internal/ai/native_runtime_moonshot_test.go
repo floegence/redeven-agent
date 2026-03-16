@@ -3,6 +3,7 @@ package ai
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -31,23 +32,79 @@ func TestMoonshotProvider_StreamTurn_TextResponse(t *testing.T) {
 		if strings.TrimSpace(reqString(req, "model")) != "kimi-k2.5" {
 			t.Fatalf("model=%q, want kimi-k2.5", reqString(req, "model"))
 		}
+		if !anyBool(req["stream"]) {
+			t.Fatalf("stream=%v, want true", req["stream"])
+		}
 
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
+		f, ok := w.(http.Flusher)
+		if !ok {
+			t.Fatalf("response writer does not support flushing")
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		writeOpenAISSEJSON(w, f, map[string]any{
 			"id":      "chatcmpl_test_1",
-			"object":  "chat.completion",
+			"object":  "chat.completion.chunk",
+			"created": 123,
+			"model":   "kimi-k2.5",
+			"choices": []any{
+				map[string]any{
+					"index":         0,
+					"finish_reason": nil,
+					"delta": map[string]any{
+						"role": "assistant",
+					},
+				},
+			},
+		})
+		writeOpenAISSEJSON(w, f, map[string]any{
+			"id":      "chatcmpl_test_1",
+			"object":  "chat.completion.chunk",
+			"created": 123,
+			"model":   "kimi-k2.5",
+			"choices": []any{
+				map[string]any{
+					"index":         0,
+					"finish_reason": nil,
+					"delta": map[string]any{
+						"content": "MOON",
+					},
+				},
+			},
+		})
+		writeOpenAISSEJSON(w, f, map[string]any{
+			"id":      "chatcmpl_test_1",
+			"object":  "chat.completion.chunk",
+			"created": 123,
+			"model":   "kimi-k2.5",
+			"choices": []any{
+				map[string]any{
+					"index":         0,
+					"finish_reason": nil,
+					"delta": map[string]any{
+						"content": "SHOT_OK",
+					},
+				},
+			},
+		})
+		writeOpenAISSEJSON(w, f, map[string]any{
+			"id":      "chatcmpl_test_1",
+			"object":  "chat.completion.chunk",
 			"created": 123,
 			"model":   "kimi-k2.5",
 			"choices": []any{
 				map[string]any{
 					"index":         0,
 					"finish_reason": "stop",
-					"message": map[string]any{
-						"role":    "assistant",
-						"content": "MOONSHOT_OK",
-					},
+					"delta":         map[string]any{},
 				},
 			},
+		})
+		writeOpenAISSEJSON(w, f, map[string]any{
+			"id":      "chatcmpl_test_1",
+			"object":  "chat.completion.chunk",
+			"created": 123,
+			"model":   "kimi-k2.5",
+			"choices": []any{},
 			"usage": map[string]any{
 				"prompt_tokens":     10,
 				"completion_tokens": 3,
@@ -91,11 +148,14 @@ func TestMoonshotProvider_StreamTurn_TextResponse(t *testing.T) {
 		t.Fatalf("usage=%+v, want prompt=10 completion=3 reasoning=2", result.Usage)
 	}
 
-	if !containsStreamEvent(events, StreamEventTextDelta) {
-		t.Fatalf("missing text delta event")
+	if countStreamEvent(events, StreamEventTextDelta) != 2 {
+		t.Fatalf("text delta count=%d, want 2", countStreamEvent(events, StreamEventTextDelta))
 	}
 	if !containsStreamEvent(events, StreamEventFinishReason) {
 		t.Fatalf("missing finish reason event")
+	}
+	if got := strings.Join(streamEventTexts(events, StreamEventTextDelta), ""); got != "MOONSHOT_OK" {
+		t.Fatalf("text deltas=%q, want MOONSHOT_OK", got)
 	}
 }
 
@@ -111,6 +171,9 @@ func TestMoonshotProvider_StreamTurn_ToolCallAliasRoundTrip(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
+		if !anyBool(req["stream"]) {
+			t.Fatalf("stream=%v, want true", req["stream"])
+		}
 
 		tools, _ := req["tools"].([]any)
 		if len(tools) != 1 {
@@ -122,32 +185,99 @@ func TestMoonshotProvider_StreamTurn_ToolCallAliasRoundTrip(t *testing.T) {
 			t.Fatalf("tool function name=%q, want terminal_exec", got)
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
+		f, ok := w.(http.Flusher)
+		if !ok {
+			t.Fatalf("response writer does not support flushing")
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		writeOpenAISSEJSON(w, f, map[string]any{
 			"id":      "chatcmpl_test_2",
-			"object":  "chat.completion",
+			"object":  "chat.completion.chunk",
 			"created": 124,
 			"model":   "kimi-k2.5",
 			"choices": []any{
 				map[string]any{
 					"index":         0,
-					"finish_reason": "tool_calls",
-					"message": map[string]any{
-						"role":    "assistant",
-						"content": "",
+					"finish_reason": nil,
+					"delta": map[string]any{
+						"role": "assistant",
 						"tool_calls": []any{
 							map[string]any{
-								"id":   "call_1",
-								"type": "function",
+								"index": 0,
+								"id":    "call_1",
+								"type":  "function",
 								"function": map[string]any{
-									"name":      "terminal_exec",
-									"arguments": `{"cmd":"pwd"}`,
+									"name": "terminal_exec",
 								},
 							},
 						},
 					},
 				},
 			},
+		})
+		writeOpenAISSEJSON(w, f, map[string]any{
+			"id":      "chatcmpl_test_2",
+			"object":  "chat.completion.chunk",
+			"created": 124,
+			"model":   "kimi-k2.5",
+			"choices": []any{
+				map[string]any{
+					"index":         0,
+					"finish_reason": nil,
+					"delta": map[string]any{
+						"tool_calls": []any{
+							map[string]any{
+								"index": 0,
+								"function": map[string]any{
+									"arguments": `{"cmd":`,
+								},
+							},
+						},
+					},
+				},
+			},
+		})
+		writeOpenAISSEJSON(w, f, map[string]any{
+			"id":      "chatcmpl_test_2",
+			"object":  "chat.completion.chunk",
+			"created": 124,
+			"model":   "kimi-k2.5",
+			"choices": []any{
+				map[string]any{
+					"index":         0,
+					"finish_reason": nil,
+					"delta": map[string]any{
+						"tool_calls": []any{
+							map[string]any{
+								"index": 0,
+								"function": map[string]any{
+									"arguments": `"pwd"}`,
+								},
+							},
+						},
+					},
+				},
+			},
+		})
+		writeOpenAISSEJSON(w, f, map[string]any{
+			"id":      "chatcmpl_test_2",
+			"object":  "chat.completion.chunk",
+			"created": 124,
+			"model":   "kimi-k2.5",
+			"choices": []any{
+				map[string]any{
+					"index":         0,
+					"finish_reason": "tool_calls",
+					"delta":         map[string]any{},
+				},
+			},
+		})
+		writeOpenAISSEJSON(w, f, map[string]any{
+			"id":      "chatcmpl_test_2",
+			"object":  "chat.completion.chunk",
+			"created": 124,
+			"model":   "kimi-k2.5",
+			"choices": []any{},
 			"usage": map[string]any{
 				"prompt_tokens":     20,
 				"completion_tokens": 5,
@@ -201,6 +331,9 @@ func TestMoonshotProvider_StreamTurn_ToolCallAliasRoundTrip(t *testing.T) {
 	if !containsStreamEvent(events, StreamEventToolCallStart) || !containsStreamEvent(events, StreamEventToolCallEnd) {
 		t.Fatalf("missing tool call stream events")
 	}
+	if countStreamEvent(events, StreamEventToolCallDelta) != 2 {
+		t.Fatalf("tool call delta count=%d, want 2", countStreamEvent(events, StreamEventToolCallDelta))
+	}
 }
 
 func TestMoonshotProvider_StreamTurn_ToolCallHistoryKeepsReasoningContent(t *testing.T) {
@@ -222,24 +355,28 @@ func TestMoonshotProvider_StreamTurn_ToolCallHistoryKeepsReasoningContent(t *tes
 
 		switch reqIndex {
 		case 1:
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{
+			f, ok := w.(http.Flusher)
+			if !ok {
+				t.Fatalf("response writer does not support flushing")
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			writeOpenAISSEJSON(w, f, map[string]any{
 				"id":      "chatcmpl_reasoning_1",
-				"object":  "chat.completion",
+				"object":  "chat.completion.chunk",
 				"created": 125,
 				"model":   "kimi-k2.5",
 				"choices": []any{
 					map[string]any{
 						"index":         0,
-						"finish_reason": "tool_calls",
-						"message": map[string]any{
+						"finish_reason": nil,
+						"delta": map[string]any{
 							"role":              "assistant",
-							"content":           "",
 							"reasoning_content": reasoningContent,
 							"tool_calls": []any{
 								map[string]any{
-									"id":   "call_reasoning_1",
-									"type": "function",
+									"index": 0,
+									"id":    "call_reasoning_1",
+									"type":  "function",
 									"function": map[string]any{
 										"name":      "terminal_exec",
 										"arguments": `{"cmd":"uptime"}`,
@@ -249,6 +386,26 @@ func TestMoonshotProvider_StreamTurn_ToolCallHistoryKeepsReasoningContent(t *tes
 						},
 					},
 				},
+			})
+			writeOpenAISSEJSON(w, f, map[string]any{
+				"id":      "chatcmpl_reasoning_1",
+				"object":  "chat.completion.chunk",
+				"created": 125,
+				"model":   "kimi-k2.5",
+				"choices": []any{
+					map[string]any{
+						"index":         0,
+						"finish_reason": "tool_calls",
+						"delta":         map[string]any{},
+					},
+				},
+			})
+			writeOpenAISSEJSON(w, f, map[string]any{
+				"id":      "chatcmpl_reasoning_1",
+				"object":  "chat.completion.chunk",
+				"created": 125,
+				"model":   "kimi-k2.5",
+				"choices": []any{},
 				"usage": map[string]any{
 					"prompt_tokens":     30,
 					"completion_tokens": 6,
@@ -282,22 +439,46 @@ func TestMoonshotProvider_StreamTurn_ToolCallHistoryKeepsReasoningContent(t *tes
 				t.Fatalf("reasoning_content=%q, want %q", gotReasoning, reasoningContent)
 			}
 
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{
+			f, ok := w.(http.Flusher)
+			if !ok {
+				t.Fatalf("response writer does not support flushing")
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			writeOpenAISSEJSON(w, f, map[string]any{
 				"id":      "chatcmpl_reasoning_2",
-				"object":  "chat.completion",
+				"object":  "chat.completion.chunk",
+				"created": 126,
+				"model":   "kimi-k2.5",
+				"choices": []any{
+					map[string]any{
+						"index":         0,
+						"finish_reason": nil,
+						"delta": map[string]any{
+							"role":    "assistant",
+							"content": "done",
+						},
+					},
+				},
+			})
+			writeOpenAISSEJSON(w, f, map[string]any{
+				"id":      "chatcmpl_reasoning_2",
+				"object":  "chat.completion.chunk",
 				"created": 126,
 				"model":   "kimi-k2.5",
 				"choices": []any{
 					map[string]any{
 						"index":         0,
 						"finish_reason": "stop",
-						"message": map[string]any{
-							"role":    "assistant",
-							"content": "done",
-						},
+						"delta":         map[string]any{},
 					},
 				},
+			})
+			writeOpenAISSEJSON(w, f, map[string]any{
+				"id":      "chatcmpl_reasoning_2",
+				"object":  "chat.completion.chunk",
+				"created": 126,
+				"model":   "kimi-k2.5",
+				"choices": []any{},
 				"usage": map[string]any{
 					"prompt_tokens":     12,
 					"completion_tokens": 2,
@@ -376,6 +557,26 @@ func containsStreamEvent(events []StreamEvent, typ StreamEventType) bool {
 	return false
 }
 
+func countStreamEvent(events []StreamEvent, typ StreamEventType) int {
+	count := 0
+	for _, event := range events {
+		if event.Type == typ {
+			count += 1
+		}
+	}
+	return count
+}
+
+func streamEventTexts(events []StreamEvent, typ StreamEventType) []string {
+	out := make([]string, 0, len(events))
+	for _, event := range events {
+		if event.Type == typ {
+			out = append(out, event.Text)
+		}
+	}
+	return out
+}
+
 func reqString(req map[string]any, key string) string {
 	if req == nil {
 		return ""
@@ -389,5 +590,16 @@ func anyString(v any) string {
 		return val
 	default:
 		return ""
+	}
+}
+
+func anyBool(v any) bool {
+	switch val := v.(type) {
+	case bool:
+		return val
+	case fmt.Stringer:
+		return strings.EqualFold(strings.TrimSpace(val.String()), "true")
+	default:
+		return false
 	}
 }
