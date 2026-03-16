@@ -51,7 +51,7 @@ const setToolCollapsedMock = vi.fn(async () => ({ ok: true }));
 const stopThreadMock = vi.fn(async () => ({ ok: true, recoveredFollowups: [] }));
 const approveToolMock = vi.fn(async () => ({ ok: true }));
 
-const fetchGatewayJSONMock = vi.fn(async (url: string) => {
+const defaultFetchGatewayJSON: (url: string) => Promise<any> = async (url: string) => {
   if (url.includes('/todos')) {
     return { todos: null };
   }
@@ -65,7 +65,9 @@ const fetchGatewayJSONMock = vi.fn(async (url: string) => {
     return { working_dir: '/workspace' };
   }
   return {};
-});
+};
+
+const fetchGatewayJSONMock = vi.fn(defaultFetchGatewayJSON);
 
 const gatewayRequestCredentialsMock = vi.fn(async () => 'same-origin');
 
@@ -318,6 +320,7 @@ vi.mock('./aiBlockPresentation', () => ({
 
 function resetScenario() {
   protocolState.status = 'connected';
+  fetchGatewayJSONMock.mockImplementation(defaultFetchGatewayJSON);
   aiState.activeThreadId = 'thread-1';
   aiState.activeThread = {
     thread_id: 'thread-1',
@@ -346,6 +349,24 @@ async function renderPage() {
   const dispose = render(() => <mod.EnvAIPage />, host);
   await flushAsync();
   return { host, dispose };
+}
+
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+function queuedPanel(host: HTMLElement): HTMLElement | null {
+  return host.querySelector('.flower-queued-turns-panel:not(.flower-followups-drafts-panel)');
+}
+
+function draftsPanel(host: HTMLElement): HTMLElement | null {
+  return host.querySelector('.flower-followups-drafts-panel');
 }
 
 function inputComposer(host: HTMLElement, value: string) {
@@ -608,6 +629,140 @@ export function registerEnvAIPageSendTests() {
           dispose();
         }
       });
+    });
+  });
+
+  describe('EnvAIPage queued follow-ups panel visibility', () => {
+    it('keeps the queued panel hidden while loading when the thread exposes no queued turns', async () => {
+      const followupsDeferred = createDeferred<{ queued: any[]; drafts: any[]; revision: number; paused_reason: string }>();
+      fetchGatewayJSONMock.mockImplementation(async (url: string) => {
+        if (url.includes('/followups')) {
+          return followupsDeferred.promise;
+        }
+        return defaultFetchGatewayJSON(url);
+      });
+
+      const { host, dispose } = await renderPage();
+      try {
+        expect(queuedPanel(host)).toBeNull();
+        expect(host.textContent).not.toContain('Loading queued follow-ups...');
+      } finally {
+        followupsDeferred.resolve({ queued: [], drafts: [], revision: 0, paused_reason: '' });
+        await flushAsync();
+        dispose();
+      }
+    });
+
+    it('shows the queued panel while details are loading when the thread already reports queued turns', async () => {
+      aiState.activeThread = {
+        ...(aiState.activeThread as MockThread),
+        queued_turn_count: 2,
+      };
+      const followupsDeferred = createDeferred<{ queued: any[]; drafts: any[]; revision: number; paused_reason: string }>();
+      fetchGatewayJSONMock.mockImplementation(async (url: string) => {
+        if (url.includes('/followups')) {
+          return followupsDeferred.promise;
+        }
+        return defaultFetchGatewayJSON(url);
+      });
+
+      const { host, dispose } = await renderPage();
+      try {
+        expect(queuedPanel(host)).toBeTruthy();
+        expect(queuedPanel(host)?.textContent).toContain('Queued follow-ups');
+        expect(host.textContent).toContain('Loading queued follow-ups...');
+      } finally {
+        followupsDeferred.resolve({ queued: [], drafts: [], revision: 0, paused_reason: '' });
+        await flushAsync();
+        dispose();
+      }
+    });
+
+    it('renders queued follow-up items after follow-ups load', async () => {
+      fetchGatewayJSONMock.mockImplementation(async (url: string) => {
+        if (url.includes('/followups')) {
+          return {
+            queued: [
+              {
+                followup_id: 'followup-1',
+                lane: 'queued',
+                message_id: 'message-1',
+                text: 'Inspect the deployment logs next.',
+                model_id: 'model-test',
+                execution_mode: 'act',
+                position: 1,
+                created_at_unix_ms: 1710000000000,
+                attachments: [],
+              },
+            ],
+            drafts: [],
+            revision: 1,
+            paused_reason: '',
+          };
+        }
+        return defaultFetchGatewayJSON(url);
+      });
+
+      const { host, dispose } = await renderPage();
+      try {
+        expect(queuedPanel(host)).toBeTruthy();
+        expect(host.textContent).toContain('Inspect the deployment logs next.');
+      } finally {
+        dispose();
+      }
+    });
+
+    it('does not render a standalone queued panel when an empty queue fails to load', async () => {
+      fetchGatewayJSONMock.mockImplementation(async (url: string) => {
+        if (url.includes('/followups')) {
+          throw new Error('followups unavailable');
+        }
+        return defaultFetchGatewayJSON(url);
+      });
+
+      const { host, dispose } = await renderPage();
+      try {
+        expect(queuedPanel(host)).toBeNull();
+        expect(host.textContent).not.toContain('followups unavailable');
+      } finally {
+        dispose();
+      }
+    });
+
+    it('keeps draft follow-ups visible when queued follow-ups are empty', async () => {
+      fetchGatewayJSONMock.mockImplementation(async (url: string) => {
+        if (url.includes('/followups')) {
+          return {
+            queued: [],
+            drafts: [
+              {
+                followup_id: 'draft-1',
+                lane: 'draft',
+                message_id: 'message-draft-1',
+                text: 'Draft the next investigation prompt.',
+                model_id: 'model-test',
+                execution_mode: 'plan',
+                position: 1,
+                created_at_unix_ms: 1710000000000,
+                attachments: [],
+              },
+            ],
+            revision: 2,
+            paused_reason: '',
+          };
+        }
+        return defaultFetchGatewayJSON(url);
+      });
+
+      const { host, dispose } = await renderPage();
+      try {
+        expect(draftsPanel(host)).toBeTruthy();
+        expect(host.textContent).toContain('Draft follow-ups');
+        expect(host.textContent).toContain('Draft the next investigation prompt.');
+        expect(queuedPanel(host)).toBeNull();
+      } finally {
+        dispose();
+      }
     });
   });
 }
