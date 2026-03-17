@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { batch, createSignal } from 'solid-js';
 import { render } from 'solid-js/web';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -14,6 +16,7 @@ vi.mock('@floegence/floe-webapp-core', () => ({
 }));
 
 const renderMarkdownSnapshotMock = vi.fn();
+const chatStyles = readFileSync(resolve(process.cwd(), 'src/ui/chat/chat.css'), 'utf8');
 
 vi.mock('../workers/markdownWorkerClient', () => ({
   renderMarkdownSnapshot: (...args: unknown[]) => renderMarkdownSnapshotMock(...args),
@@ -68,6 +71,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   document.body.innerHTML = '';
+  document.head.innerHTML = '';
 });
 
 describe('MarkdownBlock', () => {
@@ -155,5 +159,25 @@ describe('MarkdownBlock', () => {
     });
     expect(host.textContent).toContain('One');
     expect(host.textContent).toContain('Two');
+  });
+
+  it('preserves paragraph spacing across committed markdown segments', async () => {
+    const content = 'First paragraph.\n\nSecond paragraph.';
+    renderMarkdownSnapshotMock.mockResolvedValue(createSnapshot(content, false));
+
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+
+    render(() => <MarkdownBlock content={content} />, host);
+
+    await waitFor(() => {
+      expect(host.querySelectorAll('p')).toHaveLength(2);
+    });
+
+    const paragraphs = Array.from(host.querySelectorAll('p')) as HTMLParagraphElement[];
+    expect(chatStyles).toContain('.chat-markdown-block > :last-child p:last-child { margin-bottom: 0; }');
+    expect(chatStyles).not.toContain('.chat-markdown-block p:last-child { margin-bottom: 0; }');
+    expect(paragraphs[0].matches('.chat-markdown-block > :last-child p:last-child')).toBe(false);
+    expect(paragraphs[1].matches('.chat-markdown-block > :last-child p:last-child')).toBe(true);
   });
 });
