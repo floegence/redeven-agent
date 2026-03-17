@@ -14,6 +14,12 @@ const widgetStateStore = vi.hoisted(() => ({
   updateCalls: [] as Array<{ widgetId: string; key: string; value: unknown }>,
 }));
 
+const persistStore = vi.hoisted(() => ({
+  values: {} as Record<string, unknown>,
+  loadCalls: [] as Array<{ key: string; fallback: unknown }>,
+  saveCalls: [] as Array<{ key: string; value: unknown }>,
+}));
+
 const notificationStore = vi.hoisted(() => ({
   success: [] as Array<{ title: string; message?: string }>,
   error: [] as Array<{ title: string; message?: string }>,
@@ -93,8 +99,14 @@ vi.mock('@floegence/floe-webapp-core', async () => {
     }),
     useResolvedFloeConfig: () => ({
       persist: {
-        load: (_key: string, fallback: unknown) => fallback,
-        debouncedSave: () => {},
+        load: (key: string, fallback: unknown) => {
+          persistStore.loadCalls.push({ key, fallback });
+          return key in persistStore.values ? persistStore.values[key] : fallback;
+        },
+        debouncedSave: (key: string, value: unknown) => {
+          persistStore.saveCalls.push({ key, value });
+          persistStore.values[key] = value;
+        },
       },
     }),
     useLayout: () => ({
@@ -148,10 +160,12 @@ vi.mock('./FileBrowserWorkspace', () => ({
   FileBrowserWorkspace: (props: {
     mode: string;
     currentPath: string;
+    width?: number;
     resetKey?: number;
     captureTypingFromPage?: boolean;
     toolbarEndActions?: JSX.Element;
     onModeChange?: (mode: string) => void;
+    onResize?: (delta: number) => void;
     contextMenuCallbacks?: ContextMenuCallbacks;
     overrideContextMenuItems?: ContextMenuItem[];
   }) => {
@@ -173,10 +187,11 @@ vi.mock('./FileBrowserWorkspace', () => ({
 
     return (
       <div data-testid="files-workspace">
-        <div>files:{props.mode}:{props.currentPath}:{localCount()}:{props.captureTypingFromPage ? 'page' : 'scoped'}</div>
+        <div>files:{props.mode}:{props.currentPath}:{props.width ?? 0}:{localCount()}:{props.captureTypingFromPage ? 'page' : 'scoped'}</div>
         <div>{props.toolbarEndActions}</div>
         <button type="button" onClick={() => setLocalCount((count) => count + 1)}>mock-files-bump</button>
         <button type="button" onClick={() => props.onModeChange?.('git')}>mock-to-git</button>
+        <button type="button" onClick={() => props.onResize?.(24)}>mock-resize-sidebar</button>
         {props.overrideContextMenuItems?.some((item) => item.type === 'copy-name') ? (
           <button
             type="button"
@@ -195,7 +210,9 @@ vi.mock('./GitWorkspace', () => ({
     mode: string;
     currentPath: string;
     subview: string;
+    width?: number;
     onModeChange?: (mode: string) => void;
+    onResize?: (delta: number) => void;
     repoInfoLoading?: boolean;
     repoSummaryLoading?: boolean;
     workspaceLoading?: boolean;
@@ -244,8 +261,9 @@ vi.mock('./GitWorkspace', () => ({
 
     return (
       <div data-testid="git-workspace">
-        <div>git:{props.mode}:{props.subview}:{props.currentPath}</div>
+        <div>git:{props.mode}:{props.subview}:{props.currentPath}:{props.width ?? 0}</div>
         <button type="button" onClick={() => props.onModeChange?.('files')}>mock-to-files</button>
+        <button type="button" onClick={() => props.onResize?.(24)}>mock-resize-sidebar</button>
         <button type="button" onClick={() => props.onFetch?.()}>mock-fetch</button>
         <button type="button" onClick={() => props.onPull?.()}>mock-pull</button>
         <button type="button" onClick={() => props.onPush?.()}>mock-push</button>
@@ -340,6 +358,7 @@ beforeEach(() => {
 
   widgetStateStore.values = {
     'widget-1': {
+      browserSidebarWidth: 312,
       lastPathByEnv: { 'env-1': '/workspace/repo/src' },
       showHiddenByEnv: { 'env-1': false },
       pageModeByEnv: { 'env-1': 'git' },
@@ -347,6 +366,11 @@ beforeEach(() => {
     },
   };
   widgetStateStore.updateCalls = [];
+  persistStore.values = {
+    'redeven:remote-file-browser:page-sidebar-width': 268,
+  };
+  persistStore.loadCalls = [];
+  persistStore.saveCalls = [];
   notificationStore.success = [];
   notificationStore.error = [];
   notificationStore.warning = [];
@@ -474,7 +498,7 @@ describe('RemoteFileBrowser persistence', () => {
       const gitWorkspace = host.querySelector('[data-testid="git-workspace"]') as HTMLDivElement | null;
       const filesWorkspace = host.querySelector('[data-testid="files-workspace"]') as HTMLDivElement | null;
 
-      expect(gitWorkspace?.textContent).toContain('git:git:history:/workspace/repo/src');
+      expect(gitWorkspace?.textContent).toContain('git:git:history:/workspace/repo/src:312');
       expect(gitWorkspace?.parentElement?.style.display).toBe('block');
       expect(filesWorkspace).toBeTruthy();
       expect(filesWorkspace?.parentElement?.style.display).toBe('none');
@@ -532,8 +556,111 @@ describe('RemoteFileBrowser persistence', () => {
     }
   });
 
+  it('restores page and widget sidebar widths from their own surfaces without cross-writing on mount', async () => {
+    const pageHost = document.createElement('div');
+    const widgetHost = document.createElement('div');
+    document.body.append(pageHost, widgetHost);
+
+    const disposePage = render(() => (
+      <LayoutProvider>
+        <EnvContext.Provider value={createEnvContext()}>
+          <RemoteFileBrowser />
+        </EnvContext.Provider>
+      </LayoutProvider>
+    ), pageHost);
+    const disposeWidget = render(() => (
+      <LayoutProvider>
+        <EnvContext.Provider value={createEnvContext()}>
+          <RemoteFileBrowser widgetId="widget-1" />
+        </EnvContext.Provider>
+      </LayoutProvider>
+    ), widgetHost);
+
+    try {
+      await flush();
+
+      expect(pageHost.textContent).toContain('files:files:/workspace:268:0:page');
+      expect(widgetHost.textContent).toContain('git:git:history:/workspace/repo/src:312');
+      expect(widgetStateStore.updateCalls).toEqual([]);
+      expect(persistStore.saveCalls).toEqual([]);
+    } finally {
+      disposeWidget();
+      disposePage();
+    }
+  });
+
+  it('persists widget sidebar width only to widget state when the integrated browser is resized', async () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+
+    const dispose = render(() => (
+      <LayoutProvider>
+        <EnvContext.Provider value={createEnvContext()}>
+          <RemoteFileBrowser widgetId="widget-1" />
+        </EnvContext.Provider>
+      </LayoutProvider>
+    ), host);
+
+    try {
+      await flush();
+      widgetStateStore.updateCalls = [];
+      persistStore.saveCalls = [];
+
+      const resizeButton = Array.from(host.querySelectorAll('button')).find((node) => node.textContent === 'mock-resize-sidebar') as HTMLButtonElement | undefined;
+      expect(resizeButton).toBeTruthy();
+
+      resizeButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await flush();
+
+      expect(host.textContent).toContain('git:git:history:/workspace/repo/src:336');
+      expect(widgetStateStore.updateCalls).toContainEqual({
+        widgetId: 'widget-1',
+        key: 'browserSidebarWidth',
+        value: 336,
+      });
+      expect(persistStore.saveCalls).toEqual([]);
+    } finally {
+      dispose();
+    }
+  });
+
+  it('persists page sidebar width only to the dedicated page storage key when resized', async () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+
+    const dispose = render(() => (
+      <LayoutProvider>
+        <EnvContext.Provider value={createEnvContext()}>
+          <RemoteFileBrowser />
+        </EnvContext.Provider>
+      </LayoutProvider>
+    ), host);
+
+    try {
+      await flush();
+      widgetStateStore.updateCalls = [];
+      persistStore.saveCalls = [];
+
+      const resizeButton = Array.from(host.querySelectorAll('button')).find((node) => node.textContent === 'mock-resize-sidebar') as HTMLButtonElement | undefined;
+      expect(resizeButton).toBeTruthy();
+
+      resizeButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await flush();
+
+      expect(host.textContent).toContain('files:files:/workspace:292:0:page');
+      expect(persistStore.saveCalls).toContainEqual({
+        key: 'redeven:remote-file-browser:page-sidebar-width',
+        value: 292,
+      });
+      expect(widgetStateStore.updateCalls).toEqual([]);
+    } finally {
+      dispose();
+    }
+  });
+
   it('keeps the files workspace mounted after switching away so local state survives the round trip', async () => {
     widgetStateStore.values['widget-1'] = {
+      browserSidebarWidth: 312,
       lastPathByEnv: { 'env-1': '/workspace/repo/src' },
       pageModeByEnv: { 'env-1': 'files' },
       gitSubviewByEnv: { 'env-1': 'changes' },
@@ -574,6 +701,7 @@ describe('RemoteFileBrowser persistence', () => {
       expect(workspaceLifecycleStore.gitMounts).toBe(1);
       expect(filesWorkspace?.parentElement?.style.display).toBe('none');
       expect(gitWorkspace?.parentElement?.style.display).toBe('block');
+      expect(gitWorkspace?.textContent).toContain('git:git:changes:/workspace/repo/src:312');
 
       const toFilesButton = Array.from(host.querySelectorAll('button')).find((node) => node.textContent === 'mock-to-files') as HTMLButtonElement | undefined;
       expect(toFilesButton).toBeTruthy();
@@ -583,7 +711,7 @@ describe('RemoteFileBrowser persistence', () => {
       expect(workspaceLifecycleStore.filesMounts).toBe(1);
       expect(workspaceLifecycleStore.filesUnmounts).toBe(0);
       expect(filesWorkspace?.parentElement?.style.display).toBe('block');
-      expect(filesWorkspace?.textContent).toContain('files:files:/workspace/repo/src:1');
+      expect(filesWorkspace?.textContent).toContain('files:files:/workspace/repo/src:312:1');
     } finally {
       dispose();
     }
@@ -624,7 +752,7 @@ describe('RemoteFileBrowser persistence', () => {
       await flush();
 
       expect(mockRpc.fs.list).toHaveBeenLastCalledWith({ path: '/workspace/src', showHidden: false });
-      expect(host.textContent).toContain('files:files:/workspace/src:0');
+      expect(host.textContent).toContain('files:files:/workspace/src:240:0');
       expect(widgetStateStore.updateCalls).toContainEqual({
         widgetId: 'widget-1',
         key: 'showHiddenByEnv',
