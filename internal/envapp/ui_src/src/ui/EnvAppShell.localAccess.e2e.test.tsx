@@ -230,8 +230,91 @@ beforeEach(() => {
 });
 
 describe('EnvAppShell local access gate', () => {
+  it('waits for password unlock before connecting the local agent', async () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
 
+    const { EnvAppShell } = await import('./EnvAppShell');
+    const dispose = render(() => <EnvAppShell />, host);
+
+    try {
+      await flushAsync();
+
+      expect(host.textContent).toContain('Unlock local agent');
+      expect(connectMock).not.toHaveBeenCalled();
+      expect(mintLocalDirectConnectInfoMock).not.toHaveBeenCalled();
+
+      const input = host.querySelector('input[type="password"]') as HTMLInputElement | null;
+      expect(input).toBeTruthy();
+      input!.value = 'secret';
+      input!.dispatchEvent(new Event('input', { bubbles: true }));
+
+      const form = host.querySelector('form');
+      expect(form).toBeTruthy();
+      form!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+
+      await flushAsync();
+      await flushAsync();
+
+      expect(unlockLocalAccessMock).toHaveBeenCalledWith('secret');
+      expect(getLocalAccessStatusMock).toHaveBeenCalledTimes(1);
+      expect(connectMock).toHaveBeenCalledTimes(1);
+      const localConnectConfig = connectMock.mock.calls[0]?.[0];
+      expect(localConnectConfig).toMatchObject({
+        mode: 'direct',
+        observer: expect.any(Object),
+        connect: { keepaliveIntervalMs: 15_000 },
+        getDirectInfo: expect.any(Function),
+        autoReconnect: {
+          enabled: true,
+          maxAttempts: 1_000_000,
+          initialDelayMs: 500,
+          maxDelayMs: 30_000,
+        },
+      });
+      expect(localConnectConfig).not.toHaveProperty('directInfo');
+      expect(mintLocalDirectConnectInfoMock).not.toHaveBeenCalled();
+      expect(accessResumeMock).not.toHaveBeenCalled();
+      expect(resumeCalls).toEqual([]);
+      expect(host.textContent).not.toContain('Unlock local agent');
+      expect(host.textContent).toContain('activity main');
+      expect(host.textContent).not.toContain('Preparing secure session');
+    } finally {
+      dispose();
+    }
+  });
+
+  it('reuses an existing unlocked local session without prompting for password', async () => {
+    getLocalAccessStatusMock.mockResolvedValue({ password_required: true, unlocked: true });
+
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+
+    const { EnvAppShell } = await import('./EnvAppShell');
+    const dispose = render(() => <EnvAppShell />, host);
+
+    try {
+      await flushAsync();
+      await flushAsync();
+
+      expect(host.textContent).not.toContain('Unlock local agent');
+      expect(host.querySelector('input[type="password"]')).toBeFalsy();
+      expect(connectMock).toHaveBeenCalledTimes(1);
+      expect(unlockLocalAccessMock).not.toHaveBeenCalled();
+      expect(accessResumeMock).not.toHaveBeenCalled();
+      expect(host.textContent).toContain('activity main');
+    } finally {
+      dispose();
+    }
+  });
+});
+
+
+describe('EnvAppShell remote access gate', () => {
   it('keeps the app blocked until access resume finishes', async () => {
+    getLocalRuntimeMock.mockResolvedValue(null);
+    getEnvPublicIDFromSessionMock.mockReturnValue('env_demo');
+
     const resumeDeferred = deferred<void>();
     accessResumeMock.mockImplementationOnce(async ({ token }: { token: string }) => {
       resumeCalls.push(token);
@@ -275,6 +358,9 @@ describe('EnvAppShell local access gate', () => {
   });
 
   it('exposes retry and reload actions after the secure-session resume times out', async () => {
+    getLocalRuntimeMock.mockResolvedValue(null);
+    getEnvPublicIDFromSessionMock.mockReturnValue('env_demo');
+
     vi.useFakeTimers();
     accessResumeMock.mockImplementationOnce(async ({ token }: { token: string }) => {
       resumeCalls.push(token);
@@ -323,6 +409,9 @@ describe('EnvAppShell local access gate', () => {
   });
 
   it('retries with a fresh connection after a timed-out secure-session resume', async () => {
+    getLocalRuntimeMock.mockResolvedValue(null);
+    getEnvPublicIDFromSessionMock.mockReturnValue('env_demo');
+
     vi.useFakeTimers();
     let statusCalls = 0;
     accessStatusMock.mockImplementation(async () => {
@@ -386,6 +475,8 @@ describe('EnvAppShell local access gate', () => {
   });
 
   it('returns to the password prompt when the resume token is rejected', async () => {
+    getLocalRuntimeMock.mockResolvedValue(null);
+    getEnvPublicIDFromSessionMock.mockReturnValue('env_demo');
     accessResumeMock.mockRejectedValueOnce(Object.assign(new Error('invalid resume token'), { code: 401 }));
 
     const host = document.createElement('div');
@@ -410,7 +501,7 @@ describe('EnvAppShell local access gate', () => {
       await flushAsync();
 
       expect(accessResumeMock).toHaveBeenCalledWith({ token: 'resume123' });
-      expect(host.textContent).toContain('Unlock local agent');
+      expect(host.textContent).toContain('Unlock agent');
       expect(host.textContent).toContain('Access password expired. Enter it again to continue.');
       expect(host.querySelector('input[type="password"]')).toBeTruthy();
     } finally {
@@ -418,62 +509,6 @@ describe('EnvAppShell local access gate', () => {
     }
   });
 
-  it('waits for password unlock before connecting the local agent', async () => {
-    const host = document.createElement('div');
-    document.body.appendChild(host);
-
-    const { EnvAppShell } = await import('./EnvAppShell');
-    const dispose = render(() => <EnvAppShell />, host);
-
-    try {
-      await flushAsync();
-
-      expect(host.textContent).toContain('Unlock local agent');
-      expect(connectMock).not.toHaveBeenCalled();
-      expect(mintLocalDirectConnectInfoMock).not.toHaveBeenCalled();
-
-      const input = host.querySelector('input[type="password"]') as HTMLInputElement | null;
-      expect(input).toBeTruthy();
-      input!.value = 'secret';
-      input!.dispatchEvent(new Event('input', { bubbles: true }));
-
-      const form = host.querySelector('form');
-      expect(form).toBeTruthy();
-      form!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-
-      await flushAsync();
-      await flushAsync();
-
-      expect(unlockLocalAccessMock).toHaveBeenCalledWith('secret');
-      expect(getLocalAccessStatusMock).toHaveBeenCalledTimes(1);
-      expect(connectMock).toHaveBeenCalledTimes(1);
-      const localConnectConfig = connectMock.mock.calls[0]?.[0];
-      expect(localConnectConfig).toMatchObject({
-        mode: 'direct',
-        observer: expect.any(Object),
-        connect: { keepaliveIntervalMs: 15_000 },
-        getDirectInfo: expect.any(Function),
-        autoReconnect: {
-          enabled: true,
-          maxAttempts: 1_000_000,
-          initialDelayMs: 500,
-          maxDelayMs: 30_000,
-        },
-      });
-      expect(localConnectConfig).not.toHaveProperty('directInfo');
-      expect(mintLocalDirectConnectInfoMock).not.toHaveBeenCalled();
-      expect(accessResumeMock).toHaveBeenCalledWith({ token: 'resume123' });
-      expect(resumeCalls).toEqual(['resume123']);
-      expect(host.textContent).not.toContain('Unlock local agent');
-      expect(host.textContent).toContain('activity main');
-    } finally {
-      dispose();
-    }
-  });
-});
-
-
-describe('EnvAppShell remote access gate', () => {
   it('waits for password unlock before connecting the remote agent', async () => {
     getLocalRuntimeMock.mockResolvedValue(null);
     getEnvPublicIDFromSessionMock.mockReturnValue('env_demo');

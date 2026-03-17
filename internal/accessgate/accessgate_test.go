@@ -118,3 +118,28 @@ func TestGate_UnlockRejectsWrongPassword(t *testing.T) {
 		t.Fatalf("UnlockChannel() expected error for wrong password")
 	}
 }
+
+func TestGate_RegisterChannelWithOptionsStartsUnlocked(t *testing.T) {
+	gate := New(Options{Password: "secret"})
+	meta := session.Meta{
+		ChannelID:    "ch-local",
+		EndpointID:   "env_local",
+		FloeApp:      "com.floegence.redeven.agent",
+		CodeSpaceID:  "env-ui",
+		SessionKind:  "envapp_rpc",
+		UserPublicID: "user_local",
+	}
+
+	gate.RegisterChannelWithOptions(meta, RegisterChannelOptions{Unlocked: true})
+
+	status := gate.Status(meta.ChannelID)
+	if !status.PasswordRequired {
+		t.Fatalf("status.PasswordRequired = false, want true")
+	}
+	if !status.Unlocked {
+		t.Fatalf("status.Unlocked = false, want true")
+	}
+	if !gate.IsChannelUnlocked(meta.ChannelID) {
+		t.Fatalf("channel should start unlocked")
+	}
+}

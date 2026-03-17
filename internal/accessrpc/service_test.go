@@ -88,3 +88,51 @@ func TestService_ResumeUnlocksProtectedRPC(t *testing.T) {
 		t.Fatalf("fs.get_path_context returned empty agent_home_path_abs")
 	}
 }
+
+func TestService_InitiallyUnlockedChannelSkipsResume(t *testing.T) {
+	gate := accessgate.New(accessgate.Options{Password: "secret"})
+	rpcMeta := session.Meta{
+		ChannelID:    "ch-local",
+		EndpointID:   "env_local",
+		FloeApp:      "com.floegence.redeven.agent",
+		CodeSpaceID:  "env-ui",
+		SessionKind:  "envapp_rpc",
+		UserPublicID: "user_local",
+		CanRead:      true,
+	}
+
+	gate.RegisterChannelWithOptions(rpcMeta, accessgate.RegisterChannelOptions{Unlocked: true})
+
+	serverConn, clientConn := net.Pipe()
+	defer serverConn.Close()
+	defer clientConn.Close()
+
+	router := rpc.NewRouter()
+	New(gate).Register(router, &rpcMeta)
+	fs.NewService(t.TempDir()).RegisterWithAccessGate(router, &rpcMeta, gate)
+
+	srv := rpc.NewServer(serverConn, router)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		_ = srv.Serve(ctx)
+	}()
+
+	client := rpc.NewClient(clientConn)
+
+	status, err := rpctyped.Call[struct{}, StatusResponse](ctx, client, TypeIDAccessStatus, &struct{}{})
+	if err != nil {
+		t.Fatalf("access.status error = %v", err)
+	}
+	if !status.PasswordRequired || !status.Unlocked {
+		t.Fatalf("unexpected initial status: %#v", status)
+	}
+
+	pathContext, err := rpctyped.Call[struct{}, map[string]string](ctx, client, fs.TypeID_FS_GET_PATH_CONTEXT, &struct{}{})
+	if err != nil {
+		t.Fatalf("fs.get_path_context without resume error = %v", err)
+	}
+	if pathContext == nil || (*pathContext)["agent_home_path_abs"] == "" {
+		t.Fatalf("fs.get_path_context returned empty agent_home_path_abs")
+	}
+}

@@ -49,6 +49,10 @@ type LocalSessionResult struct {
 	ResumeExpiresAtUnix  int64  `json:"resume_expires_at_unix_ms,omitempty"`
 }
 
+type RegisterChannelOptions struct {
+	Unlocked bool
+}
+
 type channelState struct {
 	meta       session.Meta
 	unlocked   bool
@@ -125,6 +129,10 @@ func (g *Gate) VerifyPassword(password string) bool {
 }
 
 func (g *Gate) RegisterChannel(meta session.Meta) {
+	g.RegisterChannelWithOptions(meta, RegisterChannelOptions{})
+}
+
+func (g *Gate) RegisterChannelWithOptions(meta session.Meta, opts RegisterChannelOptions) {
 	if g == nil || !g.enabled {
 		return
 	}
@@ -132,11 +140,19 @@ func (g *Gate) RegisterChannel(meta session.Meta) {
 	if channelID == "" {
 		return
 	}
+	now := time.Now()
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.cleanupExpiredLocked(time.Now())
+	g.cleanupExpiredLocked(now)
 	metaCopy := meta
-	g.channels[channelID] = &channelState{meta: metaCopy}
+	state := &channelState{
+		meta:     metaCopy,
+		unlocked: opts.Unlocked,
+	}
+	if opts.Unlocked {
+		state.unlockedAt = now
+	}
+	g.channels[channelID] = state
 }
 
 func (g *Gate) UnregisterChannel(channelID string) {
