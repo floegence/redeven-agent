@@ -95,6 +95,20 @@ func TestServer_E2E_LocalPasswordFlow(t *testing.T) {
 		t.Fatalf("unexpected unlock body: %#v", unlockBody)
 	}
 
+	headerRuntimeReq, err := http.NewRequest(http.MethodGet, srv.URL+"/api/local/runtime", nil)
+	if err != nil {
+		t.Fatalf("NewRequest header runtime error = %v", err)
+	}
+	headerRuntimeReq.Header.Set(localAccessResumeHeader, unlockBody.Data.ResumeToken)
+	headerRuntimeResp, err := http.DefaultClient.Do(headerRuntimeReq)
+	if err != nil {
+		t.Fatalf("GET header runtime error = %v", err)
+	}
+	defer headerRuntimeResp.Body.Close()
+	if headerRuntimeResp.StatusCode != http.StatusOK {
+		t.Fatalf("header runtime status = %d, want %d", headerRuntimeResp.StatusCode, http.StatusOK)
+	}
+
 	runtimeResp, err := client.Get(srv.URL + "/api/local/runtime")
 	if err != nil {
 		t.Fatalf("GET unlocked runtime error = %v", err)
@@ -111,5 +125,19 @@ func TestServer_E2E_LocalPasswordFlow(t *testing.T) {
 	defer connectInfoResp.Body.Close()
 	if connectInfoResp.StatusCode != http.StatusOK {
 		t.Fatalf("connect_info status = %d, want %d", connectInfoResp.StatusCode, http.StatusOK)
+	}
+
+	headerConnectReq, err := http.NewRequest(http.MethodPost, srv.URL+"/api/local/direct/connect_info", bytes.NewBufferString(`{}`))
+	if err != nil {
+		t.Fatalf("NewRequest header connect_info error = %v", err)
+	}
+	headerConnectReq.Header.Set(localAccessResumeHeader, unlockBody.Data.ResumeToken)
+	headerConnectResp, err := http.DefaultClient.Do(headerConnectReq)
+	if err != nil {
+		t.Fatalf("POST header connect_info error = %v", err)
+	}
+	defer headerConnectResp.Body.Close()
+	if headerConnectResp.StatusCode != http.StatusOK {
+		t.Fatalf("header connect_info status = %d, want %d", headerConnectResp.StatusCode, http.StatusOK)
 	}
 }

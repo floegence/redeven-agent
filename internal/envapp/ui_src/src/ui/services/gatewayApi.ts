@@ -1,4 +1,5 @@
 import { getLocalRuntime } from './controlplaneApi';
+import { applyLocalAccessResumeHeader } from './localAccessAuth';
 
 export type GatewayAccessStatus = {
   password_required: boolean;
@@ -19,6 +20,14 @@ function gatewayErrorMessage(data: any, status: number): string {
   return `HTTP ${status}`;
 }
 
+function shouldSetJSONContentType(body: BodyInit | null | undefined): boolean {
+  if (body == null) return false;
+  if (typeof FormData !== 'undefined' && body instanceof FormData) return false;
+  if (typeof URLSearchParams !== 'undefined' && body instanceof URLSearchParams) return false;
+  if (typeof Blob !== 'undefined' && body instanceof Blob) return false;
+  return true;
+}
+
 export async function gatewayRequestCredentials(): Promise<RequestCredentials> {
   try {
     return (await getLocalRuntime()) ? 'same-origin' : 'omit';
@@ -27,16 +36,30 @@ export async function gatewayRequestCredentials(): Promise<RequestCredentials> {
   }
 }
 
-export async function fetchGatewayJSON<T>(url: string, init: RequestInit): Promise<T> {
+export async function prepareGatewayRequestInit(init: RequestInit): Promise<RequestInit> {
   const headers = new Headers(init.headers);
-  if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+  if (shouldSetJSONContentType(init.body) && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
 
-  const resp = await fetch(url, {
+  try {
+    if (await getLocalRuntime()) {
+      applyLocalAccessResumeHeader(headers);
+    }
+  } catch {
+    // ignore
+  }
+
+  return {
     ...init,
     headers,
     credentials: init.credentials ?? (await gatewayRequestCredentials()),
     cache: 'no-store',
-  });
+  };
+}
+
+export async function fetchGatewayJSON<T>(url: string, init: RequestInit): Promise<T> {
+  const resp = await fetch(url, await prepareGatewayRequestInit(init));
   const text = await resp.text();
   let data: any = null;
   try {

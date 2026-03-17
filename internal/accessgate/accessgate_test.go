@@ -76,6 +76,40 @@ func TestGate_LocalSessionLifecycle(t *testing.T) {
 	}
 }
 
+func TestGate_CanResumeMetaAndRevokeResumeToken(t *testing.T) {
+	gate := New(Options{Password: "secret"})
+
+	result, err := gate.MintLocalSession("secret")
+	if err != nil {
+		t.Fatalf("MintLocalSession() error = %v", err)
+	}
+	if result == nil || result.ResumeToken == "" {
+		t.Fatalf("MintLocalSession() missing resume token: %#v", result)
+	}
+
+	localMeta := session.Meta{
+		EndpointID:   "env_local",
+		FloeApp:      "com.floegence.redeven.agent",
+		CodeSpaceID:  "env-ui",
+		SessionKind:  "envapp_rpc",
+		UserPublicID: "user_local",
+	}
+	if !gate.CanResumeMeta(result.ResumeToken, localMeta) {
+		t.Fatalf("resume token should match local meta")
+	}
+
+	mismatched := localMeta
+	mismatched.EndpointID = "env_other"
+	if gate.CanResumeMeta(result.ResumeToken, mismatched) {
+		t.Fatalf("resume token should reject mismatched meta")
+	}
+
+	gate.RevokeResumeToken(result.ResumeToken)
+	if gate.CanResumeMeta(result.ResumeToken, localMeta) {
+		t.Fatalf("resume token should be revoked")
+	}
+}
+
 func TestGate_UnlockRejectsWrongPassword(t *testing.T) {
 	gate := New(Options{Password: "secret"})
 	gate.RegisterChannel(session.Meta{ChannelID: "ch-1"})

@@ -20,7 +20,8 @@ import { useProtocol } from "@floegence/floe-webapp-protocol";
 import { useRedevenRpc, type FsFileInfo } from "../protocol/redeven_v1";
 import { getEnvPublicIDFromSession, getLocalRuntime, mintEnvEntryTicketForApp } from "../services/controlplaneApi";
 import { FLOE_APP_CODE } from "../services/floeproxyContract";
-import { gatewayRequestCredentials } from "../services/gatewayApi";
+import { fetchGatewayJSON } from "../services/gatewayApi";
+import { appendLocalAccessResumeQuery } from "../services/localAccessAuth";
 import { trustedLauncherOriginFromSandboxLocation } from "../services/sandboxOrigins";
 import { registerSandboxWindow } from "../services/sandboxWindowRegistry";
 
@@ -38,29 +39,6 @@ type SpaceStatus = Readonly<{
 }>;
 
 type CodespaceBusyAction = "open" | "start" | "stop";
-
-
-async function fetchGatewayJSON<T>(url: string, init: RequestInit): Promise<T> {
-  const headers = new Headers(init.headers);
-  if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
-
-  const resp = await fetch(url, {
-    ...init,
-    headers,
-    credentials: init.credentials ?? (await gatewayRequestCredentials()),
-    cache: "no-store",
-  });
-  const text = await resp.text();
-  let data: any = null;
-  try {
-    data = text ? JSON.parse(text) : null;
-  } catch {
-    // ignore
-  }
-  if (!resp.ok) throw new Error(data?.error ?? `HTTP ${resp.status}`);
-  if (data?.ok === false) throw new Error(String(data?.error ?? "Request failed"));
-  return (data?.data ?? data) as T;
-}
 
 function fmtTime(ms: number): string {
   if (!ms) return "Never";
@@ -127,7 +105,7 @@ async function openCodespace(codeSpaceID: string, setStatus: (s: string) => void
       const sp = await fetchGatewayJSON<SpaceStatus>(`/_redeven_proxy/api/spaces/${encodeURIComponent(codeSpaceID)}/start`, { method: "POST" });
       const folder = String(sp?.workspace_path ?? "").trim();
       const basePath = `/cs/${encodeURIComponent(codeSpaceID)}/`;
-      const url = folder ? `${basePath}?folder=${encodeURIComponent(folder)}` : basePath;
+      const url = appendLocalAccessResumeQuery(folder ? `${basePath}?folder=${encodeURIComponent(folder)}` : basePath);
       setStatus("Opening...");
       win.location.assign(url);
       return;

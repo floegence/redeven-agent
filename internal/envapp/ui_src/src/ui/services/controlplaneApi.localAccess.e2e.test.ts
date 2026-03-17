@@ -67,10 +67,13 @@ describe('controlplaneApi local access flow', () => {
   });
 
   it('uses same-origin credentials when minting local direct connect info', async () => {
+    const auth = await import('./localAccessAuth');
+    auth.writeLocalAccessResumeToken('resume123');
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       expect(String(input)).toBe('/api/local/direct/connect_info');
       expect(init?.method).toBe('POST');
       expect(init?.credentials).toBe('same-origin');
+      expect(new Headers(init?.headers).get(auth.getLocalAccessResumeHeaderName())).toBe('resume123');
       return jsonResponse({
         ws_url: 'ws://localhost/_redeven_direct/ws',
         channel_id: 'ch_local',
@@ -85,6 +88,7 @@ describe('controlplaneApi local access flow', () => {
     const out = await mod.mintLocalDirectConnectInfo();
 
     expect(out.channel_id).toBe('ch_local');
+    expect(String(out.ws_url)).toBe('ws://localhost/_redeven_direct/ws?redeven_access_resume=resume123');
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 

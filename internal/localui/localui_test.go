@@ -182,6 +182,22 @@ func TestServer_LocalAccessUnlockFlow(t *testing.T) {
 		t.Fatalf("unexpected unlock body: %#v", unlockBody)
 	}
 
+	resumeRuntimeReq := httptest.NewRequest(http.MethodGet, "http://localhost:23998/api/local/runtime", nil)
+	resumeRuntimeReq.Header.Set(localAccessResumeHeader, unlockBody.Data.ResumeToken)
+	resumeRuntimeRes := httptest.NewRecorder()
+	s.handleRuntime(resumeRuntimeRes, resumeRuntimeReq)
+	if resumeRuntimeRes.Result().StatusCode != http.StatusOK {
+		t.Fatalf("resume-token runtime status = %d, want %d", resumeRuntimeRes.Result().StatusCode, http.StatusOK)
+	}
+
+	resumeConnectReq := httptest.NewRequest(http.MethodPost, "http://localhost:23998/api/local/direct/connect_info", bytes.NewBufferString(`{}`))
+	resumeConnectReq.Header.Set(localAccessResumeHeader, unlockBody.Data.ResumeToken)
+	resumeConnectRes := httptest.NewRecorder()
+	s.handleConnectInfo(resumeConnectRes, resumeConnectReq)
+	if resumeConnectRes.Result().StatusCode != http.StatusOK {
+		t.Fatalf("resume-token connect_info status = %d, want %d", resumeConnectRes.Result().StatusCode, http.StatusOK)
+	}
+
 	cookies := unlockRes.Result().Cookies()
 	if len(cookies) == 0 {
 		t.Fatalf("expected access cookie")
@@ -217,6 +233,47 @@ func TestServer_LocalAccessUnlockFlow(t *testing.T) {
 	s.handleRuntime(revokedRes, revokedReq)
 	if revokedRes.Result().StatusCode != http.StatusLocked {
 		t.Fatalf("revoked runtime status = %d, want %d", revokedRes.Result().StatusCode, http.StatusLocked)
+	}
+}
+
+func TestServer_LocalAccessRejectsInvalidResumeToken(t *testing.T) {
+	gate := accessgate.New(accessgate.Options{Password: "secret"})
+	s := newTestServer(t, gate)
+
+	req := httptest.NewRequest(http.MethodGet, "http://localhost:23998/api/local/runtime", nil)
+	req.Header.Set(localAccessResumeHeader, "invalid-token")
+	res := httptest.NewRecorder()
+	s.handleRuntime(res, req)
+	if res.Result().StatusCode != http.StatusLocked {
+		t.Fatalf("status = %d, want %d", res.Result().StatusCode, http.StatusLocked)
+	}
+}
+
+func TestServer_hasLocalAccess_acceptsResumeTokenQuery(t *testing.T) {
+	gate := accessgate.New(accessgate.Options{Password: "secret"})
+	s := newTestServer(t, gate)
+
+	unlockReq := httptest.NewRequest(http.MethodPost, "http://localhost:23998/api/local/access/unlock", bytes.NewBufferString(`{"password":"secret"}`))
+	unlockReq.Header.Set("Content-Type", "application/json")
+	unlockRes := httptest.NewRecorder()
+	s.handleAccessUnlock(unlockRes, unlockReq)
+
+	var unlockBody struct {
+		OK   bool `json:"ok"`
+		Data struct {
+			ResumeToken string `json:"resume_token"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(unlockRes.Body.Bytes(), &unlockBody); err != nil {
+		t.Fatalf("decode unlock body error = %v", err)
+	}
+	if unlockBody.Data.ResumeToken == "" {
+		t.Fatalf("expected resume token")
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "http://localhost:23998/_redeven_direct/ws?"+localAccessResumeQuery+"="+unlockBody.Data.ResumeToken, nil)
+	if !s.hasLocalAccess(req) {
+		t.Fatalf("expected query resume token to grant local access")
 	}
 }
 
