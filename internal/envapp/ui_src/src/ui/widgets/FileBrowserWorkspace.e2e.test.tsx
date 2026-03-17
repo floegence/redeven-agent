@@ -643,6 +643,43 @@ describe('FileBrowserWorkspace interactions', () => {
     }
   });
 
+  it('marks both sidebar tree rows and main file items as touch-selection-guarded targets', async () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+
+    const dispose = render(() => (
+      <LayoutProvider>
+        <div class="h-[560px]">
+          <FileBrowserWorkspace
+            mode="files"
+            onModeChange={() => {}}
+            files={files}
+            currentPath="/"
+            initialPath="/"
+            persistenceKey="test-files-workspace-touch-guard"
+            instanceId="test-files-workspace-touch-guard"
+            resetKey={0}
+            width={260}
+            open
+          />
+        </div>
+      </LayoutProvider>
+    ), host);
+
+    try {
+      await flush();
+
+      const sidebarTreeRow = host.querySelector('[data-tree-row-path="/src"]');
+      const readmeButton = Array.from(host.querySelectorAll('button'))
+        .find((node) => node.textContent?.includes('README.md'));
+
+      expect(sidebarTreeRow?.getAttribute('data-file-browser-touch-target')).toBe('true');
+      expect(readmeButton?.getAttribute('data-file-browser-touch-target')).toBe('true');
+    } finally {
+      dispose();
+    }
+  });
+
   it('remounts the file browser provider when resetKey changes', async () => {
     const host = document.createElement('div');
     document.body.appendChild(host);

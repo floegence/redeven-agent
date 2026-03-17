@@ -143,6 +143,7 @@ function FileBrowserSidebarTreeRow(props: FileBrowserSidebarTreeRowProps) {
             props.registerRow(props.item.path, el);
           }}
           type="button"
+          data-file-browser-touch-target="true"
           data-tree-row-path={props.item.path}
           class="flex min-w-0 flex-1 cursor-pointer items-center gap-1 rounded py-0.5 pl-1 pr-1.5 text-left text-xs text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sidebar-ring focus-visible:ring-inset"
           aria-current={isCurrent() ? 'page' : undefined}
