@@ -65,4 +65,12 @@ describe('file preview wiring', () => {
     expect(chatSrc).not.toContain("import { FilePreviewDialog } from './FilePreviewDialog';");
     expect(chatSrc).not.toContain('<FilePreviewDialog');
   });
+
+  it('keeps the chat FAB file browser sidebar persistence scoped to its own surface', () => {
+    const chatSrc = read('./ChatFileBrowserFAB.tsx');
+
+    expect(chatSrc).toContain("const CHAT_FAB_SIDEBAR_WIDTH_STORAGE_KEY = 'chat-fab-files:sidebar-width';");
+    expect(chatSrc).toContain('sidebarWidthStorageKey={CHAT_FAB_SIDEBAR_WIDTH_STORAGE_KEY}');
+    expect(chatSrc).toContain('persistenceKey="chat-fab-files"');
+  });
 });

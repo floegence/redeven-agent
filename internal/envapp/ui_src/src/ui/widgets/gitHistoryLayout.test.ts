@@ -14,8 +14,11 @@ describe('browser workspace layout wiring', () => {
     const src = read('./RemoteFileBrowser.tsx');
 
     expect(src).toContain("const PAGE_SIDEBAR_WIDTH_STORAGE_KEY = 'redeven:remote-file-browser:page-sidebar-width';");
+    expect(src).toContain("const WIDGET_SIDEBAR_WIDTH_STATE_KEY = 'browserSidebarWidth';");
     expect(src).toContain('width={browserSidebarWidth()}');
-    expect(src).toContain('setBrowserSidebarWidth((width) => normalizePageSidebarWidth(width + delta))');
+    expect(src).toContain('const commitBrowserSidebarWidth = (value: number) => {');
+    expect(src).toContain('writePersistedSidebarWidth(next);');
+    expect(src).toContain('commitBrowserSidebarWidth(browserSidebarWidth() + delta)');
   });
 
   it('routes files mode and git mode through dedicated unified workspace shells', () => {

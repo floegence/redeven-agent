@@ -52,6 +52,7 @@ function normalizeAbsolutePath(path: string): string {
 const FAB_SIZE = 44;
 const EDGE_MARGIN = 12;
 const FILE_BROWSER_WINDOW_Z_INDEX = 44;
+const CHAT_FAB_SIDEBAR_WIDTH_STORAGE_KEY = 'chat-fab-files:sidebar-width';
 
 // ---- component ----
 
@@ -651,6 +652,7 @@ export function ChatFileBrowserFAB(props: ChatFileBrowserFABProps) {
                 initialViewMode="list"
                 homeLabel={browserHomeLabel()}
                 sidebarWidth={200}
+                sidebarWidthStorageKey={CHAT_FAB_SIDEBAR_WIDTH_STORAGE_KEY}
                 persistenceKey="chat-fab-files"
                 instanceId="chat-fab-files"
                 onNavigate={(path) => {

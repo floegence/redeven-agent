@@ -89,6 +89,7 @@ const PAGE_SIDEBAR_DEFAULT_WIDTH = 240;
 const PAGE_SIDEBAR_MIN_WIDTH = 180;
 const PAGE_SIDEBAR_MAX_WIDTH = 520;
 const PAGE_SIDEBAR_WIDTH_STORAGE_KEY = 'redeven:remote-file-browser:page-sidebar-width';
+const WIDGET_SIDEBAR_WIDTH_STATE_KEY = 'browserSidebarWidth';
 const PAGE_MODE_STORAGE_KEY_PREFIX = 'redeven:remote-file-browser:page-mode:';
 const GIT_SUBVIEW_STORAGE_KEY_PREFIX = 'redeven:remote-file-browser:git-subview:';
 const SHOW_HIDDEN_STORAGE_KEY_PREFIX = 'redeven:remote-file-browser:show-hidden:';
@@ -196,6 +197,28 @@ export function RemoteFileBrowser(props: RemoteFileBrowserProps = {}) {
   const envId = () => (ctx.env_id() ?? '').trim();
   const useExternalMobileSidebarToggle = () => !props.widgetId;
 
+  function readPersistedSidebarWidth(): number {
+    if (props.widgetId) {
+      const state = deck.getWidgetState(props.widgetId);
+      return normalizePageSidebarWidth((state as any)[WIDGET_SIDEBAR_WIDTH_STATE_KEY]);
+    }
+
+    return normalizePageSidebarWidth(
+      floe.persist.load<number>(PAGE_SIDEBAR_WIDTH_STORAGE_KEY, PAGE_SIDEBAR_DEFAULT_WIDTH)
+    );
+  }
+
+  function writePersistedSidebarWidth(value: number): void {
+    const next = normalizePageSidebarWidth(value);
+
+    if (props.widgetId) {
+      deck.updateWidgetState(props.widgetId, WIDGET_SIDEBAR_WIDTH_STATE_KEY, next);
+      return;
+    }
+
+    floe.persist.debouncedSave(PAGE_SIDEBAR_WIDTH_STORAGE_KEY, next);
+  }
+
   const [files, setFiles] = createSignal<FileItem[]>([]);
   const [loading, setLoading] = createSignal(false);
 
@@ -241,9 +264,7 @@ export function RemoteFileBrowser(props: RemoteFileBrowserProps = {}) {
   const [gitNextOffset, setGitNextOffset] = createSignal(0);
   const [gitCommitListRef, setGitCommitListRef] = createSignal('');
   const [selectedCommitHash, setSelectedCommitHash] = createSignal('');
-  const [browserSidebarWidth, setBrowserSidebarWidth] = createSignal(
-    normalizePageSidebarWidth(floe.persist.load<number>(PAGE_SIDEBAR_WIDTH_STORAGE_KEY, PAGE_SIDEBAR_DEFAULT_WIDTH))
-  );
+  const [browserSidebarWidth, setBrowserSidebarWidth] = createSignal(readPersistedSidebarWidth());
   const [browserSidebarOpen, setBrowserSidebarOpen] = createSignal(false);
   const [gitSubview, setGitSubview] = createSignal<GitWorkbenchSubview>('changes');
   const [gitRepoSummary, setGitRepoSummary] = createSignal<GitRepoSummaryResponse | null>(null);
@@ -469,6 +490,12 @@ export function RemoteFileBrowser(props: RemoteFileBrowserProps = {}) {
     }
 
     floe.persist.debouncedSave(`${GIT_SUBVIEW_STORAGE_KEY_PREFIX}${eid}`, next);
+  };
+
+  const commitBrowserSidebarWidth = (value: number) => {
+    const next = normalizePageSidebarWidth(value);
+    setBrowserSidebarWidth(next);
+    writePersistedSidebarWidth(next);
   };
 
   const resolveFsRootAbs = async (): Promise<string> => {
@@ -1323,10 +1350,6 @@ export function RemoteFileBrowser(props: RemoteFileBrowserProps = {}) {
   );
 
   createEffect(() => {
-    floe.persist.debouncedSave(PAGE_SIDEBAR_WIDTH_STORAGE_KEY, browserSidebarWidth());
-  });
-
-  createEffect(() => {
     const id = envId();
     const restored = untrack(() => ({
       nextPath: id ? readPersistedLastPath(id) : '',
@@ -2125,7 +2148,7 @@ export function RemoteFileBrowser(props: RemoteFileBrowserProps = {}) {
                       width={browserSidebarWidth()}
                       open={pageSidebarOpen()}
                       resizable
-                      onResize={(delta) => setBrowserSidebarWidth((width) => normalizePageSidebarWidth(width + delta))}
+                      onResize={(delta) => commitBrowserSidebarWidth(browserSidebarWidth() + delta)}
                       onClose={closePageSidebar}
                       showMobileSidebarButton={layout.isMobile() && Boolean(props.widgetId)}
                       onToggleSidebar={togglePageSidebar}
@@ -2165,7 +2188,7 @@ export function RemoteFileBrowser(props: RemoteFileBrowserProps = {}) {
                       width={browserSidebarWidth()}
                       open={pageSidebarOpen()}
                       resizable
-                      onResize={(delta) => setBrowserSidebarWidth((width) => normalizePageSidebarWidth(width + delta))}
+                      onResize={(delta) => commitBrowserSidebarWidth(browserSidebarWidth() + delta)}
                       onClose={closePageSidebar}
                       currentPath={currentBrowserPath()}
                       repoInfo={repoInfo()}
