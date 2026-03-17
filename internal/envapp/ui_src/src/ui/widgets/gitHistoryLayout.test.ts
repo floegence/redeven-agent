@@ -81,6 +81,7 @@ describe('browser workspace layout wiring', () => {
     expect(treeSrc).not.toContain('gitToneBadgeClass');
     expect(treeSrc).not.toContain('gitToneInsetClass');
     expect(treeSrc).toContain('MAX_VISIBLE_DEPTH = 5');
+    expect(treeSrc).toContain('data-file-browser-touch-target="true"');
     expect(treeSrc).toContain('data-tree-row-path={props.item.path}');
     expect(treeSrc).toContain("scrollIntoView({ block: 'nearest', inline: 'nearest' })");
     expect(treeSrc).toContain('group flex items-center rounded-md py-0.5 text-xs');
