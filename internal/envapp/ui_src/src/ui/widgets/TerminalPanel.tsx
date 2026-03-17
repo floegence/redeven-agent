@@ -3,7 +3,7 @@ import { useCurrentWidgetId, useResolvedFloeConfig, useTheme, useViewActivation 
 import { Sparkles, Terminal, Trash } from '@floegence/floe-webapp-core/icons';
 import { Panel, PanelContent } from '@floegence/floe-webapp-core/layout';
 import { LoadingOverlay } from '@floegence/floe-webapp-core/loading';
-import { Button, Dropdown, type DropdownItem, Input, NumberInput, Tabs, TabPanel, type TabItem } from '@floegence/floe-webapp-core/ui';
+import { Button, Dropdown, type DropdownItem, Input, Tabs, TabPanel, type TabItem } from '@floegence/floe-webapp-core/ui';
 import { useProtocol } from '@floegence/floe-webapp-protocol';
 import { useRedevenRpc } from '../protocol/redeven_v1';
 import {
@@ -35,6 +35,7 @@ import { createClientId } from '../utils/clientId';
 import { PermissionEmptyState } from './PermissionEmptyState';
 import type { AskFlowerIntent } from '../pages/askFlowerIntent';
 import { normalizeAbsolutePath as normalizeAskFlowerAbsolutePath } from '../utils/askFlowerPath';
+import { resolveTerminalFontFamily, TerminalSettingsDialog } from './TerminalSettingsDialog';
 
 type session_loading_state = 'idle' | 'initializing' | 'attaching' | 'loading_history';
 
@@ -123,49 +124,12 @@ type terminal_session_view_props = {
   onNameUpdate?: (sessionId: string, newName: string, workingDir: string) => void;
 };
 
-const TERMINAL_THEME_ITEMS: DropdownItem[] = [
-  { id: 'system', label: 'System Theme' },
-  { id: 'dark', label: 'Dark' },
-  { id: 'light', label: 'Light' },
-  { id: 'solarizedDark', label: 'Solarized Dark' },
-  { id: 'monokai', label: 'Monokai' },
-  { id: 'tokyoNight', label: 'Tokyo Night' },
-];
-
 const HISTORY_STATS_POLL_MS = 10_000;
 const MAX_INLINE_TERMINAL_SELECTION_CHARS = 10_000;
 const ASK_FLOWER_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
 
 const TERMINAL_SELECTION_BACKGROUND = 'rgba(255, 234, 0, 0.72)';
 const TERMINAL_SELECTION_FOREGROUND = '#000000';
-
-const TERMINAL_FONT_OPTIONS: Array<{ id: string; label: string; family: string }> = [
-  {
-    id: 'iosevka',
-    label: 'Iosevka',
-    family: '"Iosevka", "JetBrains Mono", "SF Mono", Menlo, Monaco, monospace',
-  },
-  {
-    id: 'jetbrains',
-    label: 'JetBrains Mono',
-    family: '"JetBrains Mono", "Iosevka", "SF Mono", Menlo, Monaco, monospace',
-  },
-  {
-    id: 'sfmono',
-    label: 'SF Mono',
-    family: '"SF Mono", Menlo, Monaco, "JetBrains Mono", "Iosevka", monospace',
-  },
-  {
-    id: 'menlo',
-    label: 'Menlo',
-    family: 'Menlo, Monaco, "SF Mono", "JetBrains Mono", "Iosevka", monospace',
-  },
-  {
-    id: 'monaco',
-    label: 'Monaco',
-    family: 'Monaco, Menlo, "SF Mono", "JetBrains Mono", "Iosevka", monospace',
-  },
-];
 
 const PlusIcon = (props: { class?: string }) => (
   <svg
@@ -618,6 +582,7 @@ function TerminalPanelInner(props: TerminalPanelInnerProps = {}) {
   const activeSessionStorageKey = buildActiveSessionStorageKey(panelId);
 
   const [searchOpen, setSearchOpen] = createSignal(false);
+  const [settingsOpen, setSettingsOpen] = createSignal(false);
   const [searchQuery, setSearchQuery] = createSignal('');
   const [searchResultCount, setSearchResultCount] = createSignal(0);
   const [searchResultIndex, setSearchResultIndex] = createSignal(-1);
@@ -713,8 +678,7 @@ function TerminalPanelInner(props: TerminalPanelInnerProps = {}) {
   const fontFamilyId = terminalPrefs.fontFamilyId;
 
   const fontFamily = createMemo<string>(() => {
-    const id = fontFamilyId();
-    return TERMINAL_FONT_OPTIONS.find((o) => o.id === id)?.family ?? TERMINAL_FONT_OPTIONS[0]!.family;
+    return resolveTerminalFontFamily(fontFamilyId());
   });
 
   const persistFontSize = (value: number) => {
@@ -1056,68 +1020,10 @@ function TerminalPanelInner(props: TerminalPanelInnerProps = {}) {
     }));
   });
 
-  const currentThemeLabel = createMemo(() => {
-    const id = userTheme();
-    return TERMINAL_THEME_ITEMS.find((i) => i.id === id)?.label ?? 'System Theme';
-  });
-
-  const currentFontLabel = createMemo(() => {
-    const id = fontFamilyId();
-    return TERMINAL_FONT_OPTIONS.find((o) => o.id === id)?.label ?? TERMINAL_FONT_OPTIONS[0]!.label;
-  });
-
-  const themeMenuItems = createMemo<DropdownItem[]>(() => {
-    const selected = userTheme();
-    return TERMINAL_THEME_ITEMS.map((item) => ({
-      id: `theme:${item.id}`,
-      label: item.id === selected ? `${item.label} (Current)` : item.label,
-      keepOpen: true,
-    }));
-  });
-
-  const fontMenuItems = createMemo<DropdownItem[]>(() => {
-    const selected = fontFamilyId();
-    return [
-      {
-        id: 'font:size',
-        label: '',
-        keepOpen: true,
-        content: () => (
-          <div
-            class="flex items-center gap-2 px-2 py-1"
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div class="text-xs text-muted-foreground w-10 shrink-0">Size</div>
-            <NumberInput
-              value={fontSize()}
-              onChange={(v) => persistFontSize(v)}
-              min={TERMINAL_MIN_FONT_SIZE}
-              max={TERMINAL_MAX_FONT_SIZE}
-              step={1}
-              size="sm"
-              class="w-36"
-            />
-          </div>
-        ),
-      },
-      { id: 'sep-font', label: '', separator: true },
-      ...TERMINAL_FONT_OPTIONS.map((o) => ({
-        id: `font:family:${o.id}`,
-        label: o.id === selected ? `${o.label} (Current)` : o.label,
-        keepOpen: true,
-      })),
-    ];
-  });
-
-  const moreItems = createMemo<DropdownItem[]>(() => {
-    return [
-      { id: 'search', label: 'Search' },
-      { id: 'sep-1', label: '', separator: true },
-      { id: 'theme-menu', label: `Theme: ${currentThemeLabel()}`, children: themeMenuItems(), keepOpen: true },
-      { id: 'font-menu', label: `Font: ${currentFontLabel()}`, children: fontMenuItems(), keepOpen: true },
-    ];
-  });
+  const moreItems = createMemo<DropdownItem[]>(() => [
+    { id: 'search', label: 'Search' },
+    { id: 'settings', label: 'Terminal settings' },
+  ]);
 
   let searchInputEl: HTMLInputElement | null = null;
   let rootEl: HTMLDivElement | null = null;
@@ -1126,6 +1032,19 @@ function TerminalPanelInner(props: TerminalPanelInnerProps = {}) {
     const sid = activeSessionId();
     if (!sid) return null;
     return coreRegistry.get(sid) ?? null;
+  };
+
+  const restoreActiveTerminalFocus = () => {
+    requestAnimationFrame(() => {
+      getActiveCore()?.focus();
+    });
+  };
+
+  const handleSettingsOpenChange = (open: boolean) => {
+    setSettingsOpen(open);
+    if (!open) {
+      restoreActiveTerminalFocus();
+    }
   };
 
   const clampAskMenuPosition = (x: number, y: number): { x: number; y: number } => {
@@ -1406,14 +1325,8 @@ function TerminalPanelInner(props: TerminalPanelInnerProps = {}) {
       return;
     }
 
-    if (id.startsWith('theme:')) {
-      handleThemeChange(id.slice('theme:'.length));
-      return;
-    }
-
-    if (id.startsWith('font:family:')) {
-      persistFontFamily(id.slice('font:family:'.length));
-      return;
+    if (id === 'settings') {
+      handleSettingsOpenChange(true);
     }
   };
 
@@ -1633,6 +1546,19 @@ function TerminalPanelInner(props: TerminalPanelInnerProps = {}) {
           </div>
         )}
       </Show>
+
+      <TerminalSettingsDialog
+        open={settingsOpen()}
+        userTheme={userTheme()}
+        fontSize={fontSize()}
+        fontFamilyId={fontFamilyId()}
+        minFontSize={TERMINAL_MIN_FONT_SIZE}
+        maxFontSize={TERMINAL_MAX_FONT_SIZE}
+        onOpenChange={handleSettingsOpenChange}
+        onThemeChange={handleThemeChange}
+        onFontSizeChange={persistFontSize}
+        onFontFamilyChange={persistFontFamily}
+      />
 
       <Show when={error()}>
         <div class="p-2 text-[11px] text-error border-t border-border bg-background/80 break-words">{error()}</div>

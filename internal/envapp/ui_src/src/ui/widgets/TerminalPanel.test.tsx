@@ -1,0 +1,335 @@
+// @vitest-environment jsdom
+
+import { Show } from 'solid-js';
+import { render } from 'solid-js/web';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { TerminalPanel } from './TerminalPanel';
+
+const layoutState = vi.hoisted(() => ({
+  mobile: false,
+}));
+
+const terminalPrefsState = vi.hoisted(() => ({
+  userTheme: 'system',
+  fontSize: 12,
+  fontFamilyId: 'iosevka',
+}));
+
+const focusSpy = vi.hoisted(() => vi.fn());
+
+const transportMocks = vi.hoisted(() => ({
+  sendInput: vi.fn().mockResolvedValue(undefined),
+  resize: vi.fn().mockResolvedValue(undefined),
+  attach: vi.fn().mockResolvedValue(undefined),
+  history: vi.fn().mockResolvedValue([]),
+  getSessionStats: vi.fn().mockResolvedValue({ history: { totalBytes: 0 } }),
+  clear: vi.fn().mockResolvedValue(undefined),
+}));
+
+const sessionsCoordinatorMocks = vi.hoisted(() => {
+  const sessions = [
+    {
+      id: 'session-1',
+      name: 'Terminal 1',
+      workingDir: '/workspace',
+      isActive: true,
+      lastActiveAtMs: 10,
+    },
+  ];
+
+  return {
+    refresh: vi.fn().mockResolvedValue(undefined),
+    createSession: vi.fn(),
+    deleteSession: vi.fn(),
+    updateSessionMeta: vi.fn(),
+    subscribe: (callback: (value: typeof sessions) => void) => {
+      callback(sessions);
+      return () => undefined;
+    },
+  };
+});
+
+vi.mock('@floegence/floe-webapp-core', () => ({
+  cn: (...values: Array<string | false | null | undefined>) => values.filter(Boolean).join(' '),
+  useCurrentWidgetId: () => null,
+  useLayout: () => ({
+    isMobile: () => layoutState.mobile,
+  }),
+  useResolvedFloeConfig: () => ({
+    persist: {
+      load: (_key: string, fallback: any) => fallback,
+      debouncedSave: vi.fn(),
+    },
+  }),
+  useTheme: () => ({
+    resolvedTheme: () => 'dark',
+  }),
+  useViewActivation: () => ({
+    active: () => true,
+  }),
+}));
+
+vi.mock('@floegence/floe-webapp-core/icons', () => {
+  const Icon = () => <span />;
+  return {
+    Sparkles: Icon,
+    Terminal: Icon,
+    Trash: Icon,
+  };
+});
+
+vi.mock('@floegence/floe-webapp-core/layout', () => ({
+  Panel: (props: any) => <div>{props.children}</div>,
+  PanelContent: (props: any) => <div>{props.children}</div>,
+}));
+
+vi.mock('@floegence/floe-webapp-core/loading', () => ({
+  LoadingOverlay: (props: any) => (props.visible ? <div>{props.message}</div> : null),
+}));
+
+vi.mock('@floegence/floe-webapp-core/ui', () => ({
+  Button: (props: any) => (
+    <button
+      type="button"
+      class={props.class}
+      disabled={props.disabled}
+      title={props.title}
+      onClick={props.onClick}
+    >
+      {props.children}
+    </button>
+  ),
+  Dropdown: (props: any) => (
+    <div data-testid="dropdown">
+      <div>{props.trigger}</div>
+      <div>
+        {props.items.map((item: any) => (
+          item.separator ? (
+            <div data-testid={`separator-${item.id}`} />
+          ) : (
+            <button type="button" data-testid={`dropdown-item-${item.id}`} onClick={() => props.onSelect(item.id)}>
+              {item.label}
+            </button>
+          )
+        ))}
+      </div>
+    </div>
+  ),
+  Input: (props: any) => (
+    <input
+      ref={props.ref}
+      value={props.value}
+      placeholder={props.placeholder}
+      onInput={props.onInput}
+    />
+  ),
+  NumberInput: (props: any) => (
+    <input
+      data-testid="number-input"
+      value={props.value}
+      onInput={(event) => props.onChange(Number((event.currentTarget as HTMLInputElement).value))}
+    />
+  ),
+  Tabs: (props: any) => (
+    <div>
+      {props.items.map((item: any) => (
+        <button type="button" onClick={() => props.onChange?.(item.id)}>
+          {item.label}
+        </button>
+      ))}
+      {props.showAdd ? <button type="button" onClick={props.onAdd}>Add</button> : null}
+    </div>
+  ),
+  TabPanel: (props: any) => (props.active || props.keepMounted ? <div>{props.children}</div> : null),
+  Dialog: (props: any) => (
+    <Show when={props.open}>
+      <div data-testid="dialog" class={props.class}>
+        <div>{props.title}</div>
+        <div>{props.description}</div>
+        <div>{props.children}</div>
+        <div>{props.footer}</div>
+      </div>
+    </Show>
+  ),
+}));
+
+vi.mock('@floegence/floe-webapp-protocol', () => ({
+  useProtocol: () => ({
+    client: () => ({ id: 'protocol-client' }),
+    status: () => 'connected',
+  }),
+}));
+
+vi.mock('../protocol/redeven_v1', () => ({
+  useRedevenRpc: () => ({
+    fs: {
+      getPathContext: vi.fn().mockResolvedValue({ agentHomePathAbs: '/workspace' }),
+    },
+  }),
+}));
+
+vi.mock('@floegence/floeterm-terminal-web', () => {
+  class MockTerminalCore {
+    terminal = { options: {} };
+
+    initialize = vi.fn().mockResolvedValue(undefined);
+    dispose = vi.fn();
+    setTheme = vi.fn();
+    forceResize = vi.fn();
+    getDimensions = vi.fn(() => ({ cols: 80, rows: 24 }));
+    startHistoryReplay = vi.fn();
+    endHistoryReplay = vi.fn();
+    write = vi.fn();
+    focus = focusSpy;
+    setFontSize = vi.fn();
+    setSearchResultsCallback = vi.fn();
+    clearSearch = vi.fn();
+    findNext = vi.fn();
+    findPrevious = vi.fn();
+    clear = vi.fn();
+  }
+
+  return {
+    TerminalCore: MockTerminalCore,
+    getDefaultTerminalConfig: vi.fn(() => ({})),
+    getThemeColors: vi.fn(() => ({ background: '#111111', foreground: '#eeeeee' })),
+  };
+});
+
+vi.mock('../services/terminalTransport', () => ({
+  createRedevenTerminalTransport: () => transportMocks,
+  createRedevenTerminalEventSource: () => ({
+    onTerminalData: () => () => undefined,
+    onTerminalNameUpdate: () => () => undefined,
+  }),
+  getOrCreateTerminalConnId: () => 'conn-1',
+}));
+
+vi.mock('../services/terminalSessions', () => ({
+  disposeRedevenTerminalSessionsCoordinator: vi.fn(),
+  getRedevenTerminalSessionsCoordinator: () => sessionsCoordinatorMocks,
+}));
+
+vi.mock('../services/terminalPreferences', () => ({
+  ensureTerminalPreferencesInitialized: vi.fn(),
+  TERMINAL_MIN_FONT_SIZE: 10,
+  TERMINAL_MAX_FONT_SIZE: 20,
+  useTerminalPreferences: () => ({
+    userTheme: () => terminalPrefsState.userTheme,
+    fontSize: () => terminalPrefsState.fontSize,
+    fontFamilyId: () => terminalPrefsState.fontFamilyId,
+    setUserTheme: (value: string) => {
+      terminalPrefsState.userTheme = value;
+    },
+    setFontSize: (value: number) => {
+      terminalPrefsState.fontSize = value;
+    },
+    setFontFamily: (value: string) => {
+      terminalPrefsState.fontFamilyId = value;
+    },
+  }),
+}));
+
+vi.mock('../pages/EnvContext', () => {
+  const envAccessor = Object.assign(
+    () => ({ permissions: { can_execute: true } }),
+    { state: 'ready' },
+  );
+
+  return {
+    useEnvContext: () => ({
+      env: envAccessor,
+      openAskFlowerComposer: vi.fn(),
+    }),
+  };
+});
+
+vi.mock('../utils/permission', () => ({
+  isPermissionDeniedError: () => false,
+}));
+
+vi.mock('../utils/clientId', () => ({
+  createClientId: () => 'ask-flower-id',
+}));
+
+vi.mock('./PermissionEmptyState', () => ({
+  PermissionEmptyState: () => <div>Permission denied</div>,
+}));
+
+vi.mock('../utils/askFlowerPath', () => ({
+  normalizeAbsolutePath: (value: string) => value,
+}));
+
+describe('TerminalPanel', () => {
+  beforeEach(() => {
+    terminalPrefsState.userTheme = 'system';
+    terminalPrefsState.fontSize = 12;
+    terminalPrefsState.fontFamilyId = 'iosevka';
+    focusSpy.mockClear();
+    Object.values(transportMocks).forEach((mock) => {
+      if ('mockClear' in mock) mock.mockClear();
+    });
+    sessionsCoordinatorMocks.refresh.mockClear();
+    sessionsCoordinatorMocks.updateSessionMeta.mockClear();
+
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    });
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+  });
+
+  afterEach(() => {
+    document.body.innerHTML = '';
+    layoutState.mobile = false;
+    vi.unstubAllGlobals();
+  });
+
+  it('shows a simplified More menu and opens terminal settings from it', async () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+
+    render(() => <TerminalPanel variant="panel" />, host);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const searchAction = host.querySelector('[data-testid="dropdown-item-search"]') as HTMLButtonElement | null;
+    const settingsAction = host.querySelector('[data-testid="dropdown-item-settings"]') as HTMLButtonElement | null;
+
+    expect(searchAction).toBeTruthy();
+    expect(settingsAction).toBeTruthy();
+    expect(host.textContent).not.toContain('Theme:');
+    expect(host.textContent).not.toContain('Font:');
+    expect(host.textContent).not.toContain('System Theme');
+
+    searchAction?.click();
+    await Promise.resolve();
+    expect(host.querySelector('input[placeholder="Search..."]')).toBeTruthy();
+
+    settingsAction?.click();
+    await Promise.resolve();
+    expect(host.querySelector('[data-testid="dialog"]')).toBeTruthy();
+    expect(host.textContent).toContain('Terminal settings');
+  });
+
+  it('restores focus to the active terminal after closing settings', async () => {
+    layoutState.mobile = true;
+
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+
+    render(() => <TerminalPanel variant="deck" />, host);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    (host.querySelector('[data-testid="dropdown-item-settings"]') as HTMLButtonElement | null)?.click();
+    await Promise.resolve();
+    expect(host.querySelector('[data-testid="dialog"]')?.className).toContain('h-[calc(100dvh-0.5rem)]');
+
+    Array.from(host.querySelectorAll('button')).find((button) => button.textContent?.includes('Close'))?.click();
+    await Promise.resolve();
+
+    expect(focusSpy).toHaveBeenCalled();
+  });
+});
