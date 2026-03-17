@@ -48,8 +48,11 @@ describe('gatewayApi access credentials', () => {
     vi.doMock('./controlplaneApi', () => ({
       getLocalRuntime: vi.fn(async () => ({ mode: 'local', env_public_id: 'env_local' })),
     }));
+    const auth = await import('./localAccessAuth');
+    auth.writeLocalAccessResumeToken('resume123');
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       expect(init?.credentials).toBe('same-origin');
+      expect(new Headers(init?.headers).get(auth.getLocalAccessResumeHeaderName())).toBe('resume123');
       return jsonResponse({ ok: true });
     });
     vi.stubGlobal('fetch', fetchMock);
@@ -59,6 +62,25 @@ describe('gatewayApi access credentials', () => {
 
     expect(out).toEqual({ ok: true });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves multipart uploads while adding the local resume-token header', async () => {
+    vi.doMock('./controlplaneApi', () => ({
+      getLocalRuntime: vi.fn(async () => ({ mode: 'local', env_public_id: 'env_local' })),
+    }));
+    const auth = await import('./localAccessAuth');
+    auth.writeLocalAccessResumeToken('resume123');
+
+    const mod = await import('./gatewayApi');
+    const form = new FormData();
+    form.append('file', new Blob(['demo']), 'demo.txt');
+
+    const init = await mod.prepareGatewayRequestInit({ method: 'POST', body: form });
+    const headers = new Headers(init.headers);
+
+    expect(init.credentials).toBe('same-origin');
+    expect(headers.get(auth.getLocalAccessResumeHeaderName())).toBe('resume123');
+    expect(headers.has('Content-Type')).toBe(false);
   });
 
   it('fetches remote access status without same-origin cookies on sandbox hosts', async () => {

@@ -52,11 +52,12 @@ import { resolveSuggestedWorkingDirAbsolute } from './utils/askFlowerPath';
 import { reloadCurrentPage } from './utils/windowNavigation';
 import {
   fetchGatewayJSON,
-  gatewayRequestCredentials,
   getGatewayAccessStatus,
+  prepareGatewayRequestInit,
   unlockGatewayAccess,
   type GatewayAccessStatus,
 } from './services/gatewayApi';
+import { clearLocalAccessResumeToken, writeLocalAccessResumeToken } from './services/localAccessAuth';
 import { getSandboxWindowInfo } from './services/sandboxWindowRegistry';
 import { consumeAccessResumeTokenFromWindow } from './accessResume';
 import { CODE_SPACE_ID_ENV_UI, FLOE_APP_AGENT, FLOE_APP_CODE, FLOE_APP_PORT_FORWARD, type LauncherFloeApp } from './services/floeproxyContract';
@@ -230,6 +231,9 @@ export function EnvAppShell() {
   const [localRuntime, setLocalRuntime] = createSignal<LocalRuntimeInfo | null>(null);
   const isLocalMode = createMemo(() => localRuntime() !== null);
   const initialAccessResumeToken = typeof window !== 'undefined' ? consumeAccessResumeTokenFromWindow(window) : '';
+  if (initialAccessResumeToken) {
+    writeLocalAccessResumeToken(initialAccessResumeToken);
+  }
 
   const [localAccessStatus, setLocalAccessStatus] = createSignal<LocalAccessStatus | null>(null);
   const [localAccessChecked, setLocalAccessChecked] = createSignal(false);
@@ -300,6 +304,7 @@ export function EnvAppShell() {
   const setCurrentAccessResumeToken = (value: string) => {
     if (isLocalMode()) {
       setLocalAccessResumeToken(value);
+      writeLocalAccessResumeToken(value);
       return;
     }
     setRemoteAccessResumeToken(value);
@@ -309,6 +314,7 @@ export function EnvAppShell() {
     if (isLocalMode()) {
       setLocalAccessStatus({ password_required: true, unlocked: false });
       setLocalAccessChecked(true);
+      clearLocalAccessResumeToken();
     } else {
       setRemoteAccessStatus({ password_required: true, unlocked: false });
       setRemoteAccessChecked(true);
@@ -420,12 +426,10 @@ export function EnvAppShell() {
     const form = new FormData();
     form.append('file', file);
 
-    const resp = await fetch('/_redeven_proxy/api/ai/uploads', {
+    const resp = await fetch('/_redeven_proxy/api/ai/uploads', await prepareGatewayRequestInit({
       method: 'POST',
       body: form,
-      credentials: await gatewayRequestCredentials(),
-      cache: 'no-store',
-    });
+    }));
 
     const text = await resp.text();
     let data: any = null;

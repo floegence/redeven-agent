@@ -32,7 +32,7 @@ import { RpcError, useProtocol } from '@floegence/floe-webapp-protocol';
 import { useEnvContext } from './EnvContext';
 import { useAIChatContext } from './AIChatContext';
 import { useRedevenRpc, type FsFileInfo } from '../protocol/redeven_v1';
-import { fetchGatewayJSON, gatewayRequestCredentials } from '../services/gatewayApi';
+import { fetchGatewayJSON, prepareGatewayRequestInit } from '../services/gatewayApi';
 import { decorateMessageBlocks, decorateStreamEvent } from './aiBlockPresentation';
 import {
   extractSubagentViewsFromWaitResult,
@@ -3730,12 +3730,10 @@ export function EnvAIPage() {
     const form = new FormData();
     form.append('file', file);
 
-    const resp = await fetch('/_redeven_proxy/api/ai/uploads', {
+    const resp = await fetch('/_redeven_proxy/api/ai/uploads', await prepareGatewayRequestInit({
       method: 'POST',
       body: form,
-      credentials: await gatewayRequestCredentials(),
-      cache: 'no-store',
-    });
+    }));
 
     const text = await resp.text();
     let data: any = null;
@@ -4282,7 +4280,7 @@ export function EnvAIPage() {
     setDeleting(true);
     try {
       const url = `/_redeven_proxy/api/ai/threads/${encodeURIComponent(tid)}${force ? '?force=true' : ''}`;
-      const resp = await fetch(url, { method: 'DELETE', credentials: await gatewayRequestCredentials(), cache: 'no-store' });
+      const resp = await fetch(url, await prepareGatewayRequestInit({ method: 'DELETE' }));
       const text = await resp.text();
       let data: any = null;
       try {

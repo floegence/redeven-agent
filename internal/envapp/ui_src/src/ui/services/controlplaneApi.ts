@@ -2,6 +2,7 @@ import type { ChannelInitGrant, DirectConnectInfo } from '@floegence/flowersec-c
 import { requestEntryChannelGrant } from '@floegence/flowersec-core/browser';
 
 import { SESSION_KIND_ENVAPP_RPC, sessionKindForLauncherApp, type LauncherFloeApp } from './floeproxyContract';
+import { appendLocalAccessResumeQuery, applyLocalAccessResumeHeader } from './localAccessAuth';
 import { portalOriginFromSandboxLocation } from './sandboxOrigins';
 
 export interface Environment {
@@ -275,8 +276,11 @@ function buildLocalDirectWSURLBestEffort(): string {
 }
 
 async function fetchLocalJSON<T>(input: RequestInfo | URL, init: RequestInit & { bearerToken?: string }): Promise<T> {
+  const headers = new Headers(init.headers);
+  applyLocalAccessResumeHeader(headers);
   return fetchJSON<T>(input, {
     ...init,
+    headers,
     credentials: init.credentials ?? 'same-origin',
   });
 }
@@ -328,7 +332,10 @@ export async function mintLocalDirectConnectInfo(): Promise<DirectConnectInfo> {
   const wsURL = String((out as any)?.ws_url ?? '').trim();
   const channelID = String((out as any)?.channel_id ?? '').trim();
   if (!wsURL || !channelID) throw new Error('Invalid direct connect info');
-  return out;
+  return {
+    ...out,
+    ws_url: appendLocalAccessResumeQuery(wsURL),
+  };
 }
 
 export async function getEnvironment(envId: string): Promise<EnvironmentDetail | null> {

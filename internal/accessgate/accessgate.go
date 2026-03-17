@@ -283,6 +283,39 @@ func (g *Gate) RevokeLocalSession(token string) {
 	g.mu.Unlock()
 }
 
+func (g *Gate) RevokeResumeToken(resumeToken string) {
+	if g == nil || !g.enabled {
+		return
+	}
+	resumeToken = strings.TrimSpace(resumeToken)
+	if resumeToken == "" {
+		return
+	}
+	g.mu.Lock()
+	delete(g.resumeTokens, resumeToken)
+	g.mu.Unlock()
+}
+
+func (g *Gate) CanResumeMeta(resumeToken string, meta session.Meta) bool {
+	if g == nil || !g.enabled {
+		return true
+	}
+	resumeToken = strings.TrimSpace(resumeToken)
+	if resumeToken == "" {
+		return false
+	}
+	now := time.Now()
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.cleanupExpiredLocked(now)
+
+	tok := g.resumeTokens[resumeToken]
+	if tok == nil || now.After(tok.expiresAt) {
+		return false
+	}
+	return resumeTokenMatchesMeta(tok, meta)
+}
+
 func (g *Gate) ResumeChannel(channelID string, resumeToken string) error {
 	if g == nil || !g.enabled {
 		return nil
@@ -305,11 +338,7 @@ func (g *Gate) ResumeChannel(channelID string, resumeToken string) error {
 	if tok == nil || now.After(tok.expiresAt) {
 		return errors.New("invalid resume token")
 	}
-	if tok.userPublicID != strings.TrimSpace(st.meta.UserPublicID) ||
-		tok.endpointID != strings.TrimSpace(st.meta.EndpointID) ||
-		tok.floeApp != strings.TrimSpace(st.meta.FloeApp) ||
-		tok.codeSpaceID != strings.TrimSpace(st.meta.CodeSpaceID) ||
-		tok.sessionKind != strings.TrimSpace(st.meta.SessionKind) {
+	if !resumeTokenMatchesMeta(tok, st.meta) {
 		return errors.New("resume token binding mismatch")
 	}
 	st.unlocked = true
@@ -335,15 +364,31 @@ func shouldMintResumeTokenLocked(meta session.Meta) bool {
 		strings.TrimSpace(meta.CodeSpaceID) == "env-ui"
 }
 
+func normalizeSessionKind(sessionKind string) string {
+	normalized := strings.TrimSpace(sessionKind)
+	if normalized == "" || normalized == "envapp_proxy" {
+		return "envapp_rpc"
+	}
+	return normalized
+}
+
+func resumeTokenMatchesMeta(tok *resumeTokenState, meta session.Meta) bool {
+	if tok == nil {
+		return false
+	}
+	return tok.userPublicID == strings.TrimSpace(meta.UserPublicID) &&
+		tok.endpointID == strings.TrimSpace(meta.EndpointID) &&
+		tok.floeApp == strings.TrimSpace(meta.FloeApp) &&
+		tok.codeSpaceID == strings.TrimSpace(meta.CodeSpaceID) &&
+		tok.sessionKind == normalizeSessionKind(meta.SessionKind)
+}
+
 func (g *Gate) mintResumeTokenLocked(now time.Time, meta session.Meta) (string, time.Time, error) {
 	resumeToken, err := randomToken(32)
 	if err != nil {
 		return "", time.Time{}, err
 	}
-	sessionKind := strings.TrimSpace(meta.SessionKind)
-	if sessionKind == "" || sessionKind == "envapp_proxy" {
-		sessionKind = "envapp_rpc"
-	}
+	sessionKind := normalizeSessionKind(meta.SessionKind)
 	expiresAt := now.Add(g.resumeTTL)
 	g.resumeTokens[resumeToken] = &resumeTokenState{
 		userPublicID: strings.TrimSpace(meta.UserPublicID),

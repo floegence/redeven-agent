@@ -32,6 +32,9 @@ const (
 	// LocalEnvPublicID is the fixed env_public_id used for Local UI mode.
 	LocalEnvPublicID = "env_local"
 
+	localAccessResumeHeader = "X-Redeven-Access-Resume"
+	localAccessResumeQuery  = "redeven_access_resume"
+
 	localNamespacePublicID = "ns_local"
 	localUserPublicID      = "user_local"
 	localUserEmail         = "local@redeven"
@@ -241,6 +244,18 @@ func (s *Server) accessEnabled() bool {
 	return s != nil && s.accessGate != nil && s.accessGate.Enabled()
 }
 
+func localAccessResumeMeta() session.Meta {
+	return session.Meta{
+		EndpointID:        LocalEnvPublicID,
+		FloeApp:           agent.FloeAppRedevenAgent,
+		CodeSpaceID:       "env-ui",
+		SessionKind:       "envapp_rpc",
+		UserPublicID:      localUserPublicID,
+		UserEmail:         localUserEmail,
+		NamespacePublicID: localNamespacePublicID,
+	}
+}
+
 func (s *Server) localAccessToken(r *http.Request) string {
 	if s == nil || r == nil {
 		return ""
@@ -252,13 +267,23 @@ func (s *Server) localAccessToken(r *http.Request) string {
 	return strings.TrimSpace(c.Value)
 }
 
+func (s *Server) localAccessResumeToken(r *http.Request) string {
+	if s == nil || r == nil {
+		return ""
+	}
+	if token := strings.TrimSpace(r.Header.Get(localAccessResumeHeader)); token != "" {
+		return token
+	}
+	return strings.TrimSpace(r.URL.Query().Get(localAccessResumeQuery))
+}
+
 func (s *Server) hasLocalAccess(r *http.Request) bool {
 	if !s.accessEnabled() {
 		return true
 	}
 	token := s.localAccessToken(r)
 	if token == "" {
-		return false
+		return s.accessGate.CanResumeMeta(s.localAccessResumeToken(r), localAccessResumeMeta())
 	}
 	return s.accessGate.IsLocalSessionValid(token)
 }
@@ -438,6 +463,9 @@ func (s *Server) handleAccessLogout(w http.ResponseWriter, r *http.Request) {
 		if token := s.localAccessToken(r); token != "" {
 			s.accessGate.RevokeLocalSession(token)
 		}
+		if resumeToken := s.localAccessResumeToken(r); resumeToken != "" {
+			s.accessGate.RevokeResumeToken(resumeToken)
+		}
 	}
 	s.clearLocalAccessCookie(w)
 	writeJSON(w, http.StatusOK, apiResp{OK: true, Data: map[string]any{"ok": true}})
@@ -601,21 +629,13 @@ func (s *Server) handleConnectInfo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cap := s.resolveLocalCap()
-	meta := session.Meta{
-		ChannelID:         "",
-		EndpointID:        LocalEnvPublicID,
-		FloeApp:           agent.FloeAppRedevenAgent,
-		CodeSpaceID:       "env-ui",
-		SessionKind:       "envapp_rpc",
-		UserPublicID:      localUserPublicID,
-		UserEmail:         localUserEmail,
-		NamespacePublicID: localNamespacePublicID,
-		CanRead:           cap.Read,
-		CanWrite:          cap.Write,
-		CanExecute:        cap.Execute,
-		CanAdmin:          true,
-		CreatedAtUnixMs:   time.Now().UnixMilli(),
-	}
+	meta := localAccessResumeMeta()
+	meta.ChannelID = ""
+	meta.CanRead = cap.Read
+	meta.CanWrite = cap.Write
+	meta.CanExecute = cap.Execute
+	meta.CanAdmin = true
+	meta.CreatedAtUnixMs = time.Now().UnixMilli()
 
 	info, err := s.mintPending(meta, wsURL)
 	if err != nil {
