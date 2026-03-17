@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/endpoint"
+	"github.com/floegence/redeven-agent/internal/accessgate"
 	"github.com/floegence/redeven-agent/internal/auditlog"
 	"github.com/floegence/redeven-agent/internal/session"
 )
@@ -27,7 +28,28 @@ func sanitizeAuditError(err error) string {
 // ServeLocalDirectSession serves an already-established direct (no tunnel) endpoint session.
 //
 // The session metadata MUST be treated as authoritative and is used to enforce permission caps.
-func (a *Agent) ServeLocalDirectSession(ctx context.Context, sess endpoint.Session, meta *session.Meta) (err error) {
+type LocalDirectSessionOptions struct {
+	AccessUnlocked bool
+}
+
+func (a *Agent) registerLocalDirectChannel(meta session.Meta, opts LocalDirectSessionOptions) func() {
+	if a == nil || a.accessGate == nil || !a.accessGate.Enabled() {
+		return func() {}
+	}
+	channelID := strings.TrimSpace(meta.ChannelID)
+	if channelID == "" {
+		return func() {}
+	}
+
+	a.accessGate.RegisterChannelWithOptions(meta, accessgate.RegisterChannelOptions{
+		Unlocked: opts.AccessUnlocked,
+	})
+	return func() {
+		a.accessGate.UnregisterChannel(channelID)
+	}
+}
+
+func (a *Agent) ServeLocalDirectSession(ctx context.Context, sess endpoint.Session, meta *session.Meta, opts LocalDirectSessionOptions) (err error) {
 	if a == nil {
 		return errors.New("nil agent")
 	}
@@ -70,14 +92,10 @@ func (a *Agent) ServeLocalDirectSession(ctx context.Context, sess endpoint.Sessi
 	}
 	a.mu.Unlock()
 
-	if a.accessGate != nil && a.accessGate.Enabled() {
-		a.accessGate.RegisterChannel(metaCopy)
-	}
+	cleanupAccessGate := a.registerLocalDirectChannel(metaCopy, opts)
 
 	defer func() {
-		if a.accessGate != nil && a.accessGate.Enabled() {
-			a.accessGate.UnregisterChannel(channelID)
-		}
+		cleanupAccessGate()
 		a.mu.Lock()
 		delete(a.sessions, channelID)
 		a.mu.Unlock()

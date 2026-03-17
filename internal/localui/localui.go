@@ -836,7 +836,11 @@ func (s *Server) handleDirectWS(w http.ResponseWriter, r *http.Request) {
 		metaCopy.ChannelID = strings.TrimSpace(ch)
 	}
 
-	if err := s.a.ServeLocalDirectSession(r.Context(), sess, &metaCopy); err != nil && r.Context().Err() == nil {
+	if err := s.a.ServeLocalDirectSession(r.Context(), sess, &metaCopy, agent.LocalDirectSessionOptions{
+		// The Local UI already enforced access-gate authorization for this HTTP request,
+		// so the direct channel can start in the unlocked state.
+		AccessUnlocked: s.accessEnabled(),
+	}); err != nil && r.Context().Err() == nil {
 		s.log.Warn("local direct session exited", "channel_id", metaCopy.ChannelID, "error", err)
 	}
 }

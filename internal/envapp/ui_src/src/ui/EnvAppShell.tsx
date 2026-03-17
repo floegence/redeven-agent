@@ -261,9 +261,17 @@ export function EnvAppShell() {
   const accessChannelReady = createMemo(() => (isLocalMode() ? localAccessChannelReady() : remoteAccessChannelReady()));
   const accessResumeToken = createMemo(() => (isLocalMode() ? localAccessResumeToken() : remoteAccessResumeToken()));
   const accessPasswordRequired = createMemo(() => Boolean(accessStatus()?.password_required));
+  const accessServerUnlocked = createMemo(() => Boolean(accessStatus()?.unlocked));
   const accessPending = createMemo(() => !accessChecked());
-  const accessLocked = createMemo(() => accessPasswordRequired() && !String(accessResumeToken() ?? '').trim());
-  const accessResumePending = createMemo(() => accessPasswordRequired() && !accessPending() && !accessLocked() && !accessChannelReady());
+  const accessLocked = createMemo(() => {
+    if (!accessPasswordRequired()) return false;
+    if (isLocalMode()) return !accessServerUnlocked();
+    return !String(accessResumeToken() ?? '').trim();
+  });
+  const accessResumePending = createMemo(() => {
+    if (isLocalMode()) return false;
+    return accessPasswordRequired() && !accessPending() && !accessLocked() && !accessChannelReady();
+  });
   const accessGateVisible = createMemo(() => accessPending() || accessLocked() || accessResumePending());
   const accessRecoverable = createMemo(() => accessPasswordRequired() && !accessPending() && !accessLocked());
 
@@ -734,6 +742,11 @@ export function EnvAppShell() {
           },
           autoReconnect: reconnectPolicy,
         });
+        if (accessRecoverySeq !== attemptKey) return;
+        accessResumeClient = protocol.client();
+        setLocalAccessChannelReady(true);
+        setCurrentAccessError(null);
+        setManualError(null);
       } else {
         await fn({
           mode: 'tunnel',
@@ -741,9 +754,9 @@ export function EnvAppShell() {
           observer,
           autoReconnect: reconnectPolicy,
         });
+        if (accessRecoverySeq !== attemptKey) return;
+        await ensureAccessResumed(attemptKey);
       }
-      if (accessRecoverySeq !== attemptKey) return;
-      await ensureAccessResumed(attemptKey);
     } catch (error) {
       if (accessRecoverySeq === attemptKey) {
         handleAccessRecoveryFailure(error);
@@ -883,6 +896,13 @@ export function EnvAppShell() {
     const st = protocol.status();
     if (st !== 'connected' || !client) {
       accessResumeClient = null;
+      return;
+    }
+    if (isLocalMode()) {
+      accessResumeClient = client;
+      setCurrentAccessChannelReady(true);
+      setCurrentAccessError(null);
+      setManualError(null);
       return;
     }
     if (accessResumeClient === client) return;
@@ -1036,7 +1056,7 @@ export function EnvAppShell() {
       initialTab = initial;
       setPersistReady(true);
 
-      if (accessPasswordRequired() && !String(accessResumeToken() ?? '').trim()) {
+      if (accessLocked()) {
         setManualError(null);
         return;
       }
@@ -1415,25 +1435,15 @@ export function EnvAppShell() {
   });
   const accessGateDescription = createMemo(() => {
     if (accessResumePending()) {
-      if (accessRecoveryBusy()) {
-        return isLocalMode()
-          ? 'Verifying the password for this browser load and connecting to the local agent.'
-          : 'Verifying the password for this environment page and connecting to the agent.';
-      }
-      return isLocalMode()
-        ? 'The secure session is still blocked for this browser load. Retry the connection or reload the page.'
-        : 'The secure session is still blocked for this environment page. Retry the connection or reload the page.';
+      if (accessRecoveryBusy()) return 'Verifying the password for this environment page and connecting to the agent.';
+      return 'The secure session is still blocked for this environment page. Retry the connection or reload the page.';
     }
     return isLocalMode()
       ? 'Enter the full access password before this browser load can connect to the local agent.'
       : 'Enter the full access password before this environment page can connect to the agent.';
   });
   const accessGateCheckingLabel = createMemo(() => (isLocalMode() ? 'Checking local access...' : 'Checking agent access...'));
-  const accessGateResumeHint = createMemo(() =>
-    isLocalMode()
-      ? 'The page stays blocked until the direct agent session confirms the password for this browser load.'
-      : 'The page stays blocked until the direct agent session confirms the password for this environment page.',
-  );
+  const accessGateResumeHint = createMemo(() => 'The page stays blocked until the direct agent session confirms the password for this environment page.');
 
   const accessGatePanel = () => (
     <div class="flex h-full min-h-0 items-center justify-center bg-background px-4 py-6">
